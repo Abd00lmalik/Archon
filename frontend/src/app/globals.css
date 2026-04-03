@@ -58,7 +58,7 @@ textarea:focus-visible {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
-.oris-card {
+.archon-card {
   background: var(--surface);
   border: 1px solid var(--edge);
   border-radius: 1rem;
@@ -66,16 +66,16 @@ textarea:focus-visible {
   transition: all 0.2s ease;
 }
 
-.oris-card:hover {
+.archon-card:hover {
   transform: translateY(-2px);
   border-color: rgba(108, 92, 231, 0.35);
 }
 
-.oris-muted {
+.archon-muted {
   color: var(--text-muted);
 }
 
-.oris-button-primary {
+.archon-button-primary {
   background: var(--accent-primary);
   color: #f8f8ff;
   border: 1px solid rgba(108, 92, 231, 0.65);
@@ -84,12 +84,12 @@ textarea:focus-visible {
   transition: all 0.2s ease;
 }
 
-.oris-button-primary:hover {
+.archon-button-primary:hover {
   box-shadow: 0 8px 24px rgba(108, 92, 231, 0.35);
   filter: brightness(1.05);
 }
 
-.oris-button-secondary {
+.archon-button-secondary {
   background: transparent;
   color: var(--text);
   border: 1px solid var(--edge);
@@ -97,12 +97,12 @@ textarea:focus-visible {
   transition: all 0.2s ease;
 }
 
-.oris-button-secondary:hover {
+.archon-button-secondary:hover {
   border-color: rgba(255, 255, 255, 0.22);
   background: rgba(255, 255, 255, 0.03);
 }
 
-.oris-input {
+.archon-input {
   width: 100%;
   border-radius: 0.9rem;
   border: 1px solid var(--edge);
@@ -112,11 +112,11 @@ textarea:focus-visible {
   transition: all 0.2s ease;
 }
 
-.oris-input::placeholder {
+.archon-input::placeholder {
   color: #79808e;
 }
 
-.oris-input:focus {
+.archon-input:focus {
   border-color: rgba(0, 209, 178, 0.55);
   box-shadow: 0 0 0 3px rgba(0, 209, 178, 0.14);
   outline: none;
@@ -136,3 +136,4 @@ textarea:focus-visible {
 .animate-slide-up {
   animation: slideUp 0.35s ease-out;
 }
+

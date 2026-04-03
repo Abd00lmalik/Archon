@@ -10,7 +10,7 @@ function labelFromPath(pathname: string) {
   if (pathname === "/approve-job") return "Approve Job";
   if (pathname === "/profile") return "Profile";
   if (pathname.startsWith("/job/")) return "Job Details";
-  return "Oris";
+  return "Archon";
 }
 
 export function RouteAnnouncer() {
@@ -29,3 +29,4 @@ export function RouteAnnouncer() {
     </div>
   );
 }
+

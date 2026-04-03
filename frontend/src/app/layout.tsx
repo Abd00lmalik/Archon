@@ -10,16 +10,16 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Oris",
+  title: "Archon",
   description: "Verifiable work. On-chain.",
-  metadataBase: new URL("https://oris.vercel.app"),
+  metadataBase: new URL("https://archon.vercel.app"),
   icons: {
-    icon: "/favicon.ico",
+    icon: "/logo-icon.svg",
     shortcut: "/logo-icon.svg",
     apple: "/logo-icon.svg"
   },
   openGraph: {
-    title: "Oris",
+    title: "Archon",
     description: "Verifiable work. On-chain.",
     images: ["/logo.svg"]
   }
@@ -34,7 +34,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           <main className="mx-auto max-w-6xl px-4 py-8 md:py-10">{children}</main>
           <footer className="border-t border-white/10 bg-[#0a0a0b] px-4 py-6">
             <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 text-xs text-[#9CA3AF]">
-              <span>Oris</span>
+              <span>Archon</span>
               <span>Ryzome Registration: Pending - ARC marketplace integration ready</span>
             </div>
           </footer>
@@ -43,3 +43,4 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     </html>
   );
 }
+

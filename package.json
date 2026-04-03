@@ -1,5 +1,5 @@
 {
-  "name": "oris-dapp",
+  "name": "archon-dapp",
   "private": true,
   "version": "1.0.0",
   "workspaces": [
@@ -17,3 +17,4 @@
     "test": "npm run test --workspace contracts"
   }
 }
+

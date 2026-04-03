@@ -109,7 +109,7 @@ export default function ApproveJobPage() {
 
   return (
     <section className="mx-auto max-w-[500px]">
-      <div className="oris-card p-6 md:p-7">
+      <div className="archon-card p-6 md:p-7">
         <h1 className="text-2xl font-semibold tracking-wide text-[#EAEAF0]">Approve Job</h1>
         <p className="mt-2 text-sm text-[#9CA3AF]">Confirm completion and mint a permanent credential.</p>
 
@@ -123,7 +123,7 @@ export default function ApproveJobPage() {
               aria-label="Job ID"
               type="number"
               min={0}
-              className="oris-input"
+              className="archon-input"
               value={jobId}
               onChange={(event) => setJobId(event.target.value)}
               placeholder="0"
@@ -147,7 +147,7 @@ export default function ApproveJobPage() {
           <button
             type="submit"
             disabled={submitting}
-            className="oris-button-primary w-full px-4 py-2.5 text-sm transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
+            className="archon-button-primary w-full px-4 py-2.5 text-sm transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {submitting ? "Approving..." : "Approve Job"}
           </button>

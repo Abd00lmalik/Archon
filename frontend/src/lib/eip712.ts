@@ -32,7 +32,7 @@ type TypedDataPayload = {
 export function buildCredentialTypedData(credential: CredentialRecord, chainId: number): TypedDataPayload {
   return {
     domain: {
-      name: "Oris",
+      name: "Archon",
       version: "1",
       chainId,
       verifyingContract: contractAddresses.validationRegistry
@@ -66,3 +66,4 @@ export async function signCredential(
   const typedData = buildCredentialTypedData(credential, chainId);
   return signer.signTypedData(typedData.domain, typedData.types, typedData.message);
 }
+

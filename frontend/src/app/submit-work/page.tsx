@@ -125,9 +125,9 @@ export default function SubmitWorkPage() {
 
   return (
     <section className="mx-auto max-w-[500px]">
-      <div className="oris-card p-6 md:p-7">
+      <div className="archon-card p-6 md:p-7">
         <h1 className="text-2xl font-semibold tracking-wide text-[#EAEAF0]">Submit Work</h1>
-        <p className="mt-2 text-sm text-[#9CA3AF]">Attach your completion link. Oris stores a proof hash on-chain.</p>
+        <p className="mt-2 text-sm text-[#9CA3AF]">Attach your completion link. Archon stores a proof hash on-chain.</p>
 
         {status ? <div className="mt-4 rounded-xl border border-emerald-400/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">{status}</div> : null}
         {error ? <div className="mt-4 rounded-xl border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</div> : null}
@@ -139,7 +139,7 @@ export default function SubmitWorkPage() {
               aria-label="Job ID"
               type="number"
               min={0}
-              className="oris-input"
+              className="archon-input"
               value={jobId}
               onChange={(event) => setJobId(event.target.value)}
               placeholder="0"
@@ -151,7 +151,7 @@ export default function SubmitWorkPage() {
             <span className="mb-1.5 block text-sm font-medium text-[#EAEAF0]">Deliverable Link</span>
             <input
               aria-label="Deliverable link"
-              className="oris-input"
+              className="archon-input"
               value={deliverableLink}
               onChange={(event) => setDeliverableLink(event.target.value)}
               placeholder="ipfs://bafy... or https://..."
@@ -180,7 +180,7 @@ export default function SubmitWorkPage() {
           <button
             type="submit"
             disabled={submitting}
-            className="oris-button-primary w-full px-4 py-2.5 text-sm transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
+            className="archon-button-primary w-full px-4 py-2.5 text-sm transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {submitting ? "Submitting..." : "Submit Deliverable"}
           </button>

@@ -110,10 +110,10 @@ export default function HomePage() {
 
   return (
     <section className="space-y-8">
-      <div className="oris-card p-6 text-center md:p-10">
+      <div className="archon-card p-6 text-center md:p-10">
         <div className="mx-auto flex w-full max-w-xl flex-col items-center">
-          <Image src="/logo.svg" alt="Oris" width={220} height={70} priority />
-          <h1 className="mt-6 text-4xl font-semibold tracking-wide text-[#EAEAF0] md:text-5xl">Oris</h1>
+          <Image src="/logo.svg" alt="Archon" width={220} height={70} priority />
+          <h1 className="mt-6 text-4xl font-semibold tracking-wide text-[#EAEAF0] md:text-5xl">Archon</h1>
           <p className="mt-2 text-base text-[#9CA3AF]">Verifiable work. On-chain.</p>
         </div>
       </div>
@@ -125,39 +125,39 @@ export default function HomePage() {
             type="button"
             aria-label="Refresh jobs"
             onClick={() => void loadJobs()}
-            className="oris-button-secondary px-3 py-2 text-sm transition-all duration-200"
+            className="archon-button-secondary px-3 py-2 text-sm transition-all duration-200"
           >
             Refresh
           </button>
-          <Link href="/create-job" className="oris-button-primary px-4 py-2 text-sm transition-all duration-200">
+          <Link href="/create-job" className="archon-button-primary px-4 py-2 text-sm transition-all duration-200">
             Create Job
           </Link>
         </div>
       </div>
 
       {!configured ? (
-        <div className="oris-card border border-amber-300/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+        <div className="archon-card border border-amber-300/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
           Contracts are not configured yet. Run <code>npm run dev</code> from project root.
         </div>
       ) : null}
 
-      {status ? <div className="oris-card border border-emerald-400/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">{status}</div> : null}
-      {error ? <div className="oris-card border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</div> : null}
+      {status ? <div className="archon-card border border-emerald-400/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">{status}</div> : null}
+      {error ? <div className="archon-card border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</div> : null}
 
       {loading ? (
         <div role="status" aria-busy="true" aria-label="Loading jobs" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {[1, 2, 3].map((item) => (
-            <div key={item} className="oris-card h-44 animate-pulse p-4" />
+            <div key={item} className="archon-card h-44 animate-pulse p-4" />
           ))}
         </div>
       ) : jobs.length === 0 ? (
-        <div className="oris-card px-5 py-10 text-center text-sm text-[#9CA3AF]">No jobs available yet. Create the first posting.</div>
+        <div className="archon-card px-5 py-10 text-center text-sm text-[#9CA3AF]">No jobs available yet. Create the first posting.</div>
       ) : (
         <div aria-label="Job listings" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {jobs.map((job) => {
             const canAccept = job.status === 0 && account !== null && account.toLowerCase() !== job.client.toLowerCase();
             return (
-              <article key={job.jobId} className={`oris-card p-5 ${animatedJobIds.includes(job.jobId) ? "animate-slide-up" : ""}`}>
+              <article key={job.jobId} className={`archon-card p-5 ${animatedJobIds.includes(job.jobId) ? "animate-slide-up" : ""}`}>
                 <div className="flex items-start justify-between gap-3">
                   <Link href={`/job/${job.jobId}`} className="text-base font-semibold tracking-wide text-[#EAEAF0] hover:text-[#00D1B2]">
                     #{job.jobId} {job.title}
@@ -183,7 +183,7 @@ export default function HomePage() {
                       type="button"
                       disabled={!canAccept || busyJobId === job.jobId}
                       onClick={() => void handleAccept(job.jobId)}
-                      className="oris-button-primary px-3 py-1.5 text-xs transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="archon-button-primary px-3 py-1.5 text-xs transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {busyJobId === job.jobId ? "Accepting..." : "Accept"}
                     </button>
@@ -199,3 +199,4 @@ export default function HomePage() {
     </section>
   );
 }
+

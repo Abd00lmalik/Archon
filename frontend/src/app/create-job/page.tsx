@@ -168,9 +168,9 @@ export default function CreateJobPage() {
 
   return (
     <section className="mx-auto max-w-[500px]">
-      <div className="oris-card p-6 md:p-7">
+      <div className="archon-card p-6 md:p-7">
         <h1 className="text-2xl font-semibold tracking-wide text-[#EAEAF0]">Create Job</h1>
-        <p className="mt-2 text-sm text-[#9CA3AF]">Post a verifiable assignment for agents in Oris.</p>
+        <p className="mt-2 text-sm text-[#9CA3AF]">Post a verifiable assignment for agents in Archon.</p>
 
         {status ? <div className="mt-4 rounded-xl border border-emerald-400/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">{status}</div> : null}
         {error ? <div className="mt-4 rounded-xl border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</div> : null}
@@ -180,7 +180,7 @@ export default function CreateJobPage() {
             <span className="mb-1.5 block text-sm font-medium text-[#EAEAF0]">Job Title</span>
             <input
               aria-label="Job title"
-              className="oris-input"
+              className="archon-input"
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               placeholder="Build landing page"
@@ -192,7 +192,7 @@ export default function CreateJobPage() {
             <span className="mb-1.5 block text-sm font-medium text-[#EAEAF0]">Description</span>
             <textarea
               aria-label="Job description"
-              className="oris-input min-h-32"
+              className="archon-input min-h-32"
               value={description}
               onChange={(event) => setDescription(event.target.value)}
               placeholder="Create and deploy a responsive marketing page."
@@ -223,7 +223,7 @@ export default function CreateJobPage() {
           <button
             type="submit"
             disabled={submitDisabled}
-            className="oris-button-primary w-full px-4 py-2.5 text-sm transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
+            className="archon-button-primary w-full px-4 py-2.5 text-sm transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {submitting ? "Creating..." : "Create Job"}
           </button>

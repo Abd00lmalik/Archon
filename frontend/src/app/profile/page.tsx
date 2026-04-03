@@ -108,9 +108,9 @@ export default function ProfilePage() {
 
   return (
     <section className="space-y-6">
-      <div className="oris-card p-6">
+      <div className="archon-card p-6">
         <h1 className="text-2xl font-semibold tracking-wide text-[#EAEAF0]">Profile</h1>
-        <p className="mt-2 text-sm text-[#9CA3AF]">Identity, credentials, and reputation in Oris.</p>
+        <p className="mt-2 text-sm text-[#9CA3AF]">Identity, credentials, and reputation in Archon.</p>
 
         {!account ? (
           <div className="mt-5 rounded-xl border border-amber-300/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
@@ -124,7 +124,7 @@ export default function ProfilePage() {
                 type="button"
                 aria-label="Copy wallet address"
                 onClick={() => void copyToClipboard(account, "Wallet address")}
-                className="oris-button-secondary ml-2 px-2 py-0.5 text-xs"
+                className="archon-button-secondary ml-2 px-2 py-0.5 text-xs"
               >
                 Copy
               </button>
@@ -138,7 +138,7 @@ export default function ProfilePage() {
               <button
                 type="button"
                 onClick={() => void copyToClipboard(did, "DID")}
-                className="oris-button-secondary ml-2 px-2 py-0.5 text-xs"
+                className="archon-button-secondary ml-2 px-2 py-0.5 text-xs"
               >
                 Copy DID
               </button>
@@ -151,7 +151,7 @@ export default function ProfilePage() {
                 type="button"
                 aria-label="Refresh credentials"
                 onClick={() => void loadCredentials()}
-                className="oris-button-secondary px-3 py-2 text-xs"
+                className="archon-button-secondary px-3 py-2 text-xs"
               >
                 Refresh
               </button>
@@ -161,9 +161,9 @@ export default function ProfilePage() {
         )}
       </div>
 
-      {error ? <div className="oris-card border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</div> : null}
+      {error ? <div className="archon-card border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</div> : null}
 
-      <div className="oris-card p-6">
+      <div className="archon-card p-6">
         <h2 className="text-lg font-semibold tracking-wide text-[#EAEAF0]">Reputation</h2>
         <p className="mt-1 text-sm text-[#9CA3AF]">Score = credentials x 10 (capped at 1000).</p>
 
@@ -187,7 +187,7 @@ export default function ProfilePage() {
         </div>
       </div>
 
-      <div className="oris-card p-6">
+      <div className="archon-card p-6">
         <h2 className="text-lg font-semibold tracking-wide text-[#EAEAF0]">Credentials</h2>
         <p className="mt-1 text-sm text-[#9CA3AF]">Permanent records bound to wallet and job.</p>
 

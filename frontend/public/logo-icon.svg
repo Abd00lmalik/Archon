@@ -1,27 +1,20 @@
-<svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="orisStroke" x1="22" y1="22" x2="98" y2="98" gradientUnits="userSpaceOnUse">
+    <linearGradient id="archonArc" x1="16" y1="16" x2="112" y2="112" gradientUnits="userSpaceOnUse">
       <stop stop-color="#6C5CE7"/>
       <stop offset="1" stop-color="#00D1B2"/>
     </linearGradient>
-    <radialGradient id="orisGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(60 60) rotate(90) scale(42)">
-      <stop stop-color="#6C5CE7" stop-opacity="0.24"/>
+    <radialGradient id="archonHalo" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(64 64) rotate(90) scale(44)">
+      <stop stop-color="#6C5CE7" stop-opacity="0.22"/>
       <stop offset="1" stop-color="#6C5CE7" stop-opacity="0"/>
     </radialGradient>
-    <filter id="softGlow" x="0" y="0" width="120" height="120" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
-      <feGaussianBlur stdDeviation="2.5" result="blur"/>
-      <feMerge>
-        <feMergeNode in="blur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
   </defs>
 
-  <g filter="url(#softGlow)">
-    <circle cx="60" cy="60" r="42" fill="url(#orisGlow)"/>
-    <circle cx="60" cy="60" r="36" stroke="url(#orisStroke)" stroke-width="6" fill="none"/>
-    <path d="M28 70C35 84 47 92 60 92C79.9 92 96 75.9 96 56C96 44.6 90.6 33.8 82.2 27" stroke="url(#orisStroke)" stroke-width="6" stroke-linecap="round"/>
-    <circle cx="60" cy="60" r="8" fill="#00D1B2"/>
-    <circle cx="60" cy="60" r="13" stroke="#6C5CE7" stroke-opacity="0.6" stroke-width="2" fill="none"/>
-  </g>
+  <circle cx="64" cy="64" r="44" fill="url(#archonHalo)"/>
+  <circle cx="64" cy="64" r="38" stroke="url(#archonArc)" stroke-width="6" opacity="0.95"/>
+  <path d="M29 79C35 93 48 102 64 102C85 102 102 85 102 64C102 51 95.5 39.6 85.5 32.8" stroke="url(#archonArc)" stroke-width="6" stroke-linecap="round"/>
+
+  <path d="M49 86L64 42L79 86" stroke="#EAEAF0" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M55 70H73" stroke="#EAEAF0" stroke-width="5.5" stroke-linecap="round"/>
+  <circle cx="64" cy="64" r="3.8" fill="#00D1B2"/>
 </svg>

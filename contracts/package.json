@@ -1,5 +1,5 @@
 {
-  "name": "oris-contracts",
+  "name": "archon-contracts",
   "private": true,
   "version": "1.0.0",
   "scripts": {
@@ -21,3 +21,4 @@
     "typescript": "^5.8.2"
   }
 }
+

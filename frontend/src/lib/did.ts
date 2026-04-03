@@ -1,6 +1,6 @@
 import { ethers } from "ethers";
 
-const DID_CLAIM_PREFIX = "Oris DID Claim";
+const DID_CLAIM_PREFIX = "Archon DID Claim";
 
 export function generateDID(address: string, chainId: number): string {
   return `did:ethr:${chainId}:${address.toLowerCase()}`;
@@ -16,3 +16,4 @@ export function verifyDIDClaim(did: string, signature: string, expectedAddress: 
   const recovered = ethers.verifyMessage(claimMessage, signature);
   return recovered.toLowerCase() === expectedAddress.toLowerCase();
 }
+

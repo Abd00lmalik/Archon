@@ -30,14 +30,14 @@ export function NavBar() {
         <div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center justify-between gap-3">
             <Link href="/" className="flex items-center gap-3">
-              <Image src="/logo-icon.svg" alt="Oris logo" width={30} height={30} />
-              <span className="text-lg font-semibold tracking-wide text-[#EAEAF0]">Oris</span>
+              <Image src="/logo-icon.svg" alt="Archon logo" width={30} height={30} />
+              <span className="text-lg font-semibold tracking-wide text-[#EAEAF0]">Archon</span>
             </Link>
             <button
               type="button"
               aria-label={mobileOpen ? "Close mobile menu" : "Open mobile menu"}
               onClick={() => setMobileOpen((previous) => !previous)}
-              className="oris-button-secondary px-3 py-2 text-sm md:hidden"
+              className="archon-button-secondary px-3 py-2 text-sm md:hidden"
             >
               {mobileOpen ? "Close" : "Menu"}
             </button>
@@ -70,7 +70,7 @@ export function NavBar() {
                   type="button"
                   aria-label="Disconnect wallet"
                   onClick={disconnect}
-                  className="oris-button-secondary px-3 py-2 text-sm"
+                  className="archon-button-secondary px-3 py-2 text-sm"
                 >
                   Disconnect
                 </button>
@@ -79,7 +79,7 @@ export function NavBar() {
               <button
                 type="button"
                 onClick={() => void connect()}
-                className="oris-button-primary px-3 py-2 text-sm transition-all duration-200"
+                className="archon-button-primary px-3 py-2 text-sm transition-all duration-200"
               >
                 Connect Wallet
               </button>

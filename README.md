@@ -1,8 +1,8 @@
-# Oris
+# Archon
 
-Oris is an on-chain provenance dApp that turns completed work into verifiable credentials.
+Archon is an on-chain provenance dApp that turns completed work into verifiable credentials.
 
-Instead of trusting self-reported reputation, Oris binds proof of completion to blockchain state transitions:
+Instead of trusting self-reported reputation, Archon binds proof of completion to blockchain state transitions:
 
 1. A client creates a job.
 2. An agent accepts and submits a deliverable.
@@ -12,11 +12,11 @@ Instead of trusting self-reported reputation, Oris binds proof of completion to 
 
 ## Core Problem Solved
 
-In agent and freelancer ecosystems, reputation can be fabricated by off-chain claims. Oris removes that trust gap by making credential issuance a contract-enforced consequence of a completed job lifecycle.
+In agent and freelancer ecosystems, reputation can be fabricated by off-chain claims. Archon removes that trust gap by making credential issuance a contract-enforced consequence of a completed job lifecycle.
 
 ## On-Chain System Design
 
-Oris uses three contracts with separated responsibilities.
+Archon uses three contracts with separated responsibilities.
 
 ### 1) `ERC8183Job.sol` (Job Lifecycle Contract)
 
@@ -167,7 +167,7 @@ Real-time listeners subscribe to contract events so UI updates without manual re
 
 ## Verification Model
 
-Oris supports two complementary verification paths:
+Archon supports two complementary verification paths:
 
 1. State verification (primary):
    - `hasCredential(agent, jobId)` must return `true`
@@ -192,9 +192,9 @@ Current design is MVP-first and intentionally simple:
 - Frontend reads are bounded and event-assisted
 - Architecture is ready for future upgrades (DID binding, richer metadata, cross-chain mirrors)
 
-## Why Oris Is Trust-Minimizing
+## Why Archon Is Trust-Minimizing
 
-Oris does not ask users to trust a platform database or self-attestation.
+Archon does not ask users to trust a platform database or self-attestation.
 
 Reputation is derived from:
 
@@ -202,4 +202,5 @@ Reputation is derived from:
 - contract-enforced authority boundaries,
 - immutable credential records tied to wallet identity.
 
-That makes Oris suitable as a verifiable provenance primitive for agent ecosystems, DAOs, and on-chain labor markets.
+That makes Archon suitable as a verifiable provenance primitive for agent ecosystems, DAOs, and on-chain labor markets.
+

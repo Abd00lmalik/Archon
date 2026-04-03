@@ -2,8 +2,8 @@ import { ethers } from "ethers";
 import { contractAddresses, ZERO_ADDRESS } from "@/lib/contracts";
 
 export const RYZOME_SERVICE_MANIFEST = {
-  name: "Oris",
-  description: "Deliverable-gated on-chain credential minter by Oris for the ARC ecosystem",
+  name: "Archon",
+  description: "Deliverable-gated on-chain credential minter by Archon for the ARC ecosystem",
   version: "1.0.0",
   hookType: "job_completion",
   credentialStandard: "ERC-8004",
@@ -37,3 +37,4 @@ export async function registerWithRyzome(
 export function generateManifestJSON(): string {
   return JSON.stringify(RYZOME_SERVICE_MANIFEST, null, 2);
 }
+

@@ -95,7 +95,7 @@ export function WrongNetworkBanner({ isWrongNetwork }: { isWrongNetwork: boolean
             type="button"
             onClick={() => void handleSwitch()}
             disabled={switching}
-            className="oris-button-primary px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+            className="archon-button-primary px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
           >
             {switching ? "Switching..." : "Switch Network"}
           </button>

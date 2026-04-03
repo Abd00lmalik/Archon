@@ -42,7 +42,7 @@ export function CredentialCard({
   };
 
   return (
-    <article className="oris-card animate-slide-up p-4">
+    <article className="archon-card animate-slide-up p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
           <h3 className="text-sm font-semibold tracking-wide text-[#EAEAF0]">Credential #{credential.credentialId}</h3>
@@ -54,7 +54,7 @@ export function CredentialCard({
           type="button"
           onClick={() => void handleVerify()}
           disabled={verification === "loading"}
-          className="oris-button-secondary px-3 py-1.5 text-xs font-medium transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-60"
+          className="archon-button-secondary px-3 py-1.5 text-xs font-medium transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {verification === "loading" ? "Verifying..." : "Verify On-Chain"}
         </button>
