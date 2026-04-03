@@ -49,8 +49,8 @@ type RawJobRecord = {
 };
 
 const deployment = deploymentRaw as DeploymentConfig;
-const overrideRpcUrl = process.env.NEXT_PUBLIC_RPC_URL;
-const overrideChainId = process.env.NEXT_PUBLIC_CHAIN_ID;
+const overrideRpcUrl = process.env.NEXT_PUBLIC_RPC_URL ?? process.env.NEXT_PUBLIC_ARC_RPC_URL;
+const overrideChainId = process.env.NEXT_PUBLIC_CHAIN_ID ?? process.env.NEXT_PUBLIC_ARC_CHAIN_ID;
 
 export const expectedChainId = overrideChainId ? Number(overrideChainId) : deployment.chainId;
 export const rpcUrl = overrideRpcUrl ?? deployment.rpcUrl;
