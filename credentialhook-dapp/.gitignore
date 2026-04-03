@@ -10,6 +10,10 @@ frontend/.next/
 contracts/cache/
 contracts/artifacts/
 contracts/typechain-types/
+contracts/.hardhat-appdata/
+contracts/.hardhat-localappdata/
+frontend/tsconfig.tsbuildinfo
+*.tsbuildinfo
 *.log
 .env
 .env.local
