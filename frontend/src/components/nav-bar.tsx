@@ -3,17 +3,16 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { expectedChainId, shortAddress } from "@/lib/contracts";
 import { useWallet } from "@/lib/wallet-context";
 import { RouteAnnouncer } from "@/components/route-announcer";
 import { WrongNetworkBanner } from "@/components/wrong-network-banner";
 
-const navLinks = [
+const baseNavLinks = [
   { href: "/", label: "Home" },
-  { href: "/create-job", label: "Create Job" },
-  { href: "/submit-work", label: "Submit Work" },
-  { href: "/approve-job", label: "Approve Job" },
+  { href: "/earn", label: "Earn" },
+  { href: "/tasks", label: "Tasks" },
   { href: "/profile", label: "Profile" }
 ];
 
@@ -21,8 +20,18 @@ export function NavBar() {
   const pathname = usePathname();
   const { account, chainId, connect, disconnect } = useWallet();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const adminWallet = process.env.NEXT_PUBLIC_ADMIN_WALLET?.toLowerCase() ?? "";
 
   const isWrongNetwork = chainId !== null && chainId !== expectedChainId;
+  const isAdmin = useMemo(
+    () => Boolean(account && adminWallet && account.toLowerCase() === adminWallet),
+    [account, adminWallet]
+  );
+
+  const navLinks = useMemo(
+    () => (isAdmin ? [...baseNavLinks, { href: "/admin", label: "Admin" }] : baseNavLinks),
+    [isAdmin]
+  );
 
   return (
     <>

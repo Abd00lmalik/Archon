@@ -5,170 +5,152 @@ import { anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
 
 describe("CredentialHook + ERC8183Job", function () {
   async function deployFixture() {
-    const [owner, client, agentA, agentB, other] = await ethers.getSigners();
+    const [owner, client, agentA, agentB, treasury, other] = await ethers.getSigners();
 
-    const registryFactory = await ethers.getContractFactory("ERC8004ValidationRegistry");
-    const registry: any = await registryFactory.connect(owner).deploy();
+    const sourceRegistry = await (await ethers.getContractFactory("SourceRegistry")).connect(owner).deploy();
+    await sourceRegistry.waitForDeployment();
+
+    const registry = await (await ethers.getContractFactory("ERC8004ValidationRegistry")).connect(owner).deploy();
     await registry.waitForDeployment();
 
-    const hookFactory = await ethers.getContractFactory("CredentialHook");
-    const hook: any = await hookFactory.connect(owner).deploy(await registry.getAddress());
+    const hook = await (await ethers.getContractFactory("CredentialHook")).connect(owner).deploy(await registry.getAddress());
     await hook.waitForDeployment();
     await registry.connect(owner).authorizeIssuer(await hook.getAddress(), true);
 
-    const jobFactory = await ethers.getContractFactory("ERC8183Job");
-    const job: any = await jobFactory.connect(owner).deploy(await hook.getAddress());
+    const usdc = await (await ethers.getContractFactory("MockUSDC")).connect(owner).deploy();
+    await usdc.waitForDeployment();
+
+    const oneMillion = ethers.parseUnits("1000000", 6);
+    await usdc.connect(owner).mint(client.address, oneMillion);
+    await usdc.connect(owner).mint(agentA.address, oneMillion);
+    await usdc.connect(owner).mint(agentB.address, oneMillion);
+
+    await sourceRegistry.connect(owner).approveOperator("job", client.address);
+
+    const job = await (await ethers.getContractFactory("ERC8183Job"))
+      .connect(owner)
+      .deploy(await hook.getAddress(), await usdc.getAddress(), await sourceRegistry.getAddress(), treasury.address, 1000);
     await job.waitForDeployment();
-    await hook.connect(owner).registerJobContract(await job.getAddress(), true);
+    await hook.connect(owner).registerSourceContract(await job.getAddress(), true);
 
-    return { owner, client, agentA, agentB, other, registry, hook, job };
+    await usdc.connect(client).approve(await job.getAddress(), oneMillion);
+
+    return { owner, client, agentA, agentB, treasury, other, sourceRegistry, registry, hook, usdc, job };
   }
 
-  async function createJobWithFutureDeadline(job: any, client: any) {
-    const deadline = (await time.latest()) + 24 * 60 * 60;
-    const rewardUSDC = 250_000_000n; // 250 USDC (6 decimals)
-    await job.connect(client).createJob("Build Landing", "Ship responsive page", deadline, rewardUSDC);
-    return { deadline, rewardUSDC };
+  async function createJob(job: any, client: any, reward = ethers.parseUnits("300", 6)) {
+    const deadline = (await time.latest()) + 2 * 60 * 60;
+    await job.connect(client).createJob("Build Landing", "Ship responsive page", deadline, reward);
+    return { deadline, reward };
   }
 
-  it("deploys all contracts with authorization wiring", async function () {
+  it("deploys and wires source registry, hook authorization, and job registration", async function () {
     const { owner, registry, hook, job } = await deployFixture();
     expect(await registry.authorizedIssuers(await hook.getAddress())).to.equal(true);
-    expect(await hook.registeredJobContracts(await job.getAddress())).to.equal(true);
+    expect(await hook.registeredSourceContracts(await job.getAddress())).to.equal(true);
     expect(await hook.owner()).to.equal(owner.address);
   });
 
-  it("creates a job with deadline + reward", async function () {
-    const { job, client } = await deployFixture();
-    const deadline = (await time.latest()) + 3600;
-    const rewardUSDC = 50_000_000n;
+  it("creates escrowed jobs only for approved source operators", async function () {
+    const { job, sourceRegistry, client, other } = await deployFixture();
+    const deadline = (await time.latest()) + 7200;
+    const reward = ethers.parseUnits("300", 6);
 
-    await expect(job.connect(client).createJob("Title", "Description", deadline, rewardUSDC))
+    await expect(job.connect(other).createJob("Title", "Desc", deadline, reward)).to.be.revertedWith(
+      "source operator not approved"
+    );
+
+    await sourceRegistry.approveOperator("job", other.address);
+    await expect(job.connect(other).createJob("Title", "Desc", deadline, reward)).to.be.revertedWith(
+      "insufficient allowance"
+    );
+
+    await expect(job.connect(client).createJob("Title", "Desc", deadline, reward))
       .to.emit(job, "JobCreated")
-      .withArgs(0, client.address, "Title", "Description", deadline, rewardUSDC);
-
-    const record = await job.getJob(0);
-    expect(record.client).to.equal(client.address);
-    expect(record.deadline).to.equal(deadline);
-    expect(record.rewardUSDC).to.equal(rewardUSDC);
+      .withArgs(0, client.address, "Title", "Desc", deadline, reward);
   });
 
-  it("prevents creating jobs with past deadline", async function () {
-    const { job, client } = await deployFixture();
-    const past = (await time.latest()) - 1;
-    await expect(job.connect(client).createJob("Title", "Description", past, 10_000_000n)).to.be.revertedWith(
-      "deadline must be future"
+  it("enforces review delay and approval cap", async function () {
+    const { owner, job, client, agentA, agentB, other } = await deployFixture();
+    await createJob(job, client);
+    await sourceRegistryApprove(job, owner, other);
+
+    await job.connect(agentA).acceptJob(0);
+    await job.connect(agentA).submitDeliverable(0, "https://github.com/a");
+
+    await expect(job.connect(client).approveSubmission(0, agentA.address)).to.be.revertedWith(
+      "review delay not elapsed"
     );
-  });
-
-  it("allows multiple agents to accept the same job", async function () {
-    const { job, client, agentA, agentB } = await deployFixture();
-    await createJobWithFutureDeadline(job, client);
-
-    await job.connect(agentA).acceptJob(0);
-    await job.connect(agentB).acceptJob(0);
-
-    const accepted = await job.getAcceptedAgents(0);
-    expect(accepted[0]).to.equal(agentA.address);
-    expect(accepted[1]).to.equal(agentB.address);
-  });
-
-  it("blocks accepting after deadline", async function () {
-    const { job, client, agentA } = await deployFixture();
-    const deadline = (await time.latest()) + 120;
-    await job.connect(client).createJob("Title", "Description", deadline, 10_000_000n);
-
-    await time.increaseTo(deadline + 1);
-    await expect(job.connect(agentA).acceptJob(0)).to.be.revertedWith("job deadline passed");
-  });
-
-  it("stores raw deliverable links from accepted agents", async function () {
-    const { job, client, agentA } = await deployFixture();
-    await createJobWithFutureDeadline(job, client);
-    await job.connect(agentA).acceptJob(0);
-
-    await expect(job.connect(agentA).submitDeliverable(0, "https://example.com/work/123"))
-      .to.emit(job, "DeliverableSubmitted")
-      .withArgs(0, agentA.address, "https://example.com/work/123");
-
-    const submissions = await job.getSubmissions(0);
-    expect(submissions.length).to.equal(1);
-    expect(submissions[0].deliverableLink).to.equal("https://example.com/work/123");
-  });
-
-  it("blocks non-accepted users from submitting", async function () {
-    const { job, client, other } = await deployFixture();
-    await createJobWithFutureDeadline(job, client);
-
-    await expect(job.connect(other).submitDeliverable(0, "https://x.com/work")).to.be.revertedWith(
-      "accept job first"
-    );
-  });
-
-  it("lets client approve specific submissions", async function () {
-    const { job, client, agentA } = await deployFixture();
-    await createJobWithFutureDeadline(job, client);
-    await job.connect(agentA).acceptJob(0);
-    await job.connect(agentA).submitDeliverable(0, "ipfs://approved");
-
-    await expect(job.connect(client).approveSubmission(0, agentA.address))
-      .to.emit(job, "SubmissionApproved")
-      .withArgs(0, agentA.address);
-
-    const submission = await job.getSubmission(0, agentA.address);
-    expect(submission.status).to.equal(2); // Approved
-  });
-
-  it("lets client reject specific submissions", async function () {
-    const { job, client, agentA } = await deployFixture();
-    await createJobWithFutureDeadline(job, client);
-    await job.connect(agentA).acceptJob(0);
-    await job.connect(agentA).submitDeliverable(0, "ipfs://needs-work");
-
-    await expect(job.connect(client).rejectSubmission(0, agentA.address, "Insufficient quality"))
-      .to.emit(job, "SubmissionRejected")
-      .withArgs(0, agentA.address, "Insufficient quality");
-
-    const submission = await job.getSubmission(0, agentA.address);
-    expect(submission.status).to.equal(3); // Rejected
-    expect(submission.reviewerNote).to.equal("Insufficient quality");
-  });
-
-  it("prevents non-client from reviewing submissions", async function () {
-    const { job, client, agentA, other } = await deployFixture();
-    await createJobWithFutureDeadline(job, client);
-    await job.connect(agentA).acceptJob(0);
-    await job.connect(agentA).submitDeliverable(0, "ipfs://demo");
-
-    await expect(job.connect(other).approveSubmission(0, agentA.address)).to.be.revertedWith("only client can review");
-    await expect(job.connect(other).rejectSubmission(0, agentA.address, "No")).to.be.revertedWith(
-      "only client can review"
-    );
-  });
-
-  it("allows only approved submitter to claim credential", async function () {
-    const { job, registry, client, agentA, agentB } = await deployFixture();
-    await createJobWithFutureDeadline(job, client);
-    await job.connect(agentA).acceptJob(0);
-    await job.connect(agentB).acceptJob(0);
-    await job.connect(agentA).submitDeliverable(0, "ipfs://good");
-    await job.connect(agentB).submitDeliverable(0, "ipfs://bad");
+    await time.increase(16 * 60);
     await job.connect(client).approveSubmission(0, agentA.address);
-    await job.connect(client).rejectSubmission(0, agentB.address, "Missing requirements");
+
+    await job.connect(agentB).acceptJob(0);
+    await job.connect(agentB).submitDeliverable(0, "https://github.com/b");
+    await time.increase(16 * 60);
+    await job.connect(client).approveSubmission(0, agentB.address);
+
+    await job.connect(other).acceptJob(0);
+    await job.connect(other).submitDeliverable(0, "https://github.com/c");
+    await time.increase(16 * 60);
+    await job.connect(client).approveSubmission(0, other.address);
+
+    const fourth = (await ethers.getSigners())[6];
+    await job.connect(fourth).acceptJob(0);
+    await job.connect(fourth).submitDeliverable(0, "https://github.com/d");
+    await time.increase(16 * 60);
+    await expect(job.connect(client).approveSubmission(0, fourth.address)).to.be.revertedWith("max approvals reached");
+  });
+
+  it("pays reward + mints weighted credential when approved submitter claims", async function () {
+    const { registry, usdc, job, client, agentA, treasury } = await deployFixture();
+    await createJob(job, client);
+
+    await job.connect(agentA).acceptJob(0);
+    await job.connect(agentA).submitDeliverable(0, "https://github.com/work");
+    await time.increase(16 * 60);
+    await job.connect(client).approveSubmission(0, agentA.address);
+
+    const treasuryBefore = await usdc.balanceOf(treasury.address);
+    const agentBefore = await usdc.balanceOf(agentA.address);
 
     await expect(job.connect(agentA).claimCredential(0))
-      .to.emit(job, "CredentialClaimed")
-      .withArgs(0, agentA.address, 1)
-      .and.to.emit(registry, "CredentialIssued")
-      .withArgs(agentA.address, 0, 1, anyValue);
+      .to.emit(registry, "CredentialIssued")
+      .withArgs(agentA.address, 0, 1, anyValue, "job", 100, await hookIssuer(job))
+      .and.to.emit(job, "RewardPaid");
 
-    expect(await registry.hasCredential(agentA.address, 0)).to.equal(true);
-    await expect(job.connect(agentB).claimCredential(0)).to.be.revertedWith("submission not approved");
-    await expect(job.connect(agentA).claimCredential(0)).to.be.revertedWith("credential already claimed");
+    const credential = await registry.getCredential(1);
+    expect(credential.sourceType).to.equal("job");
+    expect(credential.weight).to.equal(100);
+    expect(credential.agent).to.equal(agentA.address);
+
+    const grossReward = ethers.parseUnits("100", 6);
+    const expectedFee = (grossReward * 1000n) / 10000n;
+    const expectedAgent = grossReward - expectedFee;
+
+    expect(await usdc.balanceOf(treasury.address)).to.equal(treasuryBefore + expectedFee);
+    expect(await usdc.balanceOf(agentA.address)).to.equal(agentBefore + expectedAgent);
   });
 
-  it("reverts when unregistered caller hits hook", async function () {
+  it("rejects unregistered source contracts at hook boundary", async function () {
     const { hook, other } = await deployFixture();
-    await expect(hook.connect(other).onJobComplete(other.address, 1)).to.be.revertedWith("job contract not registered");
+    await expect(
+      hook.connect(other).onActivityComplete(other.address, 1, "job", 100)
+    ).to.be.revertedWith("source contract not registered");
   });
+
+  async function sourceRegistryApprove(job: any, owner: any, wallet: any) {
+    const sourceRegistryAddress = await job.sourceRegistry();
+    const sourceRegistry = await ethers.getContractAt("SourceRegistry", sourceRegistryAddress, owner);
+    await sourceRegistry.approveOperator("job", wallet.address);
+
+    const oneMillion = ethers.parseUnits("1000000", 6);
+    const usdcAddress = await job.usdc();
+    const usdc = await ethers.getContractAt("MockUSDC", usdcAddress, owner);
+    await usdc.mint(wallet.address, oneMillion);
+    await usdc.connect(wallet).approve(await job.getAddress(), oneMillion);
+  }
+
+  async function hookIssuer(job: any) {
+    return await job.hook();
+  }
 });

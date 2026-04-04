@@ -2,20 +2,27 @@
 pragma solidity ^0.8.20;
 
 interface IValidationRegistry {
-    function issue(address agent, uint256 jobId) external returns (uint256);
+    function issue(
+        address agent,
+        uint256 activityId,
+        string calldata sourceType,
+        uint256 weight
+    ) external returns (uint256);
 }
 
 contract CredentialHook {
     address public owner;
     IValidationRegistry public immutable validationRegistry;
-    mapping(address => bool) public registeredJobContracts;
+    mapping(address => bool) public registeredSourceContracts;
 
-    event JobContractRegistrationUpdated(address indexed jobContract, bool isRegistered);
+    event SourceContractRegistrationUpdated(address indexed sourceContract, bool isRegistered);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
-    event JobCompletionHandled(
+    event ActivityCompletionHandled(
         address indexed caller,
         address indexed agent,
-        uint256 indexed jobId,
+        uint256 indexed activityId,
+        string sourceType,
+        uint256 weight,
         uint256 credentialRecordId
     );
 
@@ -24,8 +31,8 @@ contract CredentialHook {
         _;
     }
 
-    modifier onlyRegisteredJobContract() {
-        require(registeredJobContracts[msg.sender], "job contract not registered");
+    modifier onlyRegisteredSourceContract() {
+        require(registeredSourceContracts[msg.sender], "source contract not registered");
         _;
     }
 
@@ -42,15 +49,38 @@ contract CredentialHook {
         emit OwnershipTransferred(previousOwner, newOwner);
     }
 
-    function registerJobContract(address jobContract, bool isRegistered) external onlyOwner {
-        require(jobContract != address(0), "invalid job contract");
-        registeredJobContracts[jobContract] = isRegistered;
-        emit JobContractRegistrationUpdated(jobContract, isRegistered);
+    function registerSourceContract(address sourceContract, bool isRegistered) external onlyOwner {
+        require(sourceContract != address(0), "invalid source contract");
+        registeredSourceContracts[sourceContract] = isRegistered;
+        emit SourceContractRegistrationUpdated(sourceContract, isRegistered);
     }
 
-    function onJobComplete(address agent, uint256 jobId) external onlyRegisteredJobContract returns (uint256) {
-        uint256 credentialRecordId = validationRegistry.issue(agent, jobId);
-        emit JobCompletionHandled(msg.sender, agent, jobId, credentialRecordId);
+    // Backwards-compatible alias for legacy scripts.
+    function registerJobContract(address jobContract, bool isRegistered) external onlyOwner {
+        require(jobContract != address(0), "invalid source contract");
+        registeredSourceContracts[jobContract] = isRegistered;
+        emit SourceContractRegistrationUpdated(jobContract, isRegistered);
+    }
+
+    function onActivityComplete(
+        address agent,
+        uint256 activityId,
+        string calldata sourceType,
+        uint256 weight
+    ) external onlyRegisteredSourceContract returns (uint256) {
+        require(agent != address(0), "invalid agent");
+        require(bytes(sourceType).length > 0, "source type required");
+        require(weight > 0, "invalid weight");
+
+        uint256 credentialRecordId = validationRegistry.issue(agent, activityId, sourceType, weight);
+        emit ActivityCompletionHandled(msg.sender, agent, activityId, sourceType, weight, credentialRecordId);
+        return credentialRecordId;
+    }
+
+    // Backwards-compatible wrapper.
+    function onJobComplete(address agent, uint256 jobId) external onlyRegisteredSourceContract returns (uint256) {
+        uint256 credentialRecordId = validationRegistry.issue(agent, jobId, "job", 100);
+        emit ActivityCompletionHandled(msg.sender, agent, jobId, "job", 100, credentialRecordId);
         return credentialRecordId;
     }
 }

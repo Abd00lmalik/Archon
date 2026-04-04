@@ -11,7 +11,7 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: "Archon",
-  description: "Verifiable work. On-chain.",
+  description: "Universal on-chain reputation from multi-source verifiable activity.",
   metadataBase: new URL("https://archon.vercel.app"),
   icons: {
     icon: "/logo-icon.svg",
@@ -20,7 +20,7 @@ export const metadata: Metadata = {
   },
   openGraph: {
     title: "Archon",
-    description: "Verifiable work. On-chain.",
+    description: "Universal on-chain reputation from multi-source verifiable activity.",
     images: ["/logo.svg"]
   }
 };

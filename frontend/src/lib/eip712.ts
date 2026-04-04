@@ -32,7 +32,7 @@ type TypedDataPayload = {
 export function buildCredentialTypedData(credential: CredentialRecord, chainId: number): TypedDataPayload {
   return {
     domain: {
-      name: "Archon",
+      name: "CredentialHook",
       version: "1",
       chainId,
       verifyingContract: contractAddresses.validationRegistry
@@ -42,7 +42,7 @@ export function buildCredentialTypedData(credential: CredentialRecord, chainId: 
     message: {
       credentialId: BigInt(credential.credentialId),
       agent: credential.agent,
-      jobId: BigInt(credential.jobId),
+      jobId: BigInt(credential.activityId),
       issuedAt: BigInt(credential.issuedAt),
       issuedBy: credential.issuedBy
     }

@@ -3,7 +3,13 @@
 import { ethers } from "ethers";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { expectedChainId, formatTimestamp, getJobWriteContract } from "@/lib/contracts";
+import {
+  contractAddresses,
+  expectedChainId,
+  formatTimestamp,
+  getJobWriteContract,
+  txApproveUsdcIfNeeded
+} from "@/lib/contracts";
 import { useWallet } from "@/lib/wallet-context";
 import { ARC_TOKEN_CONFIG } from "../../../config";
 import { getArcBalance, hasEnoughArcToPost } from "@/lib/arcToken";
@@ -179,6 +185,13 @@ export default function CreateJobPage() {
 
       const jobContract = await getJobWriteContract(provider);
       const predictedJobId = Number(await jobContract.nextJobId());
+
+      const approvalTx = await txApproveUsdcIfNeeded(provider, contractAddresses.job, rewardUnits);
+      if (approvalTx) {
+        setStatus(`USDC approve transaction submitted: ${approvalTx.hash}`);
+        await approvalTx.wait();
+      }
+
       const tx = await jobContract.createJob(trimmedTitle, trimmedDescription, deadline, rewardUnits);
       setStatus(`Create transaction submitted: ${tx.hash}`);
       const receipt = await tx.wait();

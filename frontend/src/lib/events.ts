@@ -1,47 +1,40 @@
 import { ethers } from "ethers";
-import { contractAddresses, getDeploymentConfig, parseJob } from "@/lib/contracts";
+import {
+  getDeploymentConfig,
+  parseCredential,
+  parseJob
+} from "@/lib/contracts";
 
 type JobListener = (job: ReturnType<typeof parseJob>) => void;
 type JobStatusListener = (status: number) => void;
-type CredentialListener = (credential: { agent: string; jobId: number; credentialId: number }) => void;
+type CredentialListener = (credential: ReturnType<typeof parseCredential>) => void;
+type TaskListener = (taskId: number) => void;
 
-function getJobContract(provider: ethers.Provider) {
+function getContract(contractKey: keyof ReturnType<typeof getDeploymentConfig>["contracts"], provider: ethers.Provider) {
   const deployment = getDeploymentConfig();
-  return new ethers.Contract(
-    contractAddresses.job,
-    deployment.contracts.job.abi as ethers.InterfaceAbi,
-    provider
-  );
-}
-
-function getRegistryContract(provider: ethers.Provider) {
-  const deployment = getDeploymentConfig();
-  return new ethers.Contract(
-    contractAddresses.validationRegistry,
-    deployment.contracts.validationRegistry.abi as ethers.InterfaceAbi,
-    provider
-  );
+  const config = deployment.contracts[contractKey];
+  if (!config || config.address === "0x0000000000000000000000000000000000000000") {
+    return null;
+  }
+  return new ethers.Contract(config.address, config.abi as ethers.InterfaceAbi, provider);
 }
 
 export function subscribeToNewJobs(provider: ethers.Provider | null, onJob: JobListener): () => void {
-  if (!provider) {
-    return () => undefined;
-  }
+  if (!provider) return () => undefined;
+  const contract = getContract("job", provider);
+  if (!contract) return () => undefined;
 
-  const contract = getJobContract(provider);
   const handler = async (jobId: bigint) => {
     try {
       const rawJob = await contract.getJob(jobId);
       onJob(parseJob(rawJob));
     } catch {
-      // Ignore transient fetch errors.
+      // Ignore transient listener fetch errors.
     }
   };
 
   contract.on("JobCreated", handler);
-  return () => {
-    contract.off("JobCreated", handler);
-  };
+  return () => contract.off("JobCreated", handler);
 }
 
 export function subscribeToJobUpdates(
@@ -49,30 +42,21 @@ export function subscribeToJobUpdates(
   jobId: number,
   onUpdate: JobStatusListener
 ): () => void {
-  if (!provider) {
-    return () => undefined;
-  }
+  if (!provider) return () => undefined;
+  const contract = getContract("job", provider);
+  if (!contract) return () => undefined;
 
-  const contract = getJobContract(provider);
   const accepted = (eventJobId: bigint) => {
-    if (Number(eventJobId) === jobId) {
-      onUpdate(1);
-    }
+    if (Number(eventJobId) === jobId) onUpdate(1);
   };
   const submitted = (eventJobId: bigint) => {
-    if (Number(eventJobId) === jobId) {
-      onUpdate(2);
-    }
+    if (Number(eventJobId) === jobId) onUpdate(2);
   };
   const approved = (eventJobId: bigint) => {
-    if (Number(eventJobId) === jobId) {
-      onUpdate(3);
-    }
+    if (Number(eventJobId) === jobId) onUpdate(3);
   };
   const rejected = (eventJobId: bigint) => {
-    if (Number(eventJobId) === jobId) {
-      onUpdate(4);
-    }
+    if (Number(eventJobId) === jobId) onUpdate(4);
   };
 
   contract.on("JobAccepted", accepted);
@@ -93,25 +77,58 @@ export function subscribeToCredentials(
   agentAddress: string,
   onCredential: CredentialListener
 ): () => void {
-  if (!provider || !agentAddress) {
-    return () => undefined;
-  }
-
+  if (!provider || !agentAddress) return () => undefined;
+  const contract = getContract("validationRegistry", provider);
+  if (!contract) return () => undefined;
   const normalized = agentAddress.toLowerCase();
-  const contract = getRegistryContract(provider);
-  const handler = (agent: string, jobId: bigint, credentialRecordId: bigint) => {
-    if (agent.toLowerCase() !== normalized) {
-      return;
-    }
-    onCredential({
-      agent,
-      jobId: Number(jobId),
-      credentialId: Number(credentialRecordId)
-    });
+
+  const handler = async (
+    eventAgent: string,
+    activityId: bigint,
+    credentialRecordId: bigint,
+    issuedAt: bigint,
+    sourceType: string,
+    weight: bigint,
+    issuedBy: string
+  ) => {
+    if (eventAgent.toLowerCase() !== normalized) return;
+    onCredential(
+      parseCredential({
+        credentialId: credentialRecordId,
+        agent: eventAgent,
+        jobId: activityId,
+        issuedAt,
+        issuedBy,
+        valid: true,
+        sourceType,
+        weight
+      })
+    );
   };
 
   contract.on("CredentialIssued", handler);
-  return () => {
-    contract.off("CredentialIssued", handler);
+  return () => contract.off("CredentialIssued", handler);
+}
+
+export function subscribeToOpenTasks(
+  provider: ethers.Provider | null,
+  onTaskPosted: TaskListener
+): () => void {
+  if (!provider) return () => undefined;
+  const deployment = getDeploymentConfig();
+  if (
+    !deployment.contracts.agentTaskSource ||
+    deployment.contracts.agentTaskSource.address === "0x0000000000000000000000000000000000000000"
+  ) {
+    return () => undefined;
+  }
+  const contract = getContract("agentTaskSource", provider);
+  if (!contract) return () => undefined;
+
+  const handler = (taskId: bigint) => {
+    onTaskPosted(Number(taskId));
   };
+
+  contract.on("AgentTaskPosted", handler);
+  return () => contract.off("AgentTaskPosted", handler);
 }

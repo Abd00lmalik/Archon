@@ -11,12 +11,25 @@ type DeploymentConfig = {
   network: string;
   chainId: number;
   rpcUrl: string;
+  platform: {
+    treasury: string;
+    feeBps: number;
+  };
   contracts: {
+    sourceRegistry: ContractConfig;
     validationRegistry: ContractConfig;
     credentialHook: ContractConfig;
+    usdc: ContractConfig;
     job: ContractConfig;
+    githubSource: ContractConfig;
+    communitySource: ContractConfig;
+    agentTaskSource: ContractConfig;
+    peerAttestationSource: ContractConfig;
+    daoGovernanceSource: ContractConfig;
   };
 };
+
+const SOURCE_TYPES = ["job", "github", "community", "agent_task"] as const;
 
 function writeJson(filePath: string, payload: unknown) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -28,14 +41,65 @@ async function getAbi(contractName: string): Promise<unknown[]> {
   return artifact.abi;
 }
 
+function normalizeAddress(value: string | undefined) {
+  if (!value) return "";
+  return value.trim();
+}
+
 async function main() {
-  const [deployer] = await ethers.getSigners();
+  const [deployer, signer1, signer2, signer3] = await ethers.getSigners();
   const chainId = Number((await deployer.provider.getNetwork()).chainId);
-  const rpcUrl = network.name === "arcTestnet"
-    ? process.env.ARC_TESTNET_RPC_URL ?? ""
-    : "http://127.0.0.1:8545";
+  const rpcUrl =
+    network.name === "arcTestnet"
+      ? process.env.ARC_TESTNET_RPC_URL ?? "https://rpc.testnet.arc.network"
+      : "http://127.0.0.1:8545";
+
+  const platformFeeBps = Number(process.env.PLATFORM_FEE_BPS ?? "1000");
+  if (Number.isNaN(platformFeeBps) || platformFeeBps < 0 || platformFeeBps > 2000) {
+    throw new Error("PLATFORM_FEE_BPS must be between 0 and 2000");
+  }
+
+  const configuredTreasury = normalizeAddress(process.env.PLATFORM_TREASURY);
+  const platformTreasury = configuredTreasury || deployer.address;
+
+  const configuredUsdcAddress = normalizeAddress(process.env.ARC_USDC_ADDRESS ?? process.env.USDC_ADDRESS);
 
   console.log(`Deploying contracts with ${deployer.address} on ${network.name} (chainId=${chainId})`);
+  console.log(`Platform treasury: ${platformTreasury}`);
+  console.log(`Platform fee (bps): ${platformFeeBps}`);
+
+  let usdcAddress = configuredUsdcAddress;
+  if (network.name === "arcTestnet" && !usdcAddress) {
+    throw new Error("Missing ARC_USDC_ADDRESS (or USDC_ADDRESS) for arcTestnet deployment.");
+  }
+
+  let usdcContractName = "IERC20Minimal";
+  if (!usdcAddress) {
+    const mockUsdc = await ethers.deployContract("MockUSDC");
+    await mockUsdc.waitForDeployment();
+    usdcAddress = await mockUsdc.getAddress();
+    usdcContractName = "MockUSDC";
+    console.log(`MockUSDC: ${usdcAddress}`);
+
+    const seedAmount = ethers.parseUnits("1000000", 6);
+    await (await mockUsdc.mint(deployer.address, seedAmount)).wait();
+    await (await mockUsdc.mint(signer1.address, seedAmount)).wait();
+    await (await mockUsdc.mint(signer2.address, seedAmount)).wait();
+    await (await mockUsdc.mint(signer3.address, seedAmount)).wait();
+    console.log("Minted test USDC to first four accounts.");
+  } else {
+    console.log(`Using configured USDC token: ${usdcAddress}`);
+  }
+
+  const sourceRegistry = await ethers.deployContract("SourceRegistry");
+  await sourceRegistry.waitForDeployment();
+  const sourceRegistryAddress = await sourceRegistry.getAddress();
+  console.log(`SourceRegistry: ${sourceRegistryAddress}`);
+
+  for (const sourceType of SOURCE_TYPES) {
+    await (await sourceRegistry.approveOperator(sourceType, deployer.address)).wait();
+  }
+  console.log("Approved deployer as source operator for job/github/community/agent_task.");
 
   const registry = await ethers.deployContract("ERC8004ValidationRegistry");
   await registry.waitForDeployment();
@@ -47,24 +111,83 @@ async function main() {
   const hookAddress = await hook.getAddress();
   console.log(`CredentialHook: ${hookAddress}`);
 
-  const authorizeTx = await registry.authorizeIssuer(hookAddress, true);
-  await authorizeTx.wait();
-  console.log(`Authorized hook as registry issuer.`);
+  await (await registry.authorizeIssuer(hookAddress, true)).wait();
+  console.log("Authorized hook as registry issuer.");
 
-  const job = await ethers.deployContract("ERC8183Job", [hookAddress]);
+  const job = await ethers.deployContract("ERC8183Job", [
+    hookAddress,
+    usdcAddress,
+    sourceRegistryAddress,
+    platformTreasury,
+    platformFeeBps
+  ]);
   await job.waitForDeployment();
   const jobAddress = await job.getAddress();
   console.log(`ERC8183Job: ${jobAddress}`);
 
-  const registerTx = await hook.registerJobContract(jobAddress, true);
-  await registerTx.wait();
-  console.log(`Registered job contract in hook.`);
+  const githubSource = await ethers.deployContract("GitHubSource", [hookAddress, sourceRegistryAddress]);
+  await githubSource.waitForDeployment();
+  const githubSourceAddress = await githubSource.getAddress();
+  console.log(`GitHubSource: ${githubSourceAddress}`);
+
+  const communitySource = await ethers.deployContract("CommunitySource", [hookAddress, sourceRegistryAddress]);
+  await communitySource.waitForDeployment();
+  const communitySourceAddress = await communitySource.getAddress();
+  console.log(`CommunitySource: ${communitySourceAddress}`);
+
+  const agentTaskSource = await ethers.deployContract("AgentTaskSource", [
+    hookAddress,
+    usdcAddress,
+    sourceRegistryAddress,
+    platformTreasury,
+    platformFeeBps
+  ]);
+  await agentTaskSource.waitForDeployment();
+  const agentTaskSourceAddress = await agentTaskSource.getAddress();
+  console.log(`AgentTaskSource: ${agentTaskSourceAddress}`);
+
+  const peerAttestationSource = await ethers.deployContract("PeerAttestationSource", [
+    hookAddress,
+    registryAddress
+  ]);
+  await peerAttestationSource.waitForDeployment();
+  const peerAttestationSourceAddress = await peerAttestationSource.getAddress();
+  console.log(`PeerAttestationSource: ${peerAttestationSourceAddress}`);
+
+  const daoGovernanceSource = await ethers.deployContract("DAOGovernanceSource", [hookAddress]);
+  await daoGovernanceSource.waitForDeployment();
+  const daoGovernanceSourceAddress = await daoGovernanceSource.getAddress();
+  console.log(`DAOGovernanceSource: ${daoGovernanceSourceAddress}`);
+
+  const sourceContracts = [
+    jobAddress,
+    githubSourceAddress,
+    communitySourceAddress,
+    agentTaskSourceAddress,
+    peerAttestationSourceAddress,
+    daoGovernanceSourceAddress
+  ];
+  for (const sourceAddress of sourceContracts) {
+    await (await hook.registerSourceContract(sourceAddress, true)).wait();
+  }
+  console.log("Registered all source contracts in CredentialHook.");
+
+  await (await registry.authorizeIssuer(deployer.address, false)).wait();
+  console.log("Revoked owner direct issuance in ValidationRegistry.");
 
   const deploymentConfig: DeploymentConfig = {
     network: network.name,
     chainId,
     rpcUrl,
+    platform: {
+      treasury: platformTreasury,
+      feeBps: platformFeeBps
+    },
     contracts: {
+      sourceRegistry: {
+        address: sourceRegistryAddress,
+        abi: await getAbi("SourceRegistry")
+      },
       validationRegistry: {
         address: registryAddress,
         abi: await getAbi("ERC8004ValidationRegistry")
@@ -73,9 +196,33 @@ async function main() {
         address: hookAddress,
         abi: await getAbi("CredentialHook")
       },
+      usdc: {
+        address: usdcAddress,
+        abi: usdcContractName === "MockUSDC" ? await getAbi("MockUSDC") : await getAbi("MockUSDC")
+      },
       job: {
         address: jobAddress,
         abi: await getAbi("ERC8183Job")
+      },
+      githubSource: {
+        address: githubSourceAddress,
+        abi: await getAbi("GitHubSource")
+      },
+      communitySource: {
+        address: communitySourceAddress,
+        abi: await getAbi("CommunitySource")
+      },
+      agentTaskSource: {
+        address: agentTaskSourceAddress,
+        abi: await getAbi("AgentTaskSource")
+      },
+      peerAttestationSource: {
+        address: peerAttestationSourceAddress,
+        abi: await getAbi("PeerAttestationSource")
+      },
+      daoGovernanceSource: {
+        address: daoGovernanceSourceAddress,
+        abi: await getAbi("DAOGovernanceSource")
       }
     }
   };
@@ -86,7 +233,7 @@ async function main() {
   const frontendConfigPath = path.resolve(__dirname, "../../frontend/src/lib/generated/contracts.json");
   writeJson(frontendConfigPath, deploymentConfig);
 
-  console.log(`Deployment files written to:`);
+  console.log("Deployment files written to:");
   console.log(`- ${deploymentsFilePath}`);
   console.log(`- ${frontendConfigPath}`);
 }

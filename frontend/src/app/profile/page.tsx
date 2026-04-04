@@ -7,28 +7,36 @@ import { subscribeToCredentials } from "@/lib/events";
 import {
   CredentialRecord,
   expectedChainId,
+  fetchCredentialsForAgent,
   getReadProvider,
-  getValidationRegistryReadContract,
-  parseCredential,
+  getSourceLabelForDisplay,
   shortAddress
 } from "@/lib/contracts";
-import { calculateReputationScore, getReputationTier, getTierColor } from "@/lib/reputation";
+import {
+  calculateWeightedScore,
+  getReputationTier,
+  getScoreBreakdown,
+  getSourceColor,
+  getSourceLabel,
+  getTierProgress
+} from "@/lib/reputation";
 import { useWallet } from "@/lib/wallet-context";
 
-function getProgressMeta(score: number) {
-  if (score >= 500) {
-    return { progress: 100, remaining: 0, nextTier: "Max tier" };
-  }
-  if (score >= 300) {
-    return { progress: ((score - 300) / 200) * 100, remaining: 500 - score, nextTier: "Elite" };
-  }
-  if (score >= 150) {
-    return { progress: ((score - 150) / 150) * 100, remaining: 300 - score, nextTier: "Expert" };
-  }
-  if (score >= 50) {
-    return { progress: ((score - 50) / 100) * 100, remaining: 150 - score, nextTier: "Verified" };
-  }
-  return { progress: (score / 50) * 100, remaining: 50 - score, nextTier: "Contributor" };
+const FILTERS = [
+  { key: "all", label: "All" },
+  { key: "job", label: "Jobs" },
+  { key: "github", label: "GitHub" },
+  { key: "agent_task", label: "Agent Tasks" },
+  { key: "community", label: "Community" },
+  { key: "peer_attestation", label: "Peer" },
+  { key: "dao_governance", label: "Governance" }
+] as const;
+
+function normalizeSource(sourceType: string) {
+  const normalized = sourceType.toLowerCase().trim();
+  if (normalized.startsWith("github")) return "github";
+  if (normalized.startsWith("community")) return "community";
+  return normalized;
 }
 
 export default function ProfilePage() {
@@ -37,6 +45,7 @@ export default function ProfilePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [copyStatus, setCopyStatus] = useState("");
+  const [activeFilter, setActiveFilter] = useState<(typeof FILTERS)[number]["key"]>("all");
 
   const loadCredentials = useCallback(async () => {
     if (!account) {
@@ -47,12 +56,10 @@ export default function ProfilePage() {
     setLoading(true);
     setError("");
     try {
-      const registry = getValidationRegistryReadContract();
-      const credentialIds = (await registry.getCredentials(account)) as unknown[];
-      const normalized = credentialIds.map((jobId) => parseCredential(account, jobId));
-      setCredentials(normalized.reverse());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load credentials.");
+      const list = await fetchCredentialsForAgent(account);
+      setCredentials(list);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Failed to load credentials.");
     } finally {
       setLoading(false);
     }
@@ -63,37 +70,33 @@ export default function ProfilePage() {
   }, [loadCredentials]);
 
   useEffect(() => {
-    if (!account) {
-      return () => undefined;
-    }
-
-    const unsubscribe = subscribeToCredentials(browserProvider ?? getReadProvider(), account, ({ agent, jobId, credentialId }) => {
-      setCredentials((previous) => {
-        if (previous.some((credential) => credential.jobId === jobId)) {
-          return previous;
-        }
-        return [
-          {
-            credentialId,
-            agent,
-            jobId,
-            issuedAt: Math.floor(Date.now() / 1000),
-            issuedBy: "0x0000000000000000000000000000000000000000"
-          },
-          ...previous
-        ];
-      });
-    });
-
+    if (!account) return () => undefined;
+    const unsubscribe = subscribeToCredentials(
+      browserProvider ?? getReadProvider(),
+      account,
+      (credential) => {
+        setCredentials((previous) => {
+          if (previous.some((item) => item.credentialId === credential.credentialId)) {
+            return previous;
+          }
+          return [credential, ...previous];
+        });
+      }
+    );
     return unsubscribe;
   }, [account, browserProvider]);
 
   const profileChainId = chainId ?? expectedChainId;
   const did = account ? generateDID(account, profileChainId) : "";
-  const score = useMemo(() => calculateReputationScore(credentials), [credentials]);
+  const score = useMemo(() => calculateWeightedScore(credentials), [credentials]);
   const tier = useMemo(() => getReputationTier(score), [score]);
-  const tierColor = useMemo(() => getTierColor(tier), [tier]);
-  const progressMeta = useMemo(() => getProgressMeta(score), [score]);
+  const tierProgress = useMemo(() => getTierProgress(score), [score]);
+  const scoreBreakdown = useMemo(() => getScoreBreakdown(credentials), [credentials]);
+
+  const filteredCredentials = useMemo(() => {
+    if (activeFilter === "all") return credentials;
+    return credentials.filter((credential) => normalizeSource(credential.sourceType) === activeFilter);
+  }, [activeFilter, credentials]);
 
   const copyToClipboard = async (value: string, label: string) => {
     try {
@@ -109,12 +112,18 @@ export default function ProfilePage() {
   return (
     <section className="space-y-6">
       <div className="archon-card p-6">
-        <h1 className="text-2xl font-semibold tracking-wide text-[#EAEAF0]">Profile</h1>
-        <p className="mt-2 text-sm text-[#9CA3AF]">Identity, credentials, and reputation in Archon.</p>
+        <h1 className="text-2xl font-semibold tracking-wide text-[#EAEAF0]">Unified Reputation Dashboard</h1>
+        <p className="mt-2 text-sm text-[#9CA3AF]">
+          Credentials from jobs, GitHub, agent tasks, community work, peer attestations, and governance.
+        </p>
 
         {!account ? (
           <div className="mt-5 rounded-xl border border-amber-300/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-            Wallet not connected. <button type="button" onClick={() => void connect()} className="underline underline-offset-4">Connect wallet</button>.
+            Wallet not connected.{" "}
+            <button type="button" onClick={() => void connect()} className="underline underline-offset-4">
+              Connect wallet
+            </button>
+            .
           </div>
         ) : (
           <div className="mt-5 grid gap-3 text-sm text-[#9CA3AF]">
@@ -161,50 +170,92 @@ export default function ProfilePage() {
         )}
       </div>
 
-      {error ? <div className="archon-card border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</div> : null}
+      {error ? (
+        <div className="archon-card border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+          {error}
+        </div>
+      ) : null}
 
       <div className="archon-card p-6">
-        <h2 className="text-lg font-semibold tracking-wide text-[#EAEAF0]">Reputation</h2>
-        <p className="mt-1 text-sm text-[#9CA3AF]">Score = credentials x 10 (capped at 1000).</p>
+        <h2 className="text-lg font-semibold tracking-wide text-[#EAEAF0]">Reputation Score</h2>
+        <p className="mt-1 text-sm text-[#9CA3AF]">Score = sum of credential weights (capped at 2000).</p>
 
         <div className="mt-4 flex flex-wrap items-end gap-4">
           <div>
             <div className="text-3xl font-semibold text-[#EAEAF0]">{score}</div>
-            <div className={`text-sm font-semibold ${tierColor}`}>{tier}</div>
+            <div className="text-sm font-semibold text-[#00D1B2]">{tier}</div>
           </div>
           <div className="min-w-[220px] flex-1">
             <div className="mb-1 flex justify-between text-xs text-[#9CA3AF]">
-              <span>Progress to {progressMeta.nextTier}</span>
-              <span>{Math.max(0, progressMeta.remaining)} points left</span>
+              <span>Progress to {tierProgress.nextTier}</span>
+              <span>{tierProgress.remaining} points left</span>
             </div>
             <div className="h-2 overflow-hidden rounded-full bg-white/10">
               <div
                 className="h-full bg-[#00D1B2] transition-all duration-700"
-                style={{ width: `${Math.min(100, Math.max(0, progressMeta.progress))}%` }}
+                style={{ width: `${Math.min(100, Math.max(0, tierProgress.progress))}%` }}
               />
             </div>
           </div>
         </div>
+
+        <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {Object.entries(scoreBreakdown).map(([sourceType, value]) => (
+            <div key={sourceType} className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2 text-sm">
+              <span className="font-medium" style={{ color: getSourceColor(sourceType) }}>
+                {getSourceLabel(sourceType)}:
+              </span>{" "}
+              <span className="text-[#EAEAF0]">{value} pts</span>
+            </div>
+          ))}
+          {Object.keys(scoreBreakdown).length === 0 ? (
+            <div className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2 text-sm text-[#9CA3AF]">
+              No score breakdown yet.
+            </div>
+          ) : null}
+        </div>
       </div>
 
       <div className="archon-card p-6">
-        <h2 className="text-lg font-semibold tracking-wide text-[#EAEAF0]">Credentials</h2>
-        <p className="mt-1 text-sm text-[#9CA3AF]">Permanent records bound to wallet and job.</p>
+        <h2 className="text-lg font-semibold tracking-wide text-[#EAEAF0]">Credential Timeline</h2>
+        <p className="mt-1 text-sm text-[#9CA3AF]">Permanent source-tagged records across all activity types.</p>
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          {FILTERS.map((filter) => (
+            <button
+              key={filter.key}
+              type="button"
+              onClick={() => setActiveFilter(filter.key)}
+              className={`rounded-full px-3 py-1.5 text-xs transition-all ${
+                activeFilter === filter.key
+                  ? "bg-[#6C5CE7]/35 text-[#EAEAF0]"
+                  : "bg-white/5 text-[#9CA3AF] hover:bg-white/10 hover:text-[#EAEAF0]"
+              }`}
+            >
+              {filter.label}
+            </button>
+          ))}
+        </div>
 
         {!account ? (
           <p className="mt-4 text-sm text-[#9CA3AF]">Connect your wallet to view credentials.</p>
         ) : loading ? (
           <p className="mt-4 text-sm text-[#9CA3AF]">Loading credentials...</p>
-        ) : credentials.length === 0 ? (
-          <p className="mt-4 text-sm text-[#9CA3AF]">No credentials minted yet.</p>
+        ) : filteredCredentials.length === 0 ? (
+          <p className="mt-4 text-sm text-[#9CA3AF]">No credentials for this filter yet.</p>
         ) : (
           <div className="mt-4 space-y-3">
-            {credentials.map((credential) => (
-              <CredentialCard
-                key={`${credential.agent}-${credential.jobId}`}
-                credential={credential}
-                provider={browserProvider ?? getReadProvider()}
-              />
+            {filteredCredentials.map((credential) => (
+              <div key={credential.credentialId} className="space-y-2">
+                <div className="flex items-center gap-2 text-xs text-[#9CA3AF]">
+                  <span
+                    className="inline-block h-2 w-2 rounded-full"
+                    style={{ backgroundColor: getSourceColor(credential.sourceType) }}
+                  />
+                  <span>{getSourceLabelForDisplay(credential.sourceType)}</span>
+                </div>
+                <CredentialCard credential={credential} provider={browserProvider ?? getReadProvider()} />
+              </div>
             ))}
           </div>
         )}
