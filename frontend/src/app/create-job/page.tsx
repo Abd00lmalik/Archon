@@ -149,23 +149,13 @@ export default function CreateJobPage() {
         try {
           const rewardUnits = parseRewardToUnits(rewardInput);
           const taskContract = await getJobWriteContract(browserProvider);
-          let gas: bigint;
-          try {
-            gas = (await taskContract.createJob.estimateGas(
-              trimmedTitle,
-              trimmedDescription,
-              deadline,
-              rewardUnits,
-              maxApprovals
-            )) as bigint;
-          } catch {
-            gas = (await taskContract.createJob.estimateGas(
-              trimmedTitle,
-              trimmedDescription,
-              deadline,
-              rewardUnits
-            )) as bigint;
-          }
+          const gas = (await taskContract.createJob.estimateGas(
+            trimmedTitle,
+            trimmedDescription,
+            deadline,
+            rewardUnits,
+            maxApprovals
+          )) as bigint;
 
           const feeData = await browserProvider.getFeeData();
           const gasPrice = feeData.gasPrice ?? feeData.maxFeePerGas;
@@ -253,23 +243,13 @@ export default function CreateJobPage() {
         await approvalTx.wait();
       }
 
-      let tx: ethers.TransactionResponse;
-      try {
-        tx = (await taskContract.createJob(
-          trimmedTitle,
-          trimmedDescription,
-          deadline,
-          rewardUnits,
-          maxApprovals
-        )) as ethers.TransactionResponse;
-      } catch {
-        tx = (await taskContract.createJob(
-          trimmedTitle,
-          trimmedDescription,
-          deadline,
-          rewardUnits
-        )) as ethers.TransactionResponse;
-      }
+      const tx = (await taskContract.createJob(
+        trimmedTitle,
+        trimmedDescription,
+        deadline,
+        rewardUnits,
+        maxApprovals
+      )) as ethers.TransactionResponse;
       setStatus(`Create transaction submitted: ${tx.hash}`);
       const receipt = await tx.wait();
 

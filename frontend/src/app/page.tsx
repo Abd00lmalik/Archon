@@ -1,14 +1,14 @@
 ﻿"use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { ethers } from "ethers";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AgentTaskRecord,
   CredentialRecord,
   fetchAllJobs,
   fetchCredentialsForAgent,
+  fetchMilestoneEscrowTotal,
   fetchMaxApprovalsForJob,
   fetchJobsByAgent,
   fetchJobsCreatedCount,
@@ -64,11 +64,18 @@ export default function HomePage() {
   const [myCredentialCount, setMyCredentialCount] = useState(0);
   const [myScore, setMyScore] = useState(0);
   const [myTier, setMyTier] = useState("Surveyor");
-  const [stats, setStats] = useState({
-    totalCredentials: "—",
-    openTasks: "—",
-    totalEscrowUsdc: "—",
-    verifiedWallets: "—"
+  const jobsSectionRef = useRef<HTMLDivElement | null>(null);
+  const [statTargets, setStatTargets] = useState({
+    totalCredentials: null as number | null,
+    openTasks: null as number | null,
+    totalEscrowUsdc: null as number | null,
+    verifiedWallets: null as number | null
+  });
+  const [animatedStats, setAnimatedStats] = useState({
+    totalCredentials: 0,
+    openTasks: 0,
+    totalEscrowUsdc: 0,
+    verifiedWallets: 0
   });
 
   const configured = useMemo(() => isContractsConfigured(), []);
@@ -134,18 +141,6 @@ export default function HomePage() {
         }
       }
 
-      const registry = getRegistryReadContract();
-      const totalCredentials = Number(await registry.totalCredentials());
-      const credentials: CredentialRecord[] = [];
-      const start = Math.max(1, totalCredentials - 9);
-      for (let credentialId = totalCredentials; credentialId >= start; credentialId--) {
-        const credential = parseCredential(await registry.getCredential(credentialId));
-        if (credential.agent !== ethers.ZeroAddress) {
-          credentials.push(credential);
-        }
-      }
-      setRecentCredentials(credentials);
-
       const escrowTotal = jobRows.reduce((sum, job) => {
         const pool = BigInt(job.rewardUSDC || "0");
         const paid = BigInt(job.paidOutUSDC || "0");
@@ -153,15 +148,48 @@ export default function HomePage() {
         return sum + (pool - paid);
       }, 0n);
 
-      const registryStats = await fetchRegistryCredentialStatsApprox(500);
-      const openTaskCount = jobRows.filter((job) => job.status === 0).length;
-      setStats({
-        totalCredentials: String(registryStats.totalCredentials),
-        openTasks: String(openTaskCount),
-        totalEscrowUsdc: formatUsdc(escrowTotal),
-        verifiedWallets: String(registryStats.uniqueWalletsApprox)
-      });
+      try {
+        const registry = getRegistryReadContract();
+        const totalCredentials = Number(await registry.totalCredentials());
+        const credentials: CredentialRecord[] = [];
+        const start = Math.max(1, totalCredentials - 9);
+        for (let credentialId = totalCredentials; credentialId >= start; credentialId--) {
+          const credential = parseCredential(await registry.getCredential(credentialId));
+          if (credential.agent !== ethers.ZeroAddress) {
+            credentials.push(credential);
+          }
+        }
+        setRecentCredentials(credentials);
+      } catch {
+        setRecentCredentials([]);
+      }
+
+      try {
+        const milestoneEscrowTotal = await fetchMilestoneEscrowTotal();
+        const totalEscrow = escrowTotal + milestoneEscrowTotal;
+        const registryStats = await fetchRegistryCredentialStatsApprox(500);
+        const openTaskCount = jobRows.filter((job) => job.status === 0).length;
+        setStatTargets({
+          totalCredentials: registryStats.totalCredentials,
+          openTasks: openTaskCount,
+          totalEscrowUsdc: Number(formatUsdc(totalEscrow)),
+          verifiedWallets: registryStats.totalCredentials
+        });
+      } catch {
+        setStatTargets({
+          totalCredentials: null,
+          openTasks: null,
+          totalEscrowUsdc: null,
+          verifiedWallets: null
+        });
+      }
     } catch (loadError) {
+      setStatTargets({
+        totalCredentials: null,
+        openTasks: null,
+        totalEscrowUsdc: null,
+        verifiedWallets: null
+      });
       setError(loadError instanceof Error ? loadError.message : "Failed to load activity feed.");
     } finally {
       setLoading(false);
@@ -187,6 +215,33 @@ export default function HomePage() {
       for (const unsub of unsubs) unsub();
     };
   }, [browserProvider, configured, loadFeed]);
+
+  useEffect(() => {
+    const animationDurationMs = 900;
+    const stepMs = 30;
+    const totalSteps = Math.max(1, Math.floor(animationDurationMs / stepMs));
+    let currentStep = 0;
+    const interval = setInterval(() => {
+      currentStep += 1;
+      const progress = Math.min(1, currentStep / totalSteps);
+      setAnimatedStats({
+        totalCredentials:
+          statTargets.totalCredentials == null ? 0 : Math.round(statTargets.totalCredentials * progress),
+        openTasks: statTargets.openTasks == null ? 0 : Math.round(statTargets.openTasks * progress),
+        totalEscrowUsdc:
+          statTargets.totalEscrowUsdc == null
+            ? 0
+            : Number((statTargets.totalEscrowUsdc * progress).toFixed(2)),
+        verifiedWallets:
+          statTargets.verifiedWallets == null ? 0 : Math.round(statTargets.verifiedWallets * progress)
+      });
+      if (progress >= 1) {
+        clearInterval(interval);
+      }
+    }, stepMs);
+
+    return () => clearInterval(interval);
+  }, [statTargets]);
 
   useEffect(() => {
     let active = true;
@@ -233,12 +288,50 @@ export default function HomePage() {
     setShowWelcomeBanner(false);
   };
 
+  const statValue = (target: number | null, value: number, kind: "int" | "usdc" = "int") => {
+    if (target == null) return "—";
+    if (kind === "usdc") return value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return Math.round(value).toLocaleString();
+  };
+
   return (
     <section className="space-y-8">
-      <div className="archon-card p-6 text-center md:p-8">
-        <div className="mx-auto flex w-full max-w-xl flex-col items-center gap-4">
-          <Image src="/logo.svg" alt="Archon" width={220} height={70} priority />
-          <h1 className="text-3xl font-semibold tracking-wide text-[#EAEAF0]">Archon</h1>
+      <div className="overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-[#0A1F2E] to-[#145B7D] p-6 md:p-8">
+        <div className="mx-auto max-w-5xl">
+          <h1 className="text-3xl font-semibold tracking-wide text-[#EAEAF0]">CredentialHook</h1>
+          <p className="mt-2 text-sm text-[#C9D0DB]">Universal On-Chain Reputation on Arc</p>
+
+          <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-2xl border border-white/10 bg-[#0A0A0B]/45 p-4">
+              <p className="text-5xl font-bold text-[#00FFC8] transition-all duration-200">{statValue(statTargets.totalCredentials, animatedStats.totalCredentials)}</p>
+              <p className="mt-2 text-sm text-[#9CA3AF]">Credentials Minted</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-[#0A0A0B]/45 p-4">
+              <p className="text-5xl font-bold text-[#00FFC8] transition-all duration-200">{statValue(statTargets.openTasks, animatedStats.openTasks)}</p>
+              <p className="mt-2 text-sm text-[#9CA3AF]">Open Tasks Available</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-[#0A0A0B]/45 p-4">
+              <p className="text-5xl font-bold text-[#00FFC8] transition-all duration-200">{statValue(statTargets.totalEscrowUsdc, animatedStats.totalEscrowUsdc, "usdc")}</p>
+              <p className="mt-2 text-sm text-[#9CA3AF]">USDC in Escrow</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-[#0A0A0B]/45 p-4">
+              <p className="text-5xl font-bold text-[#00FFC8] transition-all duration-200">{statValue(statTargets.verifiedWallets, animatedStats.verifiedWallets)}</p>
+              <p className="mt-2 text-sm text-[#9CA3AF]">Credentials Issued</p>
+            </div>
+          </div>
+
+          <div className="mt-6 flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => jobsSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
+              className="archon-button-primary px-4 py-2.5 text-sm transition-all duration-200"
+            >
+              Browse Open Tasks
+            </button>
+            <Link href="/earn" className="archon-button-primary px-4 py-2.5 text-sm transition-all duration-200">
+              How It Works
+            </Link>
+          </div>
         </div>
       </div>
 
@@ -261,13 +354,6 @@ export default function HomePage() {
           </div>
         </div>
       ) : null}
-
-      <div className="archon-card p-4 text-sm text-[#9CA3AF]">
-        <span className="text-[#EAEAF0]">{stats.totalCredentials}</span> Credentials Minted ·{" "}
-        <span className="text-[#EAEAF0]">{stats.openTasks}</span> Open Tasks ·{" "}
-        <span className="text-[#EAEAF0]">{stats.totalEscrowUsdc}</span> USDC in Escrow ·{" "}
-        <span className="text-[#EAEAF0]">{stats.verifiedWallets}</span> Verified Agents
-      </div>
 
       {account ? (
         <div className="archon-card p-4 text-sm text-[#9CA3AF]">
@@ -322,8 +408,8 @@ export default function HomePage() {
         )}
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold tracking-wide text-[#EAEAF0]">Recent Jobs</h2>
+      <div ref={jobsSectionRef} className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-lg font-semibold tracking-wide text-[#EAEAF0]">Open Tasks</h2>
         <div className="flex items-center gap-2">
           <button
             type="button"

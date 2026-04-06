@@ -14,6 +14,7 @@ const desktopLinks = [
   { href: "/earn", label: "Earn" },
   { href: "/tasks", label: "Agentic Tasks" },
   { href: "/my-work", label: "My Work" },
+  { href: "/milestones", label: "Milestones" },
   { href: "/profile", label: "Profile" }
 ] as const;
 

@@ -27,6 +27,7 @@ type DeploymentConfig = {
     githubSource: ContractConfig;
     communitySource: ContractConfig;
     agentTaskSource: ContractConfig;
+    milestoneEscrow: ContractConfig;
     peerAttestationSource: ContractConfig;
     daoGovernanceSource: ContractConfig;
   };
@@ -50,7 +51,11 @@ function normalizeAddress(value: string | undefined) {
 }
 
 async function main() {
-  const [deployer, signer1, signer2, signer3] = await ethers.getSigners();
+  const signers = await ethers.getSigners();
+  const [deployer] = signers;
+  if (!deployer) {
+    throw new Error("No deployer signer available.");
+  }
   const chainId = Number((await deployer.provider.getNetwork()).chainId);
   const rpcUrl =
     network.name === "arcTestnet"
@@ -155,6 +160,26 @@ async function main() {
   const agentTaskSourceAddress = await agentTaskSource.getAddress();
   console.log(`AgentTaskSource: ${agentTaskSourceAddress}`);
 
+  const milestoneEscrow = await ethers.deployContract("MilestoneEscrow", [
+    usdcAddress,
+    hookAddress,
+    platformFeeBps
+  ]);
+  await milestoneEscrow.waitForDeployment();
+  const milestoneEscrowAddress = await milestoneEscrow.getAddress();
+  console.log(`MilestoneEscrow: ${milestoneEscrowAddress}`);
+
+  const arbitratorCandidates = [deployer.address, ...signers.slice(1, 4).map((signer) => signer.address)];
+  const uniqueArbitrators = [...new Set(arbitratorCandidates.filter((address) => !!address))];
+  for (let i = 0; i < uniqueArbitrators.length && i < 3; i++) {
+    try {
+      await (await milestoneEscrow.addArbitrator(uniqueArbitrators[i])).wait();
+      console.log(`Added arbitrator: ${uniqueArbitrators[i]}`);
+    } catch (error) {
+      console.warn(`Skipping arbitrator ${uniqueArbitrators[i]}:`, error);
+    }
+  }
+
   const peerAttestationSource = await ethers.deployContract("PeerAttestationSource", [
     hookAddress,
     registryAddress
@@ -239,6 +264,10 @@ async function main() {
       agentTaskSource: {
         address: agentTaskSourceAddress,
         abi: await getAbi("AgentTaskSource")
+      },
+      milestoneEscrow: {
+        address: milestoneEscrowAddress,
+        abi: await getAbi("MilestoneEscrow")
       },
       peerAttestationSource: {
         address: peerAttestationSourceAddress,

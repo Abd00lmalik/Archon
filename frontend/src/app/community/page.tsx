@@ -67,6 +67,21 @@ const COMMUNITY_TYPES = [
 
 const PLATFORMS = ["discord", "telegram", "twitter", "forum", "github"] as const;
 
+function parseCommunityApplication(raw: unknown): CommunityApplicationRecord {
+  const tuple = raw as Record<string, unknown> & unknown[];
+  return {
+    applicationId: Number(tuple.applicationId ?? tuple[0] ?? 0),
+    applicant: String(tuple.applicant ?? tuple[1] ?? ""),
+    activityDescription: String(tuple.activityDescription ?? tuple[2] ?? ""),
+    evidenceLink: String(tuple.evidenceLink ?? tuple[3] ?? ""),
+    platform: String(tuple.platform ?? tuple[4] ?? ""),
+    submittedAt: Number(tuple.submittedAt ?? tuple[5] ?? 0),
+    status: Number(tuple.status ?? tuple[6] ?? 0),
+    reviewedBy: String(tuple.reviewedBy ?? tuple[7] ?? ""),
+    reviewNote: String(tuple.reviewNote ?? tuple[8] ?? "")
+  };
+}
+
 function statusMeta(status: number) {
   if (status === 1) return { label: "Approved", className: "bg-emerald-500/15 text-emerald-200" };
   if (status === 2) return { label: "Rejected", className: "bg-rose-500/15 text-rose-200" };
@@ -82,7 +97,7 @@ export default function CommunityPage() {
   const [awards, setAwards] = useState<CommunityActivityRecord[]>([]);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [applicationsLoading, setApplicationsLoading] = useState(false);
   const [busyApplicationId, setBusyApplicationId] = useState<number | null>(null);
   const [busyAwardId, setBusyAwardId] = useState<number | null>(null);
 
@@ -130,7 +145,6 @@ export default function CommunityPage() {
   };
 
   const load = useCallback(async () => {
-    setLoading(true);
     setError("");
     try {
       const teamPromise = fetchCommunityModerators();
@@ -141,9 +155,11 @@ export default function CommunityPage() {
         setPendingApplications([]);
         setAwards([]);
         setMyModeratorProfile(null);
+        setApplicationsLoading(false);
         return;
       }
 
+      setApplicationsLoading(true);
       const [team, profile, myApplications, myAwards] = await Promise.all([
         teamPromise,
         fetchCommunityModeratorProfile(account),
@@ -152,19 +168,19 @@ export default function CommunityPage() {
       ]);
       setModerators(team);
       setMyModeratorProfile(profile);
-      setApplications(myApplications);
+      setApplications(myApplications.map((raw) => parseCommunityApplication(raw)));
       setAwards(myAwards);
 
       if (profile?.active) {
         const pending = await fetchPendingCommunityApplications();
-        setPendingApplications(pending);
+        setPendingApplications(pending.map((raw) => parseCommunityApplication(raw)));
       } else {
         setPendingApplications([]);
       }
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load community data.");
     } finally {
-      setLoading(false);
+      setApplicationsLoading(false);
     }
   }, [account]);
 
@@ -349,8 +365,8 @@ export default function CommunityPage() {
         <h2 className="text-lg font-semibold text-[#EAEAF0]">Your Applications</h2>
         {!account ? (
           <p className="mt-3 text-sm text-[#9CA3AF]">Connect wallet to view your application history.</p>
-        ) : loading ? (
-          <p className="mt-3 text-sm text-[#9CA3AF]">Loading applications...</p>
+        ) : applicationsLoading ? (
+          <p className="mt-3 text-sm text-[#9CA3AF]">Loading your applications...</p>
         ) : applications.length === 0 ? (
           <p className="mt-3 text-sm text-[#9CA3AF]">No applications submitted yet.</p>
         ) : (

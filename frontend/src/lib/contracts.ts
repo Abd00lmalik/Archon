@@ -21,6 +21,7 @@ type DeploymentContracts = {
   agentTaskSource?: DeploymentContract;
   peerAttestationSource?: DeploymentContract;
   daoGovernanceSource?: DeploymentContract;
+  milestoneEscrow?: DeploymentContract;
 };
 
 type DeploymentConfig = {
@@ -212,6 +213,37 @@ export type SourceOperatorApplicationRecord = {
   approved: boolean;
 };
 
+export type MilestoneStatus = 0 | 1 | 2 | 3 | 4 | 5;
+export type DisputeOutcome = 0 | 1 | 2;
+
+export type MilestoneRecord = {
+  milestoneId: number;
+  projectId: number;
+  client: string;
+  freelancer: string;
+  title: string;
+  description: string;
+  deliverableHash: string;
+  amount: string;
+  deadline: number;
+  createdAt: number;
+  submittedAt: number;
+  status: MilestoneStatus;
+  fundsReleased: boolean;
+};
+
+export type MilestoneDisputeRecord = {
+  milestoneId: number;
+  raisedBy: string;
+  reason: string;
+  arbitrators: [string, string, string];
+  votes: [DisputeOutcome, DisputeOutcome, DisputeOutcome];
+  votesReceived: number;
+  outcome: DisputeOutcome;
+  raisedAt: number;
+  resolved: boolean;
+};
+
 const deployment = deploymentRaw as DeploymentConfig;
 const overrideRpcUrl = process.env.NEXT_PUBLIC_RPC_URL ?? process.env.NEXT_PUBLIC_ARC_RPC_URL;
 const overrideChainId = process.env.NEXT_PUBLIC_CHAIN_ID ?? process.env.NEXT_PUBLIC_ARC_CHAIN_ID;
@@ -242,6 +274,7 @@ const COMMUNITY_SOURCE_ABI = [
   "function activeModeratorCount() view returns (uint256)",
   "function getApplicationsByApplicant(address applicant) view returns (uint256[])",
   "function getApplication(uint256 applicationId) view returns (uint256,address,string,string,string,uint256,uint8,address,string)",
+  "function applications(uint256 applicationId) view returns (uint256,address,string,string,string,uint256,uint8,address,string)",
   "function getPendingApplications() view returns (uint256[])",
   "function registerModerator(address moderator,string name,string role,string profileURI)",
   "function deactivateModerator(address moderator)",
@@ -282,6 +315,31 @@ const DAO_GOVERNANCE_ABI = [
   "function addGovernor(address governorContract)",
   "function removeGovernor(address governorContract)"
 ] as const;
+const MILESTONE_ESCROW_ABI = [
+  "function nextMilestoneId() view returns (uint256)",
+  "function nextProjectId() view returns (uint256)",
+  "function totalEscrowed() view returns (uint256)",
+  "function platformFeeBps() view returns (uint256)",
+  "function getMilestone(uint256 milestoneId) view returns (tuple(uint256 milestoneId,uint256 projectId,address client,address freelancer,string title,string description,string deliverableHash,uint256 amount,uint256 deadline,uint256 createdAt,uint256 submittedAt,uint8 status,bool fundsReleased))",
+  "function getDispute(uint256 milestoneId) view returns (tuple(uint256 milestoneId,address raisedBy,string reason,address[3] arbitrators,uint8[3] votes,uint8 votesReceived,uint8 outcome,uint256 raisedAt,bool resolved))",
+  "function getMilestonesByProject(uint256 projectId) view returns (uint256[])",
+  "function getMilestonesByClient(address client) view returns (uint256[])",
+  "function getMilestonesByFreelancer(address freelancer) view returns (uint256[])",
+  "function getArbitratorCount() view returns (uint256)",
+  "function getArbitrators() view returns (address[])",
+  "function hasDispute(uint256 milestoneId) view returns (bool)",
+  "function fundedMilestones(uint256 milestoneId) view returns (bool)",
+  "function approvedArbitrators(address arbitrator) view returns (bool)",
+  "function DISPUTE_WINDOW() view returns (uint256)",
+  "function proposeProject(address freelancer,string[] milestoneTitles,string[] milestoneDescriptions,uint256[] milestoneAmounts,uint256[] milestoneDeadlines) returns (uint256)",
+  "function fundMilestone(uint256 milestoneId)",
+  "function submitDeliverable(uint256 milestoneId,string deliverableHash)",
+  "function approveMilestone(uint256 milestoneId)",
+  "function raiseDispute(uint256 milestoneId,string reason)",
+  "function autoRelease(uint256 milestoneId)",
+  "function voteOnDispute(uint256 milestoneId,uint8 vote)",
+  "function addArbitrator(address arbitrator)"
+] as const;
 const ARC_IDENTITY_REGISTRY = "0x8004A818BFB912233c491871b3d84c89A494BD9e";
 const ARC_IDENTITY_ABI = [
   "function balanceOf(address owner) view returns (uint256)",
@@ -303,7 +361,8 @@ export const contractAddresses = {
   communitySource: deployment.contracts.communitySource?.address ?? ZERO_ADDRESS,
   agentTaskSource: deployment.contracts.agentTaskSource?.address ?? ZERO_ADDRESS,
   peerAttestationSource: deployment.contracts.peerAttestationSource?.address ?? ZERO_ADDRESS,
-  daoGovernanceSource: deployment.contracts.daoGovernanceSource?.address ?? ZERO_ADDRESS
+  daoGovernanceSource: deployment.contracts.daoGovernanceSource?.address ?? ZERO_ADDRESS,
+  milestoneEscrow: deployment.contracts.milestoneEscrow?.address ?? ZERO_ADDRESS
 } as const;
 
 let readProvider: ethers.JsonRpcProvider | null = null;
@@ -541,6 +600,50 @@ export function parseGovernanceActivity(rawActivity: unknown): GovernanceActivit
   };
 }
 
+export function parseMilestone(rawMilestone: unknown): MilestoneRecord {
+  const milestone = rawMilestone as Record<string, unknown> & unknown[];
+  return {
+    milestoneId: toNumber(milestone.milestoneId ?? milestone[0]),
+    projectId: toNumber(milestone.projectId ?? milestone[1]),
+    client: toString(milestone.client ?? milestone[2]),
+    freelancer: toString(milestone.freelancer ?? milestone[3]),
+    title: toString(milestone.title ?? milestone[4]),
+    description: toString(milestone.description ?? milestone[5]),
+    deliverableHash: toString(milestone.deliverableHash ?? milestone[6]),
+    amount: toString(milestone.amount ?? milestone[7]),
+    deadline: toNumber(milestone.deadline ?? milestone[8]),
+    createdAt: toNumber(milestone.createdAt ?? milestone[9]),
+    submittedAt: toNumber(milestone.submittedAt ?? milestone[10]),
+    status: toNumber(milestone.status ?? milestone[11]) as MilestoneStatus,
+    fundsReleased: toBoolean(milestone.fundsReleased ?? milestone[12])
+  };
+}
+
+export function parseMilestoneDispute(rawDispute: unknown): MilestoneDisputeRecord {
+  const dispute = rawDispute as Record<string, unknown> & unknown[];
+  const arbitratorsRaw = (dispute.arbitrators ?? dispute[3] ?? []) as unknown[];
+  const votesRaw = (dispute.votes ?? dispute[4] ?? []) as unknown[];
+  return {
+    milestoneId: toNumber(dispute.milestoneId ?? dispute[0]),
+    raisedBy: toString(dispute.raisedBy ?? dispute[1]),
+    reason: toString(dispute.reason ?? dispute[2]),
+    arbitrators: [
+      toString(arbitratorsRaw[0]),
+      toString(arbitratorsRaw[1]),
+      toString(arbitratorsRaw[2])
+    ],
+    votes: [
+      toNumber(votesRaw[0]) as DisputeOutcome,
+      toNumber(votesRaw[1]) as DisputeOutcome,
+      toNumber(votesRaw[2]) as DisputeOutcome
+    ],
+    votesReceived: toNumber(dispute.votesReceived ?? dispute[5]),
+    outcome: toNumber(dispute.outcome ?? dispute[6]) as DisputeOutcome,
+    raisedAt: toNumber(dispute.raisedAt ?? dispute[7]),
+    resolved: toBoolean(dispute.resolved ?? dispute[8])
+  };
+}
+
 export function getReadProvider() {
   if (!readProvider) {
     readProvider = new ethers.JsonRpcProvider(rpcUrl);
@@ -583,6 +686,13 @@ function getDaoGovernanceContract(providerOrSigner: ethers.Provider | ethers.Sig
   return new ethers.Contract(contractAddresses.daoGovernanceSource, DAO_GOVERNANCE_ABI, providerOrSigner);
 }
 
+function getMilestoneEscrowContract(providerOrSigner: ethers.Provider | ethers.Signer) {
+  if (!contractAddresses.milestoneEscrow || contractAddresses.milestoneEscrow === ZERO_ADDRESS) {
+    throw new Error("Milestone escrow contract is not configured.");
+  }
+  return new ethers.Contract(contractAddresses.milestoneEscrow, MILESTONE_ESCROW_ABI, providerOrSigner);
+}
+
 export function getJobReadContract() {
   ensureContractsConfigured();
   return getContractFromConfig(resolvedJobContract, getReadProvider());
@@ -603,6 +713,10 @@ export function getRegistryReadContract() {
 export function getSourceReadContract(sourceType: string) {
   const config = contractForSourceType(sourceType);
   return getContractFromConfig(config, getReadProvider());
+}
+
+export function getMilestoneEscrowReadContract() {
+  return getMilestoneEscrowContract(getReadProvider());
 }
 
 export async function getJobWriteContract(browserProvider: ethers.BrowserProvider) {
@@ -1149,6 +1263,137 @@ export async function fetchPosterTasksByAddress(posterAddress: string): Promise<
   return tasks.sort((a, b) => b.taskId - a.taskId);
 }
 
+export async function fetchMilestoneEscrowTotal(): Promise<bigint> {
+  if (!deployment.contracts.milestoneEscrow || contractAddresses.milestoneEscrow === ZERO_ADDRESS) {
+    return 0n;
+  }
+  try {
+    const contract = getMilestoneEscrowContract(getReadProvider());
+    return (await contract.totalEscrowed()) as bigint;
+  } catch {
+    return 0n;
+  }
+}
+
+export async function fetchMilestonesByClient(clientAddress: string): Promise<MilestoneRecord[]> {
+  if (!clientAddress || !deployment.contracts.milestoneEscrow || contractAddresses.milestoneEscrow === ZERO_ADDRESS) {
+    return [];
+  }
+  const contract = getMilestoneEscrowContract(getReadProvider());
+  const ids = (await contract.getMilestonesByClient(clientAddress)) as unknown[];
+  const milestones: MilestoneRecord[] = [];
+  for (const id of ids) {
+    const raw = await contract.getMilestone(id);
+    milestones.push(parseMilestone(raw));
+  }
+  return milestones.sort((a, b) => b.milestoneId - a.milestoneId);
+}
+
+export async function fetchMilestonesByFreelancer(freelancerAddress: string): Promise<MilestoneRecord[]> {
+  if (
+    !freelancerAddress ||
+    !deployment.contracts.milestoneEscrow ||
+    contractAddresses.milestoneEscrow === ZERO_ADDRESS
+  ) {
+    return [];
+  }
+  const contract = getMilestoneEscrowContract(getReadProvider());
+  const ids = (await contract.getMilestonesByFreelancer(freelancerAddress)) as unknown[];
+  const milestones: MilestoneRecord[] = [];
+  for (const id of ids) {
+    const raw = await contract.getMilestone(id);
+    milestones.push(parseMilestone(raw));
+  }
+  return milestones.sort((a, b) => b.milestoneId - a.milestoneId);
+}
+
+export async function fetchMilestonesByProject(projectId: number): Promise<MilestoneRecord[]> {
+  if (projectId < 0 || !deployment.contracts.milestoneEscrow || contractAddresses.milestoneEscrow === ZERO_ADDRESS) {
+    return [];
+  }
+  const contract = getMilestoneEscrowContract(getReadProvider());
+  const ids = (await contract.getMilestonesByProject(projectId)) as unknown[];
+  const milestones: MilestoneRecord[] = [];
+  for (const id of ids) {
+    const raw = await contract.getMilestone(id);
+    milestones.push(parseMilestone(raw));
+  }
+  return milestones.sort((a, b) => a.milestoneId - b.milestoneId);
+}
+
+export async function fetchNextProjectId(): Promise<number> {
+  if (!deployment.contracts.milestoneEscrow || contractAddresses.milestoneEscrow === ZERO_ADDRESS) {
+    return 0;
+  }
+  try {
+    const contract = getMilestoneEscrowContract(getReadProvider());
+    return Number(await contract.nextProjectId());
+  } catch {
+    return 0;
+  }
+}
+
+export async function fetchMilestoneFunded(milestoneId: number): Promise<boolean> {
+  if (!deployment.contracts.milestoneEscrow || contractAddresses.milestoneEscrow === ZERO_ADDRESS) {
+    return false;
+  }
+  try {
+    const contract = getMilestoneEscrowContract(getReadProvider());
+    return (await contract.fundedMilestones(milestoneId)) as boolean;
+  } catch {
+    return false;
+  }
+}
+
+export async function fetchMilestone(milestoneId: number): Promise<MilestoneRecord | null> {
+  if (!deployment.contracts.milestoneEscrow || contractAddresses.milestoneEscrow === ZERO_ADDRESS) {
+    return null;
+  }
+  try {
+    const contract = getMilestoneEscrowContract(getReadProvider());
+    const raw = await contract.getMilestone(milestoneId);
+    const parsed = parseMilestone(raw);
+    if (!parsed.client || parsed.client === ZERO_ADDRESS) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchDispute(milestoneId: number): Promise<MilestoneDisputeRecord | null> {
+  if (!deployment.contracts.milestoneEscrow || contractAddresses.milestoneEscrow === ZERO_ADDRESS) {
+    return null;
+  }
+  try {
+    const contract = getMilestoneEscrowContract(getReadProvider());
+    const hasDispute = (await contract.hasDispute(milestoneId)) as boolean;
+    if (!hasDispute) return null;
+    return parseMilestoneDispute(await contract.getDispute(milestoneId));
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchDisputeWindowSeconds(): Promise<number> {
+  if (!deployment.contracts.milestoneEscrow || contractAddresses.milestoneEscrow === ZERO_ADDRESS) return 48 * 3600;
+  try {
+    const contract = getMilestoneEscrowContract(getReadProvider());
+    return Number(await contract.DISPUTE_WINDOW());
+  } catch {
+    return 48 * 3600;
+  }
+}
+
+export async function fetchMilestoneArbitratorCount(): Promise<number> {
+  if (!deployment.contracts.milestoneEscrow || contractAddresses.milestoneEscrow === ZERO_ADDRESS) return 0;
+  try {
+    const contract = getMilestoneEscrowContract(getReadProvider());
+    return Number(await contract.getArbitratorCount());
+  } catch {
+    return 0;
+  }
+}
+
 export async function fetchCommunityActivitiesByRecipient(
   recipientAddress: string
 ): Promise<CommunityActivityRecord[]> {
@@ -1188,6 +1433,23 @@ export async function fetchCommunityModeratorProfile(
   }
 }
 
+async function fetchCommunityApplicationById(
+  contract: ethers.Contract,
+  applicationId: unknown
+): Promise<CommunityApplicationRecord | null> {
+  try {
+    const raw = await contract.getApplication(applicationId);
+    return parseCommunityApplication(raw);
+  } catch {
+    try {
+      const rawFallback = await contract.applications(applicationId);
+      return parseCommunityApplication(rawFallback);
+    } catch {
+      return null;
+    }
+  }
+}
+
 export async function fetchCommunityApplicationsByApplicant(
   applicantAddress: string
 ): Promise<CommunityApplicationRecord[]> {
@@ -1196,8 +1458,8 @@ export async function fetchCommunityApplicationsByApplicant(
   const ids = (await contract.getApplicationsByApplicant(applicantAddress)) as unknown[];
   const applications: CommunityApplicationRecord[] = [];
   for (const id of ids) {
-    const raw = await contract.getApplication(id);
-    applications.push(parseCommunityApplication(raw));
+    const parsed = await fetchCommunityApplicationById(contract, id);
+    if (parsed) applications.push(parsed);
   }
   return applications.sort((a, b) => b.applicationId - a.applicationId);
 }
@@ -1208,8 +1470,8 @@ export async function fetchPendingCommunityApplications(): Promise<CommunityAppl
   const ids = (await contract.getPendingApplications()) as unknown[];
   const applications: CommunityApplicationRecord[] = [];
   for (const id of ids) {
-    const raw = await contract.getApplication(id);
-    applications.push(parseCommunityApplication(raw));
+    const parsed = await fetchCommunityApplicationById(contract, id);
+    if (parsed) applications.push(parsed);
   }
   return applications.sort((a, b) => b.applicationId - a.applicationId);
 }
@@ -1415,13 +1677,8 @@ export async function txCreateJob(
   maxApprovals: number
 ) {
   const contract = await getJobWriteContract(browserProvider);
-  try {
-    const tx = await contract.createJob(title, description, deadline, rewardUSDC, maxApprovals);
-    return tx as ethers.TransactionResponse;
-  } catch {
-    const tx = await contract.createJob(title, description, deadline, rewardUSDC);
-    return tx as ethers.TransactionResponse;
-  }
+  const tx = await contract.createJob(title, description, deadline, rewardUSDC, maxApprovals);
+  return tx as ethers.TransactionResponse;
 }
 
 export async function txAcceptJob(browserProvider: ethers.BrowserProvider, jobId: number) {
@@ -1445,11 +1702,7 @@ export async function txApproveSubmission(
   rewardAmount: bigint
 ) {
   const contract = await getJobWriteContract(browserProvider);
-  try {
-    return (await contract.approveSubmission(jobId, agent, rewardAmount)) as ethers.TransactionResponse;
-  } catch {
-    return (await contract.approveSubmission(jobId, agent)) as ethers.TransactionResponse;
-  }
+  return (await contract.approveSubmission(jobId, agent, rewardAmount)) as ethers.TransactionResponse;
 }
 
 export async function txRejectSubmission(
@@ -1637,6 +1890,73 @@ export async function txApproveUsdc(
     ? getContractFromConfig(deployment.contracts.usdc, signer)
     : new ethers.Contract(resolvedUsdcAddress, ERC20_MIN_ABI, signer);
   return (await usdc.approve(spender, amount)) as ethers.TransactionResponse;
+}
+
+export async function txProposeMilestoneProject(
+  browserProvider: ethers.BrowserProvider,
+  freelancer: string,
+  milestoneTitles: string[],
+  milestoneDescriptions: string[],
+  milestoneAmounts: bigint[],
+  milestoneDeadlines: number[]
+) {
+  const signer = await browserProvider.getSigner();
+  const milestoneEscrow = getMilestoneEscrowContract(signer);
+  return (await milestoneEscrow.proposeProject(
+    freelancer,
+    milestoneTitles,
+    milestoneDescriptions,
+    milestoneAmounts,
+    milestoneDeadlines
+  )) as ethers.TransactionResponse;
+}
+
+export async function txFundMilestone(browserProvider: ethers.BrowserProvider, milestoneId: number) {
+  const signer = await browserProvider.getSigner();
+  const milestoneEscrow = getMilestoneEscrowContract(signer);
+  return (await milestoneEscrow.fundMilestone(milestoneId)) as ethers.TransactionResponse;
+}
+
+export async function txSubmitMilestoneDeliverable(
+  browserProvider: ethers.BrowserProvider,
+  milestoneId: number,
+  deliverableHash: string
+) {
+  const signer = await browserProvider.getSigner();
+  const milestoneEscrow = getMilestoneEscrowContract(signer);
+  return (await milestoneEscrow.submitDeliverable(milestoneId, deliverableHash)) as ethers.TransactionResponse;
+}
+
+export async function txApproveMilestone(browserProvider: ethers.BrowserProvider, milestoneId: number) {
+  const signer = await browserProvider.getSigner();
+  const milestoneEscrow = getMilestoneEscrowContract(signer);
+  return (await milestoneEscrow.approveMilestone(milestoneId)) as ethers.TransactionResponse;
+}
+
+export async function txRaiseMilestoneDispute(
+  browserProvider: ethers.BrowserProvider,
+  milestoneId: number,
+  reason: string
+) {
+  const signer = await browserProvider.getSigner();
+  const milestoneEscrow = getMilestoneEscrowContract(signer);
+  return (await milestoneEscrow.raiseDispute(milestoneId, reason)) as ethers.TransactionResponse;
+}
+
+export async function txAutoReleaseMilestone(browserProvider: ethers.BrowserProvider, milestoneId: number) {
+  const signer = await browserProvider.getSigner();
+  const milestoneEscrow = getMilestoneEscrowContract(signer);
+  return (await milestoneEscrow.autoRelease(milestoneId)) as ethers.TransactionResponse;
+}
+
+export async function txVoteOnMilestoneDispute(
+  browserProvider: ethers.BrowserProvider,
+  milestoneId: number,
+  vote: DisputeOutcome
+) {
+  const signer = await browserProvider.getSigner();
+  const milestoneEscrow = getMilestoneEscrowContract(signer);
+  return (await milestoneEscrow.voteOnDispute(milestoneId, vote)) as ethers.TransactionResponse;
 }
 
 export async function isApprovedSourceOperator(sourceType: string, operator: string): Promise<boolean> {
