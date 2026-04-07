@@ -8,9 +8,14 @@ type LoadedContracts = {
 
 export function loadContracts(): LoadedContracts {
   const generatedPath = path.resolve(__dirname, "../../../frontend/src/lib/generated/contracts.json");
-  const deploymentsPath = path.resolve(__dirname, "../../deployments/arcTestnet.json");
+  const deploymentsPath = path.resolve(__dirname, "../../deployments/arc_testnet.json");
+  const legacyDeploymentsPath = path.resolve(__dirname, "../../deployments/arcTestnet.json");
 
-  const targetPath = fs.existsSync(generatedPath) ? generatedPath : deploymentsPath;
+  const targetPath = fs.existsSync(generatedPath)
+    ? generatedPath
+    : fs.existsSync(deploymentsPath)
+      ? deploymentsPath
+      : legacyDeploymentsPath;
   if (!fs.existsSync(targetPath)) {
     throw new Error("contracts.json not found. Run deployment first.");
   }

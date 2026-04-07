@@ -13,12 +13,24 @@ async function main() {
     throw new Error("MilestoneEscrow is not deployed in contracts config.");
   }
 
-  const indexFromEnv = process.env.ARBITRATOR_INDEX ? Number(process.env.ARBITRATOR_INDEX) : DEFAULT_ARBITRATOR_INDEX;
-  if (Number.isNaN(indexFromEnv) || indexFromEnv < 0 || indexFromEnv >= signers.length) {
-    throw new Error(`Invalid ARBITRATOR_INDEX: ${process.env.ARBITRATOR_INDEX}`);
-  }
+  const explicitAddress = process.env.ARBITRATOR_ADDRESS?.trim();
+  let arbitratorAddress = "";
+  let sourceLabel = "";
 
-  const arbitratorAddress = signers[indexFromEnv].address;
+  if (explicitAddress) {
+    if (!ethers.isAddress(explicitAddress)) {
+      throw new Error(`Invalid ARBITRATOR_ADDRESS: ${explicitAddress}`);
+    }
+    arbitratorAddress = explicitAddress;
+    sourceLabel = "env ARBITRATOR_ADDRESS";
+  } else {
+    const indexFromEnv = process.env.ARBITRATOR_INDEX ? Number(process.env.ARBITRATOR_INDEX) : DEFAULT_ARBITRATOR_INDEX;
+    if (Number.isNaN(indexFromEnv) || indexFromEnv < 0 || indexFromEnv >= signers.length) {
+      throw new Error(`Invalid ARBITRATOR_INDEX: ${process.env.ARBITRATOR_INDEX}`);
+    }
+    arbitratorAddress = signers[indexFromEnv].address;
+    sourceLabel = `signer index ${indexFromEnv}`;
+  }
 
   const escrow = await ethers.getContractAt(
     [
@@ -35,7 +47,7 @@ async function main() {
     return;
   }
 
-  console.log(`Adding arbitrator from signer index ${indexFromEnv}: ${arbitratorAddress}`);
+  console.log(`Adding arbitrator from ${sourceLabel}: ${arbitratorAddress}`);
   const tx = await escrow.addArbitrator(arbitratorAddress);
   await tx.wait();
   console.log(`Arbitrator added. Tx: ${tx.hash}`);
