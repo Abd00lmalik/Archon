@@ -1,14 +1,35 @@
 <svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="archonGradient" x1="20" y1="20" x2="108" y2="108" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#6C5CE7"/>
-      <stop offset="1" stop-color="#00D1B2"/>
+    <linearGradient id="archonArchStroke" x1="18" y1="18" x2="110" y2="110" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7E8BFF" />
+      <stop offset="1" stop-color="#48A8FF" />
     </linearGradient>
+    <filter id="archonGlow" x="0" y="0" width="128" height="128" filterUnits="userSpaceOnUse">
+      <feGaussianBlur stdDeviation="2.2" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
   </defs>
 
-  <circle cx="64" cy="64" r="40" stroke="url(#archonGradient)" stroke-width="6"/>
-  <path d="M28 72C34 91 48 104 66 104" stroke="url(#archonGradient)" stroke-width="6" stroke-linecap="round"/>
-  <path d="M45 88L64 40L83 88" stroke="#EAEAF0" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M53 70H75" stroke="#EAEAF0" stroke-width="6" stroke-linecap="round"/>
-  <circle cx="64" cy="64" r="4" fill="#00D1B2"/>
+  <g filter="url(#archonGlow)">
+    <path
+      d="M20 106V72C20 44.386 42.386 22 70 22C97.614 22 120 44.386 120 72V106"
+      stroke="url(#archonArchStroke)"
+      stroke-width="6"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+    <path
+      d="M42 106V74C42 58.536 54.536 46 70 46C85.464 46 98 58.536 98 74V106"
+      stroke="url(#archonArchStroke)"
+      stroke-width="6"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+    <path d="M20 72H42" stroke="url(#archonArchStroke)" stroke-width="6" stroke-linecap="round" />
+    <path d="M98 72H120" stroke="url(#archonArchStroke)" stroke-width="6" stroke-linecap="round" />
+    <path d="M58 24H82L75 46H65L58 24Z" stroke="url(#archonArchStroke)" stroke-width="6" stroke-linejoin="round" />
+  </g>
 </svg>

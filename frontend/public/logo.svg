@@ -1,18 +1,51 @@
-<svg width="460" height="128" viewBox="0 0 460 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+<svg width="520" height="144" viewBox="0 0 520 144" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="archonGradientWordmark" x1="20" y1="20" x2="108" y2="108" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#6C5CE7"/>
-      <stop offset="1" stop-color="#00D1B2"/>
+    <linearGradient id="archonWordmarkStroke" x1="18" y1="18" x2="110" y2="110" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7E8BFF" />
+      <stop offset="1" stop-color="#48A8FF" />
     </linearGradient>
+    <linearGradient id="archonTextFill" x1="140" y1="36" x2="420" y2="108" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F4F6FF" />
+      <stop offset="1" stop-color="#C4D6FF" />
+    </linearGradient>
+    <filter id="archonWordmarkGlow" x="0" y="0" width="520" height="144" filterUnits="userSpaceOnUse">
+      <feGaussianBlur stdDeviation="2.2" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
   </defs>
 
-  <g>
-    <circle cx="64" cy="64" r="40" stroke="url(#archonGradientWordmark)" stroke-width="6"/>
-    <path d="M28 72C34 91 48 104 66 104" stroke="url(#archonGradientWordmark)" stroke-width="6" stroke-linecap="round"/>
-    <path d="M45 88L64 40L83 88" stroke="#EAEAF0" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M53 70H75" stroke="#EAEAF0" stroke-width="6" stroke-linecap="round"/>
-    <circle cx="64" cy="64" r="4" fill="#00D1B2"/>
+  <g filter="url(#archonWordmarkGlow)">
+    <path
+      d="M20 106V72C20 44.386 42.386 22 70 22C97.614 22 120 44.386 120 72V106"
+      stroke="url(#archonWordmarkStroke)"
+      stroke-width="6"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+    <path
+      d="M42 106V74C42 58.536 54.536 46 70 46C85.464 46 98 58.536 98 74V106"
+      stroke="url(#archonWordmarkStroke)"
+      stroke-width="6"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+    <path d="M20 72H42" stroke="url(#archonWordmarkStroke)" stroke-width="6" stroke-linecap="round" />
+    <path d="M98 72H120" stroke="url(#archonWordmarkStroke)" stroke-width="6" stroke-linecap="round" />
+    <path d="M58 24H82L75 46H65L58 24Z" stroke="url(#archonWordmarkStroke)" stroke-width="6" stroke-linejoin="round" />
   </g>
 
-  <text x="132" y="79" fill="#EAEAF0" font-family="Inter, Arial, sans-serif" font-size="56" font-weight="600" letter-spacing="0.8">Archon</text>
+  <text
+    x="152"
+    y="87"
+    fill="url(#archonTextFill)"
+    font-family="Inter, Arial, sans-serif"
+    font-size="64"
+    font-weight="600"
+    letter-spacing="1.4"
+  >
+    Archon
+  </text>
 </svg>
