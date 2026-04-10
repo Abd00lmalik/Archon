@@ -34,7 +34,7 @@ type DeploymentConfig = {
   };
 };
 
-const SOURCE_TYPES = ["task", "job", "github", "community", "agent_task"] as const;
+const SOURCE_TYPES = ["task", "job", "github", "community", "agent_task", "dao_governance"] as const;
 
 function writeJson(filePath: string, payload: unknown) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -112,7 +112,7 @@ async function main() {
     for (const sourceType of SOURCE_TYPES) {
       await (await sourceRegistry.approveOperator(sourceType, deployer.address)).wait();
     }
-    console.log("Approved deployer as source operator for task/job/github/community/agent_task.");
+    console.log("Approved deployer as source operator for task/job/github/community/agent_task/dao_governance.");
   } else {
     console.log("SEED_OPERATOR=false: skipped deployer source-operator approvals.");
   }

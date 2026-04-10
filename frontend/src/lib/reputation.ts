@@ -99,24 +99,28 @@ export function getTierProgress(score: number) {
 
 export function getSourceColor(sourceType: string): string {
   const colors: Record<string, string> = {
+    task: "#00FFC8",
     job: "#00FFC8",
     github: "#8B5CF6",
     agent_task: "#3B82F6",
     community: "#F59E0B",
     peer_attestation: "#EC4899",
-    dao_governance: "#6366F1"
+    dao_governance: "#6366F1",
+    milestone: "#F59E0B"
   };
   return colors[normalizeSourceBucket(sourceType)] ?? "#4A7FA5";
 }
 
 export function getSourceLabel(sourceType: string): string {
   const labels: Record<string, string> = {
+    task: "Tasks",
     job: "Tasks",
     github: "GitHub",
     agent_task: "Agent Task",
     community: "Community",
     peer_attestation: "Peer Attestation",
-    dao_governance: "DAO Governance"
+    dao_governance: "DAO Governance",
+    milestone: "Milestone"
   };
   return labels[normalizeSourceBucket(sourceType)] ?? sourceType;
 }

@@ -7,11 +7,14 @@ import {ISourceRegistry} from "./interfaces/ISourceRegistry.sol";
 
 contract CommunitySource is ICredentialSource {
     enum CommunityActivityType {
-        DiscordHelp,
-        Moderation,
-        ContentCreation,
-        EventOrganization,
-        BugReport
+        BugReport,
+        OpenSourceContrib,
+        DAppBuilt,
+        ContractDeployed,
+        RepoContribution,
+        TechTutorial,
+        AuditContrib,
+        IntegrationBuilt
     }
 
     enum ApplicationStatus {
@@ -179,8 +182,12 @@ contract CommunitySource is ICredentialSource {
         string calldata platform
     ) external returns (uint256 applicationId) {
         require(
-            bytes(activityDescription).length >= 50,
-            "describe your contribution in at least 50 characters"
+            bytes(activityDescription).length >= 100,
+            "technical description must be at least 100 characters"
+        );
+        require(
+            bytes(evidenceLink).length > 0,
+            "evidence link required: provide GitHub PR, deployed contract, or live dApp URL"
         );
         require(bytes(platform).length > 0, "platform required");
 
@@ -310,10 +317,13 @@ contract CommunitySource is ICredentialSource {
     }
 
     function getWeight(CommunityActivityType activityTypeValue) public pure returns (uint256) {
-        if (activityTypeValue == CommunityActivityType.DiscordHelp) return 50;
-        if (activityTypeValue == CommunityActivityType.Moderation) return 80;
-        if (activityTypeValue == CommunityActivityType.ContentCreation) return 90;
-        if (activityTypeValue == CommunityActivityType.EventOrganization) return 120;
+        if (activityTypeValue == CommunityActivityType.DAppBuilt) return 200;
+        if (activityTypeValue == CommunityActivityType.ContractDeployed) return 180;
+        if (activityTypeValue == CommunityActivityType.AuditContrib) return 160;
+        if (activityTypeValue == CommunityActivityType.OpenSourceContrib) return 150;
+        if (activityTypeValue == CommunityActivityType.IntegrationBuilt) return 140;
+        if (activityTypeValue == CommunityActivityType.RepoContribution) return 130;
+        if (activityTypeValue == CommunityActivityType.TechTutorial) return 110;
         return 100;
     }
 

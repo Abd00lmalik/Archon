@@ -4,73 +4,101 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { expectedChainId, fetchCredentialsForAgent, fetchSourceRegistryOwner, shortAddress } from "@/lib/contracts";
-import { useWallet } from "@/lib/wallet-context";
+import { OPEN_TUTORIAL_EVENT } from "@/components/global-overlays";
 import { RouteAnnouncer } from "@/components/route-announcer";
 import { WrongNetworkBanner } from "@/components/wrong-network-banner";
+import { expectedChainId, fetchSourceOperatorStatuses, shortAddress } from "@/lib/contracts";
+import { IconCheck } from "@/lib/icons";
+import { useWallet } from "@/lib/wallet-context";
 
-const desktopLinks = [
-  { href: "/", label: "Tasks" },
-  { href: "/earn", label: "Earn" },
-  { href: "/tasks", label: "Agentic Tasks" },
-  { href: "/my-work", label: "My Work" },
-  { href: "/milestones", label: "Contracts" },
-  { href: "/profile", label: "Profile" }
-] as const;
+const ROLE_TYPES = ["task", "community", "agent_task", "dao_governance"] as const;
+
+type NavLink = {
+  href: string;
+  label: string;
+  tooltip?: string;
+  showPendingDot?: boolean;
+};
+
+function LinkItem({
+  pathname,
+  link,
+  onClick
+}: {
+  pathname: string;
+  link: NavLink;
+  onClick?: () => void;
+}) {
+  const active = pathname === link.href;
+  return (
+    <Link
+      href={link.href}
+      onClick={onClick}
+      title={link.tooltip}
+      className={`relative rounded-xl px-3 py-2 text-sm transition-all duration-200 ${
+        active ? "bg-[#6C5CE7]/25 text-[#EAEAF0]" : "text-[#9CA3AF] hover:bg-white/5 hover:text-[#EAEAF0]"
+      }`}
+    >
+      {link.label}
+      {link.showPendingDot ? <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-amber-400" /> : null}
+    </Link>
+  );
+}
 
 export function NavBar() {
   const pathname = usePathname();
-  const { account, chainId, connect, disconnect } = useWallet();
+  const { account, chainId, openWalletPicker, disconnect } = useWallet();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [credentialCount, setCredentialCount] = useState<number | null>(null);
-  const [ownerAddress, setOwnerAddress] = useState("");
+  const [hasPendingRoles, setHasPendingRoles] = useState(false);
 
   const isWrongNetwork = chainId !== null && chainId !== expectedChainId;
-  const showGetStarted = !account || credentialCount === 0;
-  const isAdmin = useMemo(() => {
-    if (!account || !ownerAddress) return false;
-    return account.toLowerCase() === ownerAddress.toLowerCase();
-  }, [account, ownerAddress]);
 
   useEffect(() => {
     let active = true;
-    const loadOwner = async () => {
-      try {
-        const owner = await fetchSourceRegistryOwner();
-        if (!active) return;
-        setOwnerAddress(owner);
-      } catch {
-        if (!active) return;
-        setOwnerAddress("");
-      }
-    };
-    void loadOwner();
-    return () => {
-      active = false;
-    };
-  }, []);
 
-  useEffect(() => {
-    let active = true;
-    const loadCount = async () => {
+    const loadRolePending = async () => {
       if (!account) {
-        setCredentialCount(0);
+        setHasPendingRoles(false);
         return;
       }
+
       try {
-        const credentials = await fetchCredentialsForAgent(account);
+        const statuses = await fetchSourceOperatorStatuses(account, [...ROLE_TYPES]);
         if (!active) return;
-        setCredentialCount(credentials.length);
+        setHasPendingRoles(Object.values(statuses).some((status) => status.pending));
       } catch {
         if (!active) return;
-        setCredentialCount(null);
+        setHasPendingRoles(false);
       }
     };
-    void loadCount();
+
+    void loadRolePending();
+
     return () => {
       active = false;
     };
   }, [account]);
+
+  const desktopLinks = useMemo<NavLink[]>(() => {
+    const links: NavLink[] = [
+      { href: "/", label: "Tasks" },
+      { href: "/earn", label: "Earn" },
+      { href: "/tasks", label: "Agentic Tasks" },
+      { href: "/my-work", label: "My Work" },
+      {
+        href: "/milestones",
+        label: "Contracts",
+        tooltip: "Milestone-based smart contracts with USDC escrow and dispute arbitration"
+      }
+    ];
+
+    if (account) {
+      links.push({ href: "/apply", label: "Apply", showPendingDot: hasPendingRoles });
+    }
+    links.push({ href: "/profile", label: "Profile" });
+
+    return links;
+  }, [account, hasPendingRoles]);
 
   return (
     <>
@@ -93,31 +121,32 @@ export function NavBar() {
 
           <nav className="hidden flex-wrap items-center gap-2 md:flex">
             {desktopLinks.map((link) => (
-              <Link
-                key={link.href}
-                href={link.href}
-                title={
-                  link.href === "/milestones"
-                    ? "Milestone-based smart contracts with USDC escrow and dispute arbitration"
-                    : undefined
-                }
-                className={`rounded-xl px-3 py-2 text-sm transition-all duration-200 ${
-                  pathname === link.href
-                    ? "bg-[#6C5CE7]/25 text-[#EAEAF0]"
-                    : "text-[#9CA3AF] hover:bg-white/5 hover:text-[#EAEAF0]"
-                }`}
-              >
-                {link.label}
-              </Link>
+              <LinkItem key={link.href} pathname={pathname} link={link} />
             ))}
           </nav>
 
           <div className="flex items-center gap-2">
-            {isAdmin ? (
-              <Link href="/admin" className={`hidden rounded-xl px-3 py-2 text-sm md:inline-flex ${pathname === "/admin" ? "bg-[#6C5CE7]/25 text-[#EAEAF0]" : "text-[#9CA3AF] hover:bg-white/5 hover:text-[#EAEAF0]"}`}>
-                Admin
+            {account ? (
+              <Link
+                href={`/verify/${account}`}
+                title="View your public credential page"
+                className="archon-button-secondary inline-flex items-center px-2.5 py-2 text-sm"
+                aria-label="View public verification page"
+              >
+                <IconCheck className="h-4 w-4" />
               </Link>
             ) : null}
+
+            <button
+              type="button"
+              title="How to use Archon"
+              aria-label="How to use Archon"
+              onClick={() => window.dispatchEvent(new Event(OPEN_TUTORIAL_EVENT))}
+              className="archon-button-secondary px-2.5 py-2 text-sm"
+            >
+              ?
+            </button>
+
             {account ? (
               <>
                 <div className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2 text-xs text-[#9CA3AF]">
@@ -135,7 +164,7 @@ export function NavBar() {
             ) : (
               <button
                 type="button"
-                onClick={() => void connect()}
+                onClick={openWalletPicker}
                 className="archon-button-primary px-3 py-2 text-sm transition-all duration-200"
               >
                 Connect Wallet
@@ -146,42 +175,22 @@ export function NavBar() {
           {mobileOpen ? (
             <nav className="grid gap-2 rounded-xl border border-white/10 bg-[#111214] p-3 md:hidden">
               {desktopLinks.map((link) => (
-                <Link
+                <LinkItem
                   key={link.href}
-                  href={link.href}
-                  title={
-                    link.href === "/milestones"
-                      ? "Milestone-based smart contracts with USDC escrow and dispute arbitration"
-                      : undefined
-                  }
+                  pathname={pathname}
+                  link={link}
                   onClick={() => setMobileOpen(false)}
-                  className={`rounded-lg px-3 py-2 text-sm ${
-                    pathname === link.href ? "bg-[#6C5CE7]/25 text-[#EAEAF0]" : "text-[#9CA3AF]"
-                  }`}
-                >
-                  {link.label}
-                </Link>
+                />
               ))}
-              {showGetStarted ? (
+              {account ? (
                 <Link
-                  href="/apply"
+                  href={`/verify/${account}`}
                   onClick={() => setMobileOpen(false)}
                   className={`rounded-lg px-3 py-2 text-sm ${
-                    pathname === "/apply" ? "bg-[#6C5CE7]/25 text-[#EAEAF0]" : "text-[#9CA3AF]"
+                    pathname.startsWith("/verify/") ? "bg-[#6C5CE7]/25 text-[#EAEAF0]" : "text-[#9CA3AF]"
                   }`}
                 >
-                  Get Started
-                </Link>
-              ) : null}
-              {isAdmin ? (
-                <Link
-                  href="/admin"
-                  onClick={() => setMobileOpen(false)}
-                  className={`rounded-lg px-3 py-2 text-sm ${
-                    pathname === "/admin" ? "bg-[#6C5CE7]/25 text-[#EAEAF0]" : "text-[#9CA3AF]"
-                  }`}
-                >
-                  Admin
+                  Verify
                 </Link>
               ) : null}
             </nav>

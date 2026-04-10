@@ -4,7 +4,8 @@ import { ethers } from "hardhat";
 // Edit before running:
 const APPLICATION_ID = 0;
 const ACTIVITY_TYPE = 2;
-// 0=DiscordHelp 1=Moderation 2=ContentCreation 3=EventOrganization 4=BugReport
+// 0=BugReport 1=OpenSourceContrib 2=DAppBuilt 3=ContractDeployed
+// 4=RepoContribution 5=TechTutorial 6=AuditContrib 7=IntegrationBuilt
 const REVIEW_NOTE = "Approved - excellent contribution";
 
 async function main() {
@@ -17,8 +18,8 @@ async function main() {
   if (APPLICATION_ID < 0) {
     throw new Error("APPLICATION_ID must be >= 0.");
   }
-  if (ACTIVITY_TYPE < 0 || ACTIVITY_TYPE > 4) {
-    throw new Error("ACTIVITY_TYPE must be between 0 and 4.");
+  if (ACTIVITY_TYPE < 0 || ACTIVITY_TYPE > 7) {
+    throw new Error("ACTIVITY_TYPE must be between 0 and 7.");
   }
   if (!REVIEW_NOTE.trim()) {
     throw new Error("REVIEW_NOTE is required.");
@@ -48,4 +49,3 @@ main().catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });
-

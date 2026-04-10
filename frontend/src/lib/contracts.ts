@@ -213,6 +213,14 @@ export type SourceOperatorApplicationRecord = {
   approved: boolean;
 };
 
+export type SourceOperatorStatus = {
+  sourceType: string;
+  approved: boolean;
+  pending: boolean;
+  appliedAt: number;
+  profileURI: string;
+};
+
 export type MilestoneStatus = 0 | 1 | 2 | 3 | 4 | 5;
 export type DisputeOutcome = 0 | 1 | 2;
 
@@ -259,7 +267,9 @@ const ERC20_MIN_ABI = [
 const SOURCE_REGISTRY_ABI = [
   "function owner() view returns (address)",
   "function totalApproved() view returns (uint256)",
+  "function isApprovedFor(string sourceType,address operator) view returns (bool)",
   "function approvedOperators(string sourceType,address operator) view returns (bool)",
+  "function applyToOperate(string sourceType,string profileURI)",
   "function operatorApplications(string sourceType,address operator) view returns (string profileURI,uint256 appliedAt)",
   "function getPendingApplicants(string sourceType) view returns (address[])",
   "function getApprovedOperators(string sourceType) view returns (address[])",
@@ -795,6 +805,66 @@ export async function fetchPendingSourceApplications(
   } catch {
     return [];
   }
+}
+
+export async function fetchSourceOperatorStatus(
+  sourceType: string,
+  operator: string
+): Promise<SourceOperatorStatus> {
+  if (!operator || !deployment.contracts.sourceRegistry) {
+    return {
+      sourceType,
+      approved: false,
+      pending: false,
+      appliedAt: 0,
+      profileURI: ""
+    };
+  }
+
+  try {
+    const contract = getContractFromConfig(deployment.contracts.sourceRegistry, getReadProvider());
+    const [approvedRaw, applicationRaw] = await Promise.all([
+      contract.isApprovedFor(sourceType, operator),
+      contract.operatorApplications(sourceType, operator)
+    ]);
+
+    const approved = Boolean(approvedRaw);
+    const [profileURI, appliedAtRaw] = applicationRaw as [string, bigint];
+    const appliedAt = Number(appliedAtRaw ?? 0n);
+
+    return {
+      sourceType,
+      approved,
+      pending: !approved && appliedAt > 0,
+      appliedAt,
+      profileURI: toString(profileURI)
+    };
+  } catch {
+    return {
+      sourceType,
+      approved: false,
+      pending: false,
+      appliedAt: 0,
+      profileURI: ""
+    };
+  }
+}
+
+export async function fetchSourceOperatorStatuses(
+  operator: string,
+  sourceTypes: string[]
+): Promise<Record<string, SourceOperatorStatus>> {
+  const result: Record<string, SourceOperatorStatus> = {};
+  if (!operator) return result;
+
+  const statuses = await Promise.all(
+    sourceTypes.map(async (sourceType) => fetchSourceOperatorStatus(sourceType, operator))
+  );
+
+  for (const status of statuses) {
+    result[status.sourceType] = status;
+  }
+  return result;
 }
 
 export async function fetchApprovedOperatorsForSource(sourceType: string): Promise<string[]> {

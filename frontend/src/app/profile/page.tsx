@@ -176,6 +176,27 @@ export default function ProfilePage() {
               </button>
             </div>
             <div className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2">
+              <span className="font-medium text-[#EAEAF0]">Public verification link:</span>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void copyToClipboard(`${window.location.origin}/verify/${account}`, "Verification link")}
+                  className="archon-button-secondary px-2 py-0.5 text-xs"
+                >
+                  Copy
+                </button>
+                <a
+                  href={`/verify/${account}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="archon-button-secondary inline-flex px-2 py-0.5 text-xs"
+                >
+                  Open
+                </a>
+                <span className="text-xs text-[#9CA3AF]">Anyone can verify your credentials at this link.</span>
+              </div>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2">
               <span className="font-medium text-[#EAEAF0]">Connected chain:</span> {chainId ?? "unknown"}
               {chainId !== null && chainId !== expectedChainId ? ` (switch to ${expectedChainId})` : ""}
             </div>

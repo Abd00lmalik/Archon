@@ -2,7 +2,7 @@ import { ethers } from "hardhat";
 import { getAdmin, loadContracts } from "./_setup";
 
 // Edit before running:
-// SOURCE_TYPE options: "task", "agent_task", "community", "github"
+// SOURCE_TYPE options: "task", "agent_task", "community", "github", "dao_governance"
 // Revocation stops future privileged actions.
 // Existing credentials are permanent and cannot be deleted.
 const SOURCE_TYPE = "task";
@@ -49,4 +49,3 @@ main().catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });
-

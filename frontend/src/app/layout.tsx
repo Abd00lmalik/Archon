@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/app/providers";
+import { GlobalOverlays } from "@/components/global-overlays";
 import { NavBar } from "@/components/nav-bar";
 
 const inter = Inter({
@@ -10,7 +11,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Archon — Universal On-Chain Reputation",
+  title: "Archon - Universal On-Chain Reputation",
   description:
     "Earn verifiable credentials from tasks, community work, agent tasks, peer attestations and DAO governance. Built on Arc.",
   metadataBase: new URL("https://archon-dapp.vercel.app"),
@@ -20,7 +21,7 @@ export const metadata: Metadata = {
     apple: "/logo-icon.svg"
   },
   openGraph: {
-    title: "Archon — Universal On-Chain Reputation",
+    title: "Archon - Universal On-Chain Reputation",
     description:
       "Earn verifiable credentials from tasks, community work, agent tasks, peer attestations and DAO governance. Built on Arc.",
     images: ["/logo.svg"]
@@ -47,6 +48,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
               </a>
             </div>
           </footer>
+          <GlobalOverlays />
         </Providers>
       </body>
     </html>

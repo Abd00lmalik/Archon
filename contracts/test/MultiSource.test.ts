@@ -181,7 +181,7 @@ describe("MultiSource Integration", function () {
       "peer_attestation",
       "dao_governance"
     ]);
-    expect(totalWeight).to.equal(650n);
+    expect(totalWeight).to.equal(710n);
   });
 
   it("enforces credential uniqueness per source and activity", async function () {

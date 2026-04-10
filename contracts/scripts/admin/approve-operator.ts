@@ -7,6 +7,7 @@ import { getAdmin, loadContracts } from "./_setup";
 // "agent_task" -> agentic task poster/validator
 // "community"  -> community moderator
 // "github"     -> GitHub activity verifier
+// "dao_governance" -> DAO governance admin
 const SOURCE_TYPE = "task";
 const APPLICANT_ADDRESS = "0x0000000000000000000000000000000000000000";
 
@@ -51,4 +52,3 @@ main().catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });
-

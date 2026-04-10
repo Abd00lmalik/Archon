@@ -1,280 +1,336 @@
 "use client";
 
-import { ethers } from "ethers";
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { BrowserProvider, JsonRpcSigner } from "ethers";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState
+} from "react";
 import { expectedChainId } from "@/lib/contracts";
 import { getChainConfig } from "@/lib/network-config";
+import {
+  EIP6963ProviderDetail,
+  EIP1193Provider,
+  getLegacyProvider,
+  getLegacyProviders,
+  onWalletAnnounced,
+  requestWallets
+} from "@/lib/wallet-discovery";
 
-type Eip1193Provider = {
-  request: (args: { method: string; params?: unknown[] | Record<string, unknown> }) => Promise<unknown>;
-  on?: (event: string, callback: (...args: unknown[]) => void) => void;
-  removeListener?: (event: string, callback: (...args: unknown[]) => void) => void;
-  providers?: Eip1193Provider[];
-  isMetaMask?: boolean;
-  isCoinbaseWallet?: boolean;
-  isBraveWallet?: boolean;
-  isRabby?: boolean;
-  isTrust?: boolean;
-  isOkxWallet?: boolean;
-  isTalisman?: boolean;
-  isPhantom?: boolean;
-};
-
-type WalletOption = {
-  id: string;
-  name: string;
-  provider: Eip1193Provider;
-};
-
-type WalletContextValue = {
+type WalletContextType = {
+  address: string | null;
   account: string | null;
+  provider: BrowserProvider | null;
+  browserProvider: BrowserProvider | null;
+  signer: JsonRpcSigner | null;
   chainId: number | null;
-  browserProvider: ethers.BrowserProvider | null;
-  connect: () => Promise<ethers.BrowserProvider | null>;
+  isConnecting: boolean;
+  isConnected: boolean;
+  error: string | null;
+  availableWallets: EIP6963ProviderDetail[];
+  showWalletPicker: boolean;
+  openWalletPicker: () => void;
+  closeWalletPicker: () => void;
+  connectWallet: (walletDetail: EIP6963ProviderDetail) => Promise<BrowserProvider | null>;
+  connect: () => Promise<BrowserProvider | null>;
   disconnect: () => void;
 };
 
-const WalletContext = createContext<WalletContextValue | undefined>(undefined);
+const WalletContext = createContext<WalletContextType>({
+  address: null,
+  account: null,
+  provider: null,
+  browserProvider: null,
+  signer: null,
+  chainId: null,
+  isConnecting: false,
+  isConnected: false,
+  error: null,
+  availableWallets: [],
+  showWalletPicker: false,
+  openWalletPicker: () => undefined,
+  closeWalletPicker: () => undefined,
+  connectWallet: async () => null,
+  connect: async () => null,
+  disconnect: () => undefined
+});
 
-function getProviderName(provider: Eip1193Provider, fallbackIndex: number) {
-  if (provider.isRabby) return "Rabby";
-  if (provider.isCoinbaseWallet) return "Coinbase Wallet";
-  if (provider.isBraveWallet) return "Brave Wallet";
-  if (provider.isTrust) return "Trust Wallet";
-  if (provider.isOkxWallet) return "OKX Wallet";
-  if (provider.isTalisman) return "Talisman";
-  if (provider.isPhantom) return "Phantom";
-  if (provider.isMetaMask) return "MetaMask";
-  return `Injected Wallet ${fallbackIndex + 1}`;
+const LAST_WALLET_KEY = "archon.last_wallet_uuid";
+
+function isMissingChainError(error: unknown) {
+  const candidate = error as { code?: number; message?: string };
+  return candidate?.code === 4902 || String(candidate?.message ?? "").toLowerCase().includes("unrecognized chain");
 }
 
-function collectInjectedWallets(): WalletOption[] {
-  if (typeof window === "undefined" || !window.ethereum) return [];
-  const root = window.ethereum as unknown as Eip1193Provider;
-  const candidates = Array.isArray(root.providers) && root.providers.length > 0 ? root.providers : [root];
-  const seen = new Set<Eip1193Provider>();
-  const options: WalletOption[] = [];
-
-  for (let i = 0; i < candidates.length; i++) {
-    const provider = candidates[i];
-    if (!provider || seen.has(provider)) continue;
-    seen.add(provider);
-    options.push({
-      id: `injected-${i}`,
-      name: getProviderName(provider, i),
-      provider
-    });
-  }
-
-  return options;
-}
-
-async function buildWalletState(provider: Eip1193Provider) {
-  const browserProvider = new ethers.BrowserProvider(provider as unknown as ethers.Eip1193Provider);
-  const accounts = (await provider.request({ method: "eth_accounts" })) as string[] | undefined;
-  const network = await browserProvider.getNetwork();
-
-  return {
-    browserProvider,
-    account: accounts && accounts.length > 0 ? accounts[0] : null,
-    chainId: Number(network.chainId)
-  };
-}
-
-async function ensureExpectedNetwork(provider: Eip1193Provider) {
+async function ensureExpectedNetwork(provider: EIP1193Provider) {
   const chainConfig = getChainConfig(expectedChainId);
+
   try {
     await provider.request({
       method: "wallet_switchEthereumChain",
       params: [{ chainId: chainConfig.chainId }]
     });
   } catch (error) {
-    const walletError = error as { code?: number; message?: string };
-    if (walletError.code === 4902) {
-      await provider.request({
-        method: "wallet_addEthereumChain",
-        params: [chainConfig]
-      });
-      await provider.request({
-        method: "wallet_switchEthereumChain",
-        params: [{ chainId: chainConfig.chainId }]
-      });
-      return;
+    if (!isMissingChainError(error)) {
+      throw error;
     }
-    throw error;
-  }
-}
 
-async function choosePreferredWallet(wallets: WalletOption[]) {
-  if (wallets.length === 0) return null;
-  for (const wallet of wallets) {
-    try {
-      const accounts = (await wallet.provider.request({ method: "eth_accounts" })) as string[] | undefined;
-      if (accounts && accounts.length > 0) {
-        return wallet;
-      }
-    } catch {
-      // Ignore provider probe failures and continue.
-    }
+    await provider.request({
+      method: "wallet_addEthereumChain",
+      params: [chainConfig]
+    });
+
+    await provider.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: chainConfig.chainId }]
+    });
   }
-  return wallets[0];
 }
 
 export function WalletProvider({ children }: { children: React.ReactNode }) {
-  const [account, setAccount] = useState<string | null>(null);
+  const [address, setAddress] = useState<string | null>(null);
+  const [provider, setProvider] = useState<BrowserProvider | null>(null);
+  const [signer, setSigner] = useState<JsonRpcSigner | null>(null);
   const [chainId, setChainId] = useState<number | null>(null);
-  const [browserProvider, setBrowserProvider] = useState<ethers.BrowserProvider | null>(null);
-  const [wallets, setWallets] = useState<WalletOption[]>([]);
-  const [activeProvider, setActiveProvider] = useState<Eip1193Provider | null>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [availableWallets, setAvailableWallets] = useState<EIP6963ProviderDetail[]>([]);
+  const [showWalletPicker, setShowWalletPicker] = useState(false);
+  const [activeWallet, setActiveWallet] = useState<EIP6963ProviderDetail | null>(null);
+  const walletsRef = useRef<EIP6963ProviderDetail[]>([]);
 
-  const connect = useCallback(async () => {
-    const discovered = wallets.length > 0 ? wallets : collectInjectedWallets();
-    if (discovered.length === 0) {
-      throw new Error("No EVM wallet found. Install any injected EVM-compatible wallet extension.");
-    }
-
-    const selectedWallet = await choosePreferredWallet(discovered);
-    if (!selectedWallet) {
-      throw new Error("No EVM wallet found. Install any injected EVM-compatible wallet extension.");
-    }
-
-    await selectedWallet.provider.request({ method: "eth_requestAccounts" });
-    await ensureExpectedNetwork(selectedWallet.provider);
-    const walletState = await buildWalletState(selectedWallet.provider);
-    setBrowserProvider(walletState.browserProvider);
-    setAccount(walletState.account);
-    setChainId(walletState.chainId);
-    setActiveProvider(selectedWallet.provider);
-    return walletState.browserProvider;
-  }, [wallets]);
-
-  const disconnect = useCallback(() => {
-    setAccount(null);
-    setChainId(null);
-    setBrowserProvider(null);
-    setActiveProvider(null);
+  const setWalletList = useCallback((list: EIP6963ProviderDetail[]) => {
+    walletsRef.current = list;
+    setAvailableWallets(list);
   }, []);
 
   useEffect(() => {
-    const injectedWallets = collectInjectedWallets();
-    setWallets(injectedWallets);
+    if (typeof window === "undefined") return () => undefined;
 
-    const onAnnounceProvider = (event: Event) => {
-      const announced = event as CustomEvent<{ info?: { name?: string; rdns?: string; uuid?: string }; provider?: Eip1193Provider }>;
-      const provider = announced.detail?.provider;
-      if (!provider) return;
-      setWallets((current) => {
-        if (current.some((wallet) => wallet.provider === provider)) {
-          return current;
-        }
-        const index = current.length;
-        return [
-          ...current,
-          {
-            id: announced.detail?.info?.uuid ?? announced.detail?.info?.rdns ?? `eip6963-${index}`,
-            name: announced.detail?.info?.name ?? getProviderName(provider, index),
-            provider
-          }
-        ];
-      });
+    const seen = new Set<string>();
+    const discovered: EIP6963ProviderDetail[] = [];
+
+    const addWallet = (detail: EIP6963ProviderDetail) => {
+      const key = detail.info.uuid || detail.info.rdns || detail.info.name;
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      discovered.push(detail);
+      setWalletList([...discovered]);
     };
 
-    window.addEventListener("eip6963:announceProvider", onAnnounceProvider);
-    window.dispatchEvent(new Event("eip6963:requestProvider"));
+    const cleanup = onWalletAnnounced(addWallet);
 
-    return () => {
-      window.removeEventListener("eip6963:announceProvider", onAnnounceProvider);
-    };
+    const legacyProviders = getLegacyProviders();
+    for (const detail of legacyProviders) {
+      addWallet(detail);
+    }
+    if (legacyProviders.length === 0) {
+      const legacy = getLegacyProvider();
+      if (legacy) addWallet(legacy);
+    }
+
+    requestWallets();
+
+    return cleanup;
+  }, [setWalletList]);
+
+  const hydrateProviderState = useCallback(async (walletDetail: EIP6963ProviderDetail) => {
+    const browserProvider = new BrowserProvider(walletDetail.provider as never);
+    const nextSigner = await browserProvider.getSigner();
+    const nextAddress = await nextSigner.getAddress();
+    const network = await browserProvider.getNetwork();
+
+    setProvider(browserProvider);
+    setSigner(nextSigner);
+    setAddress(nextAddress);
+    setChainId(Number(network.chainId));
+    setActiveWallet(walletDetail);
+
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(LAST_WALLET_KEY, walletDetail.info.uuid);
+    }
+
+    return browserProvider;
+  }, []);
+
+  const connectWallet = useCallback(
+    async (walletDetail: EIP6963ProviderDetail) => {
+      setIsConnecting(true);
+      setError(null);
+      setShowWalletPicker(false);
+
+      try {
+        await walletDetail.provider.request({ method: "eth_requestAccounts" });
+        await ensureExpectedNetwork(walletDetail.provider);
+        return await hydrateProviderState(walletDetail);
+      } catch (connectError) {
+        const message = connectError instanceof Error ? connectError.message : "Connection failed";
+        setError(message);
+        return null;
+      } finally {
+        setIsConnecting(false);
+      }
+    },
+    [hydrateProviderState]
+  );
+
+  const connect = useCallback(async () => {
+    const wallets = walletsRef.current;
+    if (wallets.length === 0) {
+      requestWallets();
+      setError("No EVM wallet detected. Install MetaMask, Coinbase Wallet, Rabby, Rainbow, Trust Wallet, or another EVM wallet.");
+      setShowWalletPicker(true);
+      return null;
+    }
+
+    let selected = wallets[0];
+    if (typeof window !== "undefined") {
+      const remembered = window.localStorage.getItem(LAST_WALLET_KEY);
+      const matched = wallets.find((wallet) => wallet.info.uuid === remembered);
+      if (matched) selected = matched;
+    }
+
+    return connectWallet(selected);
+  }, [connectWallet]);
+
+  const disconnect = useCallback(() => {
+    setAddress(null);
+    setProvider(null);
+    setSigner(null);
+    setChainId(null);
+    setActiveWallet(null);
   }, []);
 
   useEffect(() => {
     let active = true;
-    const hydrate = async () => {
-      const discovered = wallets.length > 0 ? wallets : collectInjectedWallets();
-      if (discovered.length === 0) {
-        setBrowserProvider(null);
-        setAccount(null);
-        setChainId(null);
-        setActiveProvider(null);
-        return;
-      }
 
-      const selectedWallet = await choosePreferredWallet(discovered);
-      if (!selectedWallet) {
-        setBrowserProvider(null);
-        setAccount(null);
-        setChainId(null);
-        setActiveProvider(null);
-        return;
+    const restore = async () => {
+      const wallets = walletsRef.current;
+      if (wallets.length === 0) return;
+
+      let selected: EIP6963ProviderDetail | undefined;
+      if (typeof window !== "undefined") {
+        const remembered = window.localStorage.getItem(LAST_WALLET_KEY);
+        selected = wallets.find((wallet) => wallet.info.uuid === remembered);
       }
+      selected = selected ?? wallets[0];
 
       try {
-        const walletState = await buildWalletState(selectedWallet.provider);
+        const browserProvider = new BrowserProvider(selected.provider as never);
+        const accounts = (await selected.provider.request({ method: "eth_accounts" })) as string[];
+        if (!active || !accounts?.length) return;
+
+        const nextSigner = await browserProvider.getSigner();
+        const network = await browserProvider.getNetwork();
+
         if (!active) return;
-        setBrowserProvider(walletState.browserProvider);
-        setAccount(walletState.account);
-        setChainId(walletState.chainId);
-        setActiveProvider(selectedWallet.provider);
+        setProvider(browserProvider);
+        setSigner(nextSigner);
+        setAddress(accounts[0]);
+        setChainId(Number(network.chainId));
+        setActiveWallet(selected);
       } catch {
         if (!active) return;
-        setBrowserProvider(null);
-        setAccount(null);
+        setProvider(null);
+        setSigner(null);
+        setAddress(null);
         setChainId(null);
-        setActiveProvider(null);
+        setActiveWallet(null);
       }
     };
 
-    void hydrate();
+    void restore();
+
     return () => {
       active = false;
     };
-  }, [wallets]);
+  }, [availableWallets]);
 
   useEffect(() => {
-    if (!activeProvider) {
+    const activeProvider = activeWallet?.provider;
+    if (!activeProvider?.on || !activeProvider.removeListener) {
       return () => undefined;
     }
 
     const handleAccountsChanged = (...args: unknown[]) => {
       const accounts = Array.isArray(args[0])
-        ? args[0].filter((item): item is string => typeof item === "string")
+        ? args[0].filter((value): value is string => typeof value === "string")
         : [];
-      setAccount(accounts.length > 0 ? accounts[0] : null);
+      if (accounts.length === 0) {
+        disconnect();
+        return;
+      }
+      setAddress(accounts[0]);
     };
 
     const handleChainChanged = (...args: unknown[]) => {
-      const chainHex = typeof args[0] === "string" ? args[0] : "";
-      const parsed = Number.parseInt(chainHex, 16);
+      const hexChainId = typeof args[0] === "string" ? args[0] : "";
+      const parsed = Number.parseInt(hexChainId, 16);
       setChainId(Number.isNaN(parsed) ? null : parsed);
     };
 
-    activeProvider.on?.("accountsChanged", handleAccountsChanged);
-    activeProvider.on?.("chainChanged", handleChainChanged);
+    activeProvider.on("accountsChanged", handleAccountsChanged);
+    activeProvider.on("chainChanged", handleChainChanged);
 
     return () => {
       activeProvider.removeListener?.("accountsChanged", handleAccountsChanged);
       activeProvider.removeListener?.("chainChanged", handleChainChanged);
     };
-  }, [activeProvider]);
+  }, [activeWallet, disconnect]);
 
-  const value = useMemo<WalletContextValue>(
+  const openWalletPicker = useCallback(() => {
+    requestWallets();
+    setShowWalletPicker(true);
+    setError(null);
+  }, []);
+
+  const closeWalletPicker = useCallback(() => {
+    setShowWalletPicker(false);
+  }, []);
+
+  const value = useMemo<WalletContextType>(
     () => ({
-      account,
+      address,
+      account: address,
+      provider,
+      browserProvider: provider,
+      signer,
       chainId,
-      browserProvider,
+      isConnecting,
+      isConnected: !!address,
+      error,
+      availableWallets,
+      showWalletPicker,
+      openWalletPicker,
+      closeWalletPicker,
+      connectWallet,
       connect,
       disconnect
     }),
-    [account, chainId, browserProvider, connect, disconnect]
+    [
+      address,
+      provider,
+      signer,
+      chainId,
+      isConnecting,
+      error,
+      availableWallets,
+      showWalletPicker,
+      openWalletPicker,
+      closeWalletPicker,
+      connectWallet,
+      connect,
+      disconnect
+    ]
   );
 
   return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>;
 }
 
 export function useWallet() {
-  const context = useContext(WalletContext);
-  if (!context) {
-    throw new Error("useWallet must be used within WalletProvider");
-  }
-  return context;
+  return useContext(WalletContext);
 }

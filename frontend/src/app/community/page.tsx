@@ -23,45 +23,69 @@ import { useWallet } from "@/lib/wallet-context";
 const COMMUNITY_TYPES = [
   {
     id: 0,
-    title: "Helped a Community Member",
-    label: "Helped a user solve a problem (Discord/Telegram)",
+    title: "Bug Report",
+    label: "Reported a verified bug with reproduction steps",
     description:
-      "You answered a question, solved a problem, or guided someone in our Discord, Telegram, or forum.",
-    evidence: "Screenshot or message link",
-    weight: 50
-  },
-  {
-    id: 2,
-    title: "Created Educational Content",
-    label: "Created a tutorial, guide or thread",
-    description:
-      "You wrote a tutorial, guide, thread, or video explaining Archon or ARC ecosystem concepts.",
-    evidence: "Link to the content",
-    weight: 90
+      "Identified and reported a verified bug with clear reproduction steps.",
+    evidence: "GitHub issue link or detailed report URL",
+    weight: 100
   },
   {
     id: 1,
-    title: "Moderated Community Spaces",
-    label: "Moderated community spaces",
-    description: "You actively moderated our Discord or forum, enforced rules, and kept discussions healthy.",
-    evidence: "Description of your moderation work",
-    weight: 80
+    title: "Open Source Contribution",
+    label: "Merged PR to a recognized open source project",
+    description:
+      "Had a pull request merged into a recognized open source project.",
+    evidence: "Merged GitHub PR link",
+    weight: 150
+  },
+  {
+    id: 2,
+    title: "Built a dApp",
+    label: "Built and deployed a working decentralized application",
+    description: "Built and deployed a working dApp with a live deployment and source code.",
+    evidence: "Live URL plus GitHub repository",
+    weight: 200
   },
   {
     id: 3,
-    title: "Organized a Community Event",
-    label: "Organized a community event or workshop",
-    description: "You ran a workshop, AMA, hackathon team, or community call.",
-    evidence: "Link or description of the event",
-    weight: 120
+    title: "Smart Contract Deployment",
+    label: "Deployed and verified a smart contract",
+    description: "Deployed and verified a smart contract on a public network.",
+    evidence: "Block explorer verification link",
+    weight: 180
   },
   {
     id: 4,
-    title: "Reported a Verified Bug",
-    label: "Submitted a verified bug report",
-    description: "You discovered and reported a confirmed bug in the platform or smart contracts.",
-    evidence: "Link to your bug report",
-    weight: 100
+    title: "Repository Contribution",
+    label: "Meaningful code contribution to a public repository",
+    description: "Made a meaningful code contribution to a public repository.",
+    evidence: "GitHub commit or PR link",
+    weight: 130
+  },
+  {
+    id: 5,
+    title: "Technical Tutorial",
+    label: "Published technical tutorial or documentation",
+    description: "Published a technical tutorial, guide, or documentation for blockchain/Web3 development.",
+    evidence: "Published article or documentation link",
+    weight: 110
+  },
+  {
+    id: 6,
+    title: "Security Audit Contribution",
+    label: "Contributed to a protocol audit or security review",
+    description: "Contributed to a smart contract or protocol security audit.",
+    evidence: "Published audit report link",
+    weight: 160
+  },
+  {
+    id: 7,
+    title: "Protocol Integration",
+    label: "Built an integration between two protocols",
+    description: "Built a working integration between two protocols or services.",
+    evidence: "Deployment link and source code",
+    weight: 140
   }
 ] as const;
 
@@ -193,8 +217,12 @@ export default function CommunityPage() {
     setStatus("");
     setError("");
 
-    if (activityDescription.trim().length < 50) {
-      setError("Describe your contribution in at least 50 characters.");
+    if (activityDescription.trim().length < 100) {
+      setError("Technical description must be at least 100 characters.");
+      return;
+    }
+    if (!evidenceLink.trim()) {
+      setError("Evidence link is required for technical activity applications.");
       return;
     }
 
@@ -288,7 +316,7 @@ export default function CommunityPage() {
       <div className="archon-card p-6">
         <h1 className="text-2xl font-semibold tracking-wide text-[#EAEAF0]">Community Credentials</h1>
         <p className="mt-2 text-sm text-[#9CA3AF]">
-          Earn credentials for real contributions to the Archon community - verified by our moderation team.
+          Earn credentials for verified technical contributions - reviewed by Archon moderators.
         </p>
       </div>
 
@@ -352,7 +380,7 @@ export default function CommunityPage() {
             <article key={item.id} className="rounded-xl border border-white/10 bg-[#111214] p-4 text-sm text-[#9CA3AF]">
               <h3 className="font-semibold text-[#EAEAF0]">{item.title}</h3>
               <p className="mt-2">{item.description}</p>
-              <p className="mt-2 text-xs">Evidence needed: {item.evidence}</p>
+              <p className="mt-2 text-xs">Evidence required: {item.evidence}</p>
               <p className="mt-2 inline-flex rounded-full bg-white/5 px-2 py-1 text-xs text-[#EAEAF0]">
                 Weight: +{item.weight} pts
               </p>
@@ -435,7 +463,7 @@ export default function CommunityPage() {
       </div>
 
       <div className="archon-card p-6">
-        <h2 className="text-lg font-semibold text-[#EAEAF0]">Submit New Application</h2>
+        <h2 className="text-lg font-semibold text-[#EAEAF0]">Submit New Technical Application</h2>
         {!hasModerators ? (
           <p className="mt-3 text-sm text-[#9CA3AF]">
             Applications are disabled until at least one active moderator is registered.
@@ -450,7 +478,7 @@ export default function CommunityPage() {
                 className="archon-input mt-1 min-h-28"
                 value={activityDescription}
                 onChange={(event) => setActivityDescription(event.target.value)}
-                placeholder="Describe specifically what you did, when you did it, and how it helped the community."
+                placeholder="Describe specifically what you built or contributed. Include: what the project does, what your role was, what problem it solves, and relevant technical details."
                 required
               />
             </label>
@@ -481,14 +509,17 @@ export default function CommunityPage() {
               </label>
             </div>
             <label className="block text-sm text-[#9CA3AF]">
-              Evidence link (optional but recommended)
+              Evidence Link (Required)
               <input
                 className="archon-input mt-1"
                 value={evidenceLink}
                 onChange={(event) => setEvidenceLink(event.target.value)}
                 placeholder="https://..."
+                required
               />
-              <span className="mt-1 block text-xs">A message link, post URL, or screenshot hosted on IPFS</span>
+              <span className="mt-1 block text-xs">
+                This is the most important field. Without a verifiable link, your application cannot be approved.
+              </span>
             </label>
             <button type="submit" className="archon-button-primary px-4 py-2.5 text-sm">
               Submit Application
