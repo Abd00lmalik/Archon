@@ -52,11 +52,11 @@ function WalletIcon({ wallet }: { wallet: DetectedWallet }) {
 
 function WalletRow({
   wallet,
-  isConnecting,
+  isDisabled,
   onConnect
 }: {
   wallet: DetectedWallet;
-  isConnecting: boolean;
+  isDisabled: boolean;
   onConnect: () => void;
 }) {
   const isPopular =
@@ -69,7 +69,7 @@ function WalletRow({
     <button
       type="button"
       onClick={onConnect}
-      disabled={isConnecting}
+      disabled={isDisabled}
       className="group flex w-full items-center gap-3 rounded-xl border border-white/10 bg-[#111214] px-3 py-3 text-left transition hover:border-[#00FFC8]/50 hover:bg-[#141822] disabled:cursor-not-allowed disabled:opacity-60"
     >
       <WalletIcon wallet={wallet} />
@@ -165,7 +165,7 @@ export function WalletPicker() {
               <WalletRow
                 key={wallet.info.uuid}
                 wallet={wallet}
-                isConnecting={isConnecting}
+                isDisabled={isConnecting && clickedWallet === wallet.info.uuid}
                 onConnect={() => {
                   setClickedWallet(wallet.info.uuid);
                   void connectWallet(wallet);
