@@ -4,32 +4,47 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useWallet } from "@/lib/wallet-context";
 import type { DetectedWallet } from "@/lib/wallet-discovery";
 
-function normalizeIconSrc(icon: string): string | null {
-  const trimmed = icon.trim();
-  if (!trimmed) return null;
-  if (trimmed.startsWith("data:image/")) return trimmed;
-  if (trimmed.startsWith("http://") || trimmed.startsWith("https://") || trimmed.startsWith("chrome-extension://")) {
-    return trimmed;
+function WalletIcon({ wallet }: { wallet: DetectedWallet }) {
+  const [iconFailed, setIconFailed] = useState(false);
+
+  if (wallet.info.icon && !iconFailed) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={wallet.info.icon}
+        alt={wallet.info.name}
+        width={40}
+        height={40}
+        className="h-10 w-10 rounded-xl object-contain"
+        onError={() => setIconFailed(true)}
+      />
+    );
   }
 
-  const isLikelyBase64 = /^[A-Za-z0-9+/=]+$/.test(trimmed);
-  if (isLikelyBase64) {
-    return `data:image/png;base64,${trimmed}`;
-  }
-
-  return null;
-}
-
-function WalletFallbackIcon({ name }: { name: string }) {
-  const initials = name
+  const initials = wallet.info.name
     .split(" ")
     .map((word) => word[0])
     .join("")
     .slice(0, 2)
     .toUpperCase();
 
+  const colors: Record<string, string> = {
+    "MetaMask": "#F6851B",
+    "Coinbase Wallet": "#0052FF",
+    "Rabby Wallet": "#7B68EE",
+    "Rabby": "#7B68EE",
+    "OKX Wallet": "#000000",
+    "Trust Wallet": "#3375BB",
+    "Brave Wallet": "#FB542B"
+  };
+
+  const bgColor = colors[wallet.info.name] ?? "#145B7D";
+
   return (
-    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/15 bg-white/5 text-xs font-semibold text-[#9CA3AF]">
+    <div
+      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-sm font-bold text-white"
+      style={{ backgroundColor: bgColor }}
+    >
       {initials || "W"}
     </div>
   );
@@ -44,8 +59,6 @@ function WalletRow({
   isConnecting: boolean;
   onConnect: () => void;
 }) {
-  const [iconFailed, setIconFailed] = useState(false);
-  const iconSrc = normalizeIconSrc(wallet.info.icon);
   const isPopular =
     wallet.info.rdns === "io.metamask" ||
     wallet.info.rdns === "com.coinbase.wallet" ||
@@ -59,19 +72,7 @@ function WalletRow({
       disabled={isConnecting}
       className="group flex w-full items-center gap-3 rounded-xl border border-white/10 bg-[#111214] px-3 py-3 text-left transition hover:border-[#00FFC8]/50 hover:bg-[#141822] disabled:cursor-not-allowed disabled:opacity-60"
     >
-      {iconSrc && !iconFailed ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={iconSrc}
-          alt={wallet.info.name}
-          width={40}
-          height={40}
-          className="h-10 w-10 shrink-0 rounded-xl"
-          onError={() => setIconFailed(true)}
-        />
-      ) : (
-        <WalletFallbackIcon name={wallet.info.name} />
-      )}
+      <WalletIcon wallet={wallet} />
 
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
@@ -85,7 +86,7 @@ function WalletRow({
         <div className="mt-0.5 truncate text-[11px] text-[#9CA3AF]">{wallet.info.rdns || "EVM Wallet"}</div>
       </div>
 
-      <span className="text-[#6B7280] transition group-hover:translate-x-0.5 group-hover:text-[#00FFC8]">?</span>
+      <span className="text-[#6B7280] transition group-hover:translate-x-0.5 group-hover:text-[#00FFC8]">→</span>
     </button>
   );
 }
@@ -93,6 +94,7 @@ function WalletRow({
 export function WalletPicker() {
   const { showWalletPicker, closeWalletPicker, availableWallets, connectWallet, isConnecting, error } = useWallet();
   const modalRef = useRef<HTMLDivElement>(null);
+  const [clickedWallet, setClickedWallet] = useState<string | null>(null);
 
   const sortedWallets = useMemo(() => {
     return [...availableWallets].sort((a, b) => a.info.name.localeCompare(b.info.name));
@@ -105,6 +107,7 @@ export function WalletPicker() {
 
     if (showWalletPicker) {
       window.addEventListener("keydown", handleEscape);
+      setClickedWallet(null);
     }
 
     return () => {
@@ -149,10 +152,10 @@ export function WalletPicker() {
 
         {error ? <p className="mb-3 rounded-lg border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{error}</p> : null}
 
-        {isConnecting ? (
+        {isConnecting && clickedWallet ? (
           <div className="mb-4 flex items-center gap-2 text-xs text-[#9CA3AF]">
             <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-[#00FFC8]/30 border-t-[#00FFC8]" />
-            Waiting for wallet approval...
+            Connecting to {availableWallets.find((wallet) => wallet.info.uuid === clickedWallet)?.info.name ?? "wallet"}...
           </div>
         ) : null}
 
@@ -164,6 +167,7 @@ export function WalletPicker() {
                 wallet={wallet}
                 isConnecting={isConnecting}
                 onConnect={() => {
+                  setClickedWallet(wallet.info.uuid);
                   void connectWallet(wallet);
                 }}
               />

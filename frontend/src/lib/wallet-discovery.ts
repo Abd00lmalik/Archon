@@ -69,7 +69,7 @@ function sanitizeInfo(rawInfo: Partial<WalletInfo>): WalletInfo {
   return {
     uuid: (rawInfo.uuid?.trim() || fallbackUuid || "wallet-unknown").toLowerCase(),
     name: sanitizedName,
-    icon: rawInfo.icon?.trim() || "",
+    icon: typeof rawInfo.icon === "string" ? rawInfo.icon : "",
     rdns: sanitizedRdns
   };
 }
@@ -164,12 +164,12 @@ export function initWalletDiscovery() {
     if (!detail?.provider) return;
 
     addDetectedWallet({
-      info: sanitizeInfo({
-        uuid: detail.info?.uuid,
-        name: detail.info?.name,
-        icon: detail.info?.icon,
-        rdns: detail.info?.rdns
-      }),
+      info: {
+        uuid: detail.info?.uuid || "",
+        name: detail.info?.name || "Injected Wallet",
+        icon: typeof detail.info?.icon === "string" ? detail.info.icon : "",
+        rdns: detail.info?.rdns || ""
+      },
       provider: detail.provider
     });
   };
