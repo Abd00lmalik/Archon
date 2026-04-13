@@ -1,7 +1,6 @@
 ﻿"use client";
 
 import Link from "next/link";
-import { ethers } from "ethers";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   expectedChainId,
@@ -9,16 +8,15 @@ import {
   SourceOperatorStatus,
   txApplyToOperate
 } from "@/lib/contracts";
-import { IconCommunity, IconGovernance, IconTask } from "@/lib/icons";
+import { IconCommunity, IconTask } from "@/lib/icons";
 import { useWallet } from "@/lib/wallet-context";
 
-type RoleKey = "community" | "dao_governance";
+type RoleKey = "community";
 
-const ROLE_TYPES: RoleKey[] = ["community", "dao_governance"];
+const ROLE_TYPES: RoleKey[] = ["community"];
 
 const EMPTY_STATUS: Record<RoleKey, SourceOperatorStatus> = {
-  community: { sourceType: "community", approved: false, pending: false, appliedAt: 0, profileURI: "" },
-  dao_governance: { sourceType: "dao_governance", approved: false, pending: false, appliedAt: 0, profileURI: "" }
+  community: { sourceType: "community", approved: false, pending: false, appliedAt: 0, profileURI: "" }
 };
 
 function statusBadge(status: SourceOperatorStatus) {
@@ -50,16 +48,6 @@ export default function ApplyPage() {
     expertise: [] as string[]
   });
 
-  const [daoForm, setDaoForm] = useState({
-    name: "",
-    daoName: "",
-    governorAddress: "",
-    network: "Arc Testnet",
-    website: "",
-    reason: "",
-    proposalLink: ""
-  });
-
   const pendingCount = useMemo(
     () => ROLE_TYPES.reduce((count, role) => count + (statuses[role].pending ? 1 : 0), 0),
     [statuses]
@@ -85,8 +73,7 @@ export default function ApplyPage() {
     try {
       const result = await fetchSourceOperatorStatuses(account, ROLE_TYPES);
       setStatuses({
-        community: result.community ?? EMPTY_STATUS.community,
-        dao_governance: result.dao_governance ?? EMPTY_STATUS.dao_governance
+        community: result.community ?? EMPTY_STATUS.community
       });
     } catch {
       setStatuses(EMPTY_STATUS);
@@ -100,14 +87,14 @@ export default function ApplyPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account]);
 
-  const submitRole = async (sourceType: RoleKey, payload: Record<string, unknown>) => {
+  const submitRole = async (payload: Record<string, unknown>) => {
     setSubmitting(true);
     setStatus("");
     setError("");
 
     try {
       const provider = await withProvider();
-      const tx = await txApplyToOperate(provider, sourceType, JSON.stringify(payload));
+      const tx = await txApplyToOperate(provider, "community", JSON.stringify(payload));
       setStatus(`Application submitted: ${tx.hash}`);
       await tx.wait();
       setStatus("Application submitted successfully. The platform team will review within 48 hours.");
@@ -120,9 +107,9 @@ export default function ApplyPage() {
     }
   };
 
-  const openForm = (role: RoleKey) => {
-    if (statuses[role].approved || statuses[role].pending) return;
-    setSelectedRole(role);
+  const openForm = () => {
+    if (statuses.community.approved || statuses.community.pending) return;
+    setSelectedRole("community");
     setError("");
     setStatus("");
     setTimeout(() => formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 80);
@@ -133,7 +120,7 @@ export default function ApplyPage() {
       <div className="archon-card p-6">
         <h1 className="text-2xl font-semibold text-[#EAEAF0]">Join Archon</h1>
         <p className="mt-2 text-sm text-[#9CA3AF]">
-          Complete tasks immediately — no approval needed. Apply for a moderator role to help grow the community.
+          Complete tasks immediately with no approval. Apply only if you want to become a Community Moderator.
         </p>
         {account ? (
           <p className="mt-2 text-xs text-[#9CA3AF]">
@@ -163,8 +150,7 @@ export default function ApplyPage() {
               </div>
               <h2 className="text-lg font-semibold text-[#EAEAF0]">Complete Tasks</h2>
               <p className="mt-2 text-sm text-[#9CA3AF]">
-                Browse open tasks, submit your work, get paid in USDC, and earn on-chain credentials. No approval needed —
-                start immediately.
+                Browse open tasks, submit your work, get paid in USDC, and earn on-chain credentials. No approval needed.
               </p>
               <p className="mt-2 text-xs text-[#9CA3AF]">No application required.</p>
             </div>
@@ -174,57 +160,30 @@ export default function ApplyPage() {
           </div>
         </article>
 
-        <div className="grid gap-4 md:grid-cols-2">
-          <article className="archon-card p-5">
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-[#22C55E]/15 px-2 py-1 text-xs text-[#22C55E]">
-              <IconCommunity className="h-3.5 w-3.5" />
-              Requires approval
-            </div>
-            <div className="flex items-start justify-between gap-2">
-              <h3 className="text-lg font-semibold text-[#EAEAF0]">Community Moderator</h3>
-              {statusBadge(statuses.community)}
-            </div>
-            <p className="mt-2 text-sm text-[#9CA3AF]">
-              Review and approve technical credential applications. You are the quality gate for community credentials.
-            </p>
-            {statuses.community.approved ? (
-              <Link href="/community" className="archon-button-primary mt-4 inline-flex px-3 py-2 text-sm">
-                Open Community Panel
-              </Link>
-            ) : statuses.community.pending ? (
-              <p className="mt-4 text-xs text-amber-200">Your application is pending review. Response time is within 48 hours.</p>
-            ) : (
-              <button type="button" onClick={() => openForm("community")} className="archon-button-primary mt-4 px-3 py-2 text-sm">
-                Apply as Moderator
-              </button>
-            )}
-          </article>
-
-          <article className="archon-card p-5">
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-[#6366F1]/15 px-2 py-1 text-xs text-[#6366F1]">
-              <IconGovernance className="h-3.5 w-3.5" />
-              Requires approval
-            </div>
-            <div className="flex items-start justify-between gap-2">
-              <h3 className="text-lg font-semibold text-[#EAEAF0]">DAO Governance Admin</h3>
-              {statusBadge(statuses.dao_governance)}
-            </div>
-            <p className="mt-2 text-sm text-[#9CA3AF]">
-              Propose governor contracts for approval so voters in that DAO can claim governance credentials.
-            </p>
-            {statuses.dao_governance.approved ? (
-              <Link href="/governance" className="archon-button-primary mt-4 inline-flex px-3 py-2 text-sm">
-                Open Governance
-              </Link>
-            ) : statuses.dao_governance.pending ? (
-              <p className="mt-4 text-xs text-amber-200">Your application is pending review. Response time is within 48 hours.</p>
-            ) : (
-              <button type="button" onClick={() => openForm("dao_governance")} className="archon-button-primary mt-4 px-3 py-2 text-sm">
-                Apply as DAO Admin
-              </button>
-            )}
-          </article>
-        </div>
+        <article className="archon-card p-5">
+          <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-[#22C55E]/15 px-2 py-1 text-xs text-[#22C55E]">
+            <IconCommunity className="h-3.5 w-3.5" />
+            Requires approval
+          </div>
+          <div className="flex items-start justify-between gap-2">
+            <h3 className="text-lg font-semibold text-[#EAEAF0]">Community Moderator</h3>
+            {statusBadge(statuses.community)}
+          </div>
+          <p className="mt-2 text-sm text-[#9CA3AF]">
+            Review and approve technical credential applications. You are the quality gate for community credentials.
+          </p>
+          {statuses.community.approved ? (
+            <Link href="/community" className="archon-button-primary mt-4 inline-flex px-3 py-2 text-sm">
+              Open Community Panel
+            </Link>
+          ) : statuses.community.pending ? (
+            <p className="mt-4 text-xs text-amber-200">Your application is pending review. Response time is within 48 hours.</p>
+          ) : (
+            <button type="button" onClick={openForm} className="archon-button-primary mt-4 px-3 py-2 text-sm">
+              Apply as Moderator
+            </button>
+          )}
+        </article>
       </div>
 
       <div ref={formRef}>
@@ -288,70 +247,11 @@ export default function ApplyPage() {
                 if (!moderatorForm.github.trim().startsWith("https://github.com/")) return setError("GitHub URL must start with https://github.com/");
                 if (moderatorForm.technicalBackground.trim().length < 150) return setError("Technical background must be at least 150 characters.");
                 if (moderatorForm.expertise.length === 0) return setError("Select at least one technical area.");
-                void submitRole("community", { role: "community_moderator", ...moderatorForm });
+                void submitRole({ role: "community_moderator", ...moderatorForm });
               }}
               className="archon-button-primary px-4 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-50"
             >
               {submitting ? "Submitting..." : "Submit Moderator Application"}
-            </button>
-          </div>
-        ) : null}
-
-        {selectedRole === "dao_governance" ? (
-          <div className="archon-card space-y-4 p-6">
-            <h2 className="text-xl font-semibold text-[#EAEAF0]">Apply as DAO Governance Admin</h2>
-            <p className="text-sm text-[#9CA3AF]">DAO Governance Admins propose governor contracts for approval.</p>
-            <label className="block text-sm text-[#9CA3AF]">
-              Your name or organization
-              <input className="archon-input mt-1" value={daoForm.name} onChange={(e) => setDaoForm((p) => ({ ...p, name: e.target.value }))} />
-            </label>
-            <label className="block text-sm text-[#9CA3AF]">
-              DAO name
-              <input className="archon-input mt-1" value={daoForm.daoName} onChange={(e) => setDaoForm((p) => ({ ...p, daoName: e.target.value }))} />
-            </label>
-            <label className="block text-sm text-[#9CA3AF]">
-              Governor contract address
-              <input className="archon-input mt-1" value={daoForm.governorAddress} onChange={(e) => setDaoForm((p) => ({ ...p, governorAddress: e.target.value }))} placeholder="0x..." />
-              <span className="mt-1 block text-xs">Must be a valid 0x address.</span>
-            </label>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="block text-sm text-[#9CA3AF]">
-                Network the governor is deployed on
-                <select className="archon-input mt-1" value={daoForm.network} onChange={(e) => setDaoForm((p) => ({ ...p, network: e.target.value }))}>
-                  <option>Arc Testnet</option>
-                  <option>Ethereum Mainnet</option>
-                  <option>Polygon</option>
-                  <option>Arbitrum</option>
-                  <option>Optimism</option>
-                  <option>Other</option>
-                </select>
-              </label>
-              <label className="block text-sm text-[#9CA3AF]">
-                DAO website or governance forum
-                <input className="archon-input mt-1" type="url" value={daoForm.website} onChange={(e) => setDaoForm((p) => ({ ...p, website: e.target.value }))} />
-              </label>
-            </div>
-            <label className="block text-sm text-[#9CA3AF]">
-              Why approve this DAO
-              <textarea className="archon-input mt-1 min-h-28" value={daoForm.reason} onChange={(e) => setDaoForm((p) => ({ ...p, reason: e.target.value }))} />
-              <span className="mt-1 block text-xs">Minimum 100 characters.</span>
-            </label>
-            <label className="block text-sm text-[#9CA3AF]">
-              Link to a recent governance proposal
-              <input className="archon-input mt-1" type="url" value={daoForm.proposalLink} onChange={(e) => setDaoForm((p) => ({ ...p, proposalLink: e.target.value }))} />
-            </label>
-            <button
-              type="button"
-              disabled={submitting || loadingStatuses}
-              onClick={() => {
-                if (!account) return setError("Connect your wallet before submitting.");
-                if (!ethers.isAddress(daoForm.governorAddress.trim())) return setError("Governor contract address must be a valid 0x address.");
-                if (daoForm.reason.trim().length < 100) return setError("Why approve this DAO must be at least 100 characters.");
-                void submitRole("dao_governance", { role: "dao_governance", ...daoForm });
-              }}
-              className="archon-button-primary px-4 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {submitting ? "Submitting..." : "Submit DAO Governance Application"}
             </button>
           </div>
         ) : null}
@@ -361,4 +261,3 @@ export default function ApplyPage() {
     </section>
   );
 }
-

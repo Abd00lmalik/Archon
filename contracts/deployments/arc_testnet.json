@@ -11,7 +11,7 @@
   },
   "contracts": {
     "sourceRegistry": {
-      "address": "0x83F3340E3c96dDc632981F20545c1BC172CA410d",
+      "address": "0x942c5B8F8e343C0F475c713C235d5D9963e3308F",
       "abi": [
         {
           "inputs": [],
@@ -336,7 +336,7 @@
       ]
     },
     "validationRegistry": {
-      "address": "0xF668fa70Bd939460481A171289106DaA022cEdDA",
+      "address": "0xe428fdC8Dfe51a0689f6bC4D68E3b6d024548a8C",
       "abi": [
         {
           "inputs": [],
@@ -730,7 +730,7 @@
       ]
     },
     "credentialHook": {
-      "address": "0x1ece60229603797282c93F2E662E54A233bD0ed5",
+      "address": "0x0939493F3ba9B96c381110c29fCe85788B8da28a",
       "abi": [
         {
           "inputs": [
@@ -1224,7 +1224,7 @@
       ]
     },
     "jobContract": {
-      "address": "0xbD3cc3ce45c4475d3811E432849318f0fB6912b3",
+      "address": "0xEEF4C172ea2A8AB184CA5d121D142789F78BFb16",
       "abi": [
         {
           "inputs": [
@@ -2538,7 +2538,7 @@
       ]
     },
     "job": {
-      "address": "0xbD3cc3ce45c4475d3811E432849318f0fB6912b3",
+      "address": "0xEEF4C172ea2A8AB184CA5d121D142789F78BFb16",
       "abi": [
         {
           "inputs": [
@@ -3852,7 +3852,7 @@
       ]
     },
     "githubSource": {
-      "address": "0x02957bD662540EFc8133f2797c6efE81a5C271D5",
+      "address": "0x13c813895c80b24B2B1293F1Fdd61eE517F5166C",
       "abi": [
         {
           "inputs": [
@@ -4403,7 +4403,7 @@
       ]
     },
     "communitySource": {
-      "address": "0x95c407662A33c0ACBD7dBe69468A12Ea92De5651",
+      "address": "0x1e69b029FD8F01a96A070EB0467CF14F614f7232",
       "abi": [
         {
           "inputs": [
@@ -5393,7 +5393,7 @@
       ]
     },
     "agentTaskSource": {
-      "address": "0x66BBB81B97C513b84C546930901F93ac2C8417FC",
+      "address": "0xaCeb8425AD63516590CCB591dfd5ACDf683B0207",
       "abi": [
         {
           "inputs": [
@@ -6138,7 +6138,7 @@
       ]
     },
     "milestoneEscrow": {
-      "address": "0x8aaEb89022Fa9074e7Da4763882d5DE002942a7E",
+      "address": "0x9418878C0Be7e0a81c121878f4Bc49009AABff17",
       "abi": [
         {
           "inputs": [
@@ -7195,7 +7195,7 @@
       ]
     },
     "peerAttestationSource": {
-      "address": "0x742C63DBeC73A27b6F8Cc65628A943D452d99257",
+      "address": "0x6bB59d931a3635917A5251eE86c0059a3abA300E",
       "abi": [
         {
           "inputs": [
@@ -7615,7 +7615,7 @@
       ]
     },
     "daoGovernanceSource": {
-      "address": "0xCe057cB617dCe9aF3B4Cd27F683299905C42c4c5",
+      "address": "0xbCaA50187fBef97D706665DFcE4f03d4726DE9d7",
       "abi": [
         {
           "inputs": [

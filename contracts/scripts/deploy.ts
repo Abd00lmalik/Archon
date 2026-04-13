@@ -34,7 +34,7 @@ type DeploymentConfig = {
   };
 };
 
-const SOURCE_TYPES = ["community", "dao_governance"] as const;
+const SOURCE_TYPES = ["community"] as const;
 
 function writeJson(filePath: string, payload: unknown) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -112,7 +112,7 @@ async function main() {
     for (const sourceType of SOURCE_TYPES) {
       await (await sourceRegistry.approveOperator(sourceType, deployer.address)).wait();
     }
-    console.log("Approved deployer as source operator for community/dao_governance.");
+    console.log("Approved deployer as source operator for community.");
   } else {
     console.log("SEED_OPERATOR=false: skipped deployer source-operator approvals.");
   }
