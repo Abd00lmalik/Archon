@@ -1,8 +1,8 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { motion, AnimatePresence } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
 import { OPEN_TUTORIAL_EVENT } from "@/components/global-overlays";
 import { RouteAnnouncer } from "@/components/route-announcer";
@@ -11,39 +11,20 @@ import { expectedChainId, fetchSourceOperatorStatuses, shortAddress } from "@/li
 import { IconCheck } from "@/lib/icons";
 import { useWallet } from "@/lib/wallet-context";
 
-const ROLE_TYPES = ["community"] as const;
+const ROLE_TYPES = ["community", "dao_governance"] as const;
 
-type NavLink = {
+type NavItem = {
   href: string;
   label: string;
-  tooltip?: string;
-  showPendingDot?: boolean;
 };
 
-function LinkItem({
-  pathname,
-  link,
-  onClick
-}: {
-  pathname: string;
-  link: NavLink;
-  onClick?: () => void;
-}) {
-  const active = pathname === link.href;
-  return (
-    <Link
-      href={link.href}
-      onClick={onClick}
-      title={link.tooltip}
-      className={`relative rounded-xl px-3 py-2 text-sm transition-all duration-200 ${
-        active ? "bg-[#6C5CE7]/25 text-[#EAEAF0]" : "text-[#9CA3AF] hover:bg-white/5 hover:text-[#EAEAF0]"
-      }`}
-    >
-      {link.label}
-      {link.showPendingDot ? <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-amber-400" /> : null}
-    </Link>
-  );
-}
+const BASE_LINKS: NavItem[] = [
+  { href: "/", label: "Tasks" },
+  { href: "/earn", label: "Earn" },
+  { href: "/tasks", label: "Agentic" },
+  { href: "/milestones", label: "Contracts" },
+  { href: "/profile", label: "Profile" }
+];
 
 export function NavBar() {
   const pathname = usePathname();
@@ -55,13 +36,11 @@ export function NavBar() {
 
   useEffect(() => {
     let active = true;
-
-    const loadRolePending = async () => {
+    const loadPending = async () => {
       if (!account) {
         setHasPendingRoles(false);
         return;
       }
-
       try {
         const statuses = await fetchSourceOperatorStatuses(account, [...ROLE_TYPES]);
         if (!active) return;
@@ -71,66 +50,62 @@ export function NavBar() {
         setHasPendingRoles(false);
       }
     };
-
-    void loadRolePending();
-
+    void loadPending();
     return () => {
       active = false;
     };
   }, [account]);
 
-  const desktopLinks = useMemo<NavLink[]>(() => {
-    const links: NavLink[] = [
-      { href: "/", label: "Tasks" },
-      { href: "/earn", label: "Earn" },
-      { href: "/tasks", label: "Agentic Tasks" },
-      { href: "/my-work", label: "My Work" },
-      {
-        href: "/milestones",
-        label: "Contracts",
-        tooltip: "Milestone-based smart contracts with USDC escrow and dispute arbitration"
-      }
-    ];
-
+  const links = useMemo(() => {
+    const out: NavItem[] = [...BASE_LINKS];
     if (account) {
-      links.push({ href: "/apply", label: "Apply", showPendingDot: hasPendingRoles });
+      out.splice(4, 0, { href: "/apply", label: "Apply" });
     }
-    links.push({ href: "/profile", label: "Profile" });
-
-    return links;
-  }, [account, hasPendingRoles]);
+    return out;
+  }, [account]);
 
   return (
     <>
-      <header className="border-b border-white/10 bg-[#0a0a0b]/95 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center justify-between gap-3">
-            <Link href="/" className="flex items-center gap-3">
-              <Image src="/logo-icon.svg" alt="Archon logo" width={30} height={30} />
-              <span className="text-lg font-semibold tracking-wide text-[#EAEAF0]">Archon</span>
+      <motion.nav
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3 }}
+        className="sticky top-0 z-50 h-14 border-b border-[var(--border)] bg-[rgba(6,13,20,0.95)] backdrop-blur-md"
+      >
+        <div className="mx-auto flex h-full max-w-[1400px] items-center justify-between px-4">
+          <div className="flex items-center gap-4">
+            <Link href="/" className="flex items-center gap-2">
+              <span className="h-4 w-4 rotate-45 border border-[var(--arc)] bg-[rgba(0,229,255,0.12)]" />
+              <div>
+                <div className="font-heading text-xs font-bold tracking-[0.15em] text-[var(--text-primary)]">ARCHON</div>
+                <div className="mono text-[10px] text-[var(--text-muted)]">ARC TESTNET</div>
+              </div>
             </Link>
-            <button
-              type="button"
-              aria-label={mobileOpen ? "Close mobile menu" : "Open mobile menu"}
-              onClick={() => setMobileOpen((previous) => !previous)}
-              className="archon-button-secondary px-3 py-2 text-sm md:hidden"
-            >
-              {mobileOpen ? "Close" : "Menu"}
-            </button>
           </div>
 
-          <nav className="hidden flex-wrap items-center gap-2 md:flex">
-            {desktopLinks.map((link) => (
-              <LinkItem key={link.href} pathname={pathname} link={link} />
-            ))}
-          </nav>
+          <div className="hidden items-center gap-1 md:flex">
+            {links.map((link) => {
+              const active = pathname === link.href || (link.href !== "/" && pathname.startsWith(link.href));
+              const showDot = link.href === "/apply" && hasPendingRoles;
+              return (
+                <Link key={link.href} href={link.href} className={`nav-link ${active ? "active" : ""} relative`}>
+                  {link.label}
+                  {showDot ? <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-[var(--warn)]" /> : null}
+                </Link>
+              );
+            })}
+          </div>
 
           <div className="flex items-center gap-2">
+            <span className="badge badge-arc hidden sm:inline-flex">
+              <span className="live-dot" /> ARC
+            </span>
+
             {account ? (
               <Link
                 href={`/verify/${account}`}
                 title="View your public credential page"
-                className="archon-button-secondary inline-flex items-center px-2.5 py-2 text-sm"
+                className="btn-ghost inline-flex items-center px-2 py-1.5 text-xs"
                 aria-label="View public verification page"
               >
                 <IconCheck className="h-4 w-4" />
@@ -142,61 +117,53 @@ export function NavBar() {
               title="How to use Archon"
               aria-label="How to use Archon"
               onClick={() => window.dispatchEvent(new Event(OPEN_TUTORIAL_EVENT))}
-              className="archon-button-secondary px-2.5 py-2 text-sm"
+              className="btn-ghost px-2 py-1.5 text-xs"
             >
               ?
             </button>
 
             {account ? (
               <>
-                <div className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2 text-xs text-[#9CA3AF]">
-                  {shortAddress(account)} {isWrongNetwork ? `(Switch to ${expectedChainId})` : ""}
-                </div>
-                <button
-                  type="button"
-                  aria-label="Disconnect wallet"
-                  onClick={disconnect}
-                  className="archon-button-secondary px-3 py-2 text-sm"
-                >
-                  Disconnect
+                <button type="button" className="btn-ghost px-2 py-1.5 text-xs mono" onClick={disconnect}>
+                  {shortAddress(account)}
                 </button>
               </>
             ) : (
-              <button
-                type="button"
-                onClick={openWalletPicker}
-                className="archon-button-primary px-3 py-2 text-sm transition-all duration-200"
-              >
-                Connect Wallet
+              <button type="button" onClick={openWalletPicker} className="btn-primary px-3 py-1.5 text-xs">
+                Connect
               </button>
             )}
-          </div>
 
-          {mobileOpen ? (
-            <nav className="grid gap-2 rounded-xl border border-white/10 bg-[#111214] p-3 md:hidden">
-              {desktopLinks.map((link) => (
-                <LinkItem
-                  key={link.href}
-                  pathname={pathname}
-                  link={link}
-                  onClick={() => setMobileOpen(false)}
-                />
-              ))}
-              {account ? (
-                <Link
-                  href={`/verify/${account}`}
-                  onClick={() => setMobileOpen(false)}
-                  className={`rounded-lg px-3 py-2 text-sm ${
-                    pathname.startsWith("/verify/") ? "bg-[#6C5CE7]/25 text-[#EAEAF0]" : "text-[#9CA3AF]"
-                  }`}
-                >
-                  Verify
-                </Link>
-              ) : null}
-            </nav>
-          ) : null}
+            <button
+              type="button"
+              aria-label={mobileOpen ? "Close menu" : "Open menu"}
+              className="btn-ghost px-2 py-1.5 text-xs md:hidden"
+              onClick={() => setMobileOpen((v) => !v)}
+            >
+              {mobileOpen ? "X" : "Menu"}
+            </button>
+          </div>
         </div>
-      </header>
+
+        <AnimatePresence>
+          {mobileOpen ? (
+            <motion.div
+              initial={{ opacity: 0, y: -12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -12 }}
+              className="border-t border-[var(--border)] bg-[var(--surface)] p-3 md:hidden"
+            >
+              <div className="grid gap-1">
+                {links.map((link) => (
+                  <Link key={link.href} href={link.href} className="nav-link" onClick={() => setMobileOpen(false)}>
+                    {link.label}
+                  </Link>
+                ))}
+              </div>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+      </motion.nav>
       <WrongNetworkBanner isWrongNetwork={isWrongNetwork} />
       <RouteAnnouncer />
     </>

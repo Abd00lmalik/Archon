@@ -1,15 +1,9 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/app/providers";
 import { GlobalOverlays } from "@/components/global-overlays";
 import { NavBar } from "@/components/nav-bar";
 import { WalletInit } from "@/components/wallet-init";
-
-const inter = Inter({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"]
-});
 
 export const metadata: Metadata = {
   title: "Archon - Universal On-Chain Reputation",
@@ -20,31 +14,25 @@ export const metadata: Metadata = {
     icon: "/logo-icon.svg",
     shortcut: "/logo-icon.svg",
     apple: "/logo-icon.svg"
-  },
-  openGraph: {
-    title: "Archon - Universal On-Chain Reputation",
-    description:
-      "Earn verifiable credentials from tasks, community work, agent tasks, peer attestations and DAO governance. Built on Arc.",
-    images: ["/logo.svg"]
   }
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body className={`${inter.className} min-h-screen`}>
+      <body className="min-h-screen bg-[var(--base)] font-body text-[var(--text-primary)]">
         <WalletInit />
         <Providers>
           <NavBar />
-          <main className="mx-auto max-w-6xl px-4 py-8 md:py-10">{children}</main>
-          <footer className="border-t border-white/10 bg-[#0a0a0b] px-4 py-6">
-            <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 text-xs text-[#9CA3AF]">
-              <span>Archon</span>
+          <main className="min-h-[calc(100vh-120px)]">{children}</main>
+          <footer className="border-t border-[var(--border)] bg-[var(--void)] px-4 py-6">
+            <div className="mx-auto flex max-w-[1400px] flex-wrap items-center justify-between gap-3 text-xs text-[var(--text-secondary)]">
+              <span className="font-heading tracking-[0.15em]">ARCHON</span>
               <a
                 href="https://x.com/Abd00lmalik"
                 target="_blank"
                 rel="noreferrer"
-                className="transition-colors hover:text-[#EAEAF0]"
+                className="transition-colors hover:text-[var(--arc)]"
               >
                 Mr.Ghost
               </a>

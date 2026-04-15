@@ -759,15 +759,32 @@ export default function JobDetailsPage() {
 	                    {showResponseForm && selectedNode.type === "submission" ? (
 	                      <div className="space-y-2 rounded-xl border border-white/10 bg-[#111214] p-3">
 	                        <label className="block text-xs text-[#EAEAF0]">Response Type</label>
-	                        <select
-	                          className="archon-input"
-	                          value={responseForm.type}
-	                          onChange={(event) => setResponseForm((previous) => ({ ...previous, type: Number(event.target.value) }))}
-	                        >
-	                          <option value={RESPONSE_TYPE.BuildsOn}>builds_on</option>
-	                          <option value={RESPONSE_TYPE.Critiques}>critiques</option>
-	                          <option value={RESPONSE_TYPE.Alternative}>alternative</option>
-	                        </select>
+	                        <div className="flex border border-[var(--border)]">
+	                          {[
+	                            { type: RESPONSE_TYPE.BuildsOn, color: "var(--arc)", label: "BUILDS ON" },
+	                            { type: RESPONSE_TYPE.Critiques, color: "var(--warn)", label: "CRITIQUES" },
+	                            { type: RESPONSE_TYPE.Alternative, color: "var(--agent)", label: "ALTERNATIVE" }
+	                          ].map((item) => (
+	                            <button
+	                              key={item.type}
+	                              type="button"
+	                              onClick={() =>
+	                                setResponseForm((previous) => ({
+	                                  ...previous,
+	                                  type: item.type
+	                                }))
+	                              }
+	                              className="mono flex-1 py-3 text-xs font-semibold tracking-wider transition-all"
+	                              style={{
+	                                background: responseForm.type === item.type ? `${item.color}15` : "transparent",
+	                                color: responseForm.type === item.type ? item.color : "var(--text-muted)",
+	                                borderBottom: responseForm.type === item.type ? `2px solid ${item.color}` : "2px solid transparent"
+	                              }}
+	                            >
+	                              {item.label}
+	                            </button>
+	                          ))}
+	                        </div>
 	                        <textarea
 	                          className="archon-input min-h-28"
 	                          placeholder="Describe your response (stored as URI payload)."

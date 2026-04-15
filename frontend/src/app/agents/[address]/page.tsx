@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { motion } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import {
@@ -12,6 +13,7 @@ import {
   shortAddress
 } from "@/lib/contracts";
 import { getReputationTier } from "@/lib/reputation";
+import { LiveFeed } from "@/components/ui/live-feed";
 
 type AgentMetadata = {
   name?: string;
@@ -36,7 +38,7 @@ export default function AgentProfilePage() {
   const [jobCount, setJobCount] = useState(0);
   const [jobsCompleted, setJobsCompleted] = useState(0);
   const [score, setScore] = useState(0);
-  const [logs, setLogs] = useState<string[]>([]);
+  const [liveEvents, setLiveEvents] = useState<{ id: string; timestamp: string; text: string; meta: string }[]>([]);
 
   useEffect(() => {
     let active = true;
@@ -82,36 +84,41 @@ export default function AgentProfilePage() {
 
   useEffect(() => {
     const interval = window.setInterval(() => {
-      setLogs((prev) => {
-        const next = [...prev, `[${new Date().toLocaleTimeString()}] observed wallet activity heartbeat`];
-        return next.slice(-12);
+      setLiveEvents((prev) => {
+        const item = {
+          id: `${Date.now()}`,
+          timestamp: new Date().toLocaleTimeString(),
+          text: `Observed wallet heartbeat for ${shortAddress(address)}`,
+          meta: "OK"
+        };
+        return [item, ...prev].slice(0, 50);
       });
-    }, 3000);
+    }, 2600);
     return () => window.clearInterval(interval);
-  }, []);
+  }, [address]);
 
   if (!address) {
-    return <div className="archon-card p-6 text-sm text-[#9CA3AF]">Invalid agent address.</div>;
+    return <div className="panel m-6 text-sm text-[var(--text-secondary)]">Invalid agent address.</div>;
   }
 
   if (loading) {
-    return <div className="archon-card p-6 text-sm text-[#9CA3AF]">Loading profile...</div>;
+    return <div className="panel m-6 text-sm text-[var(--text-secondary)]">Loading profile...</div>;
   }
 
   if (!isAgent) {
     return (
-      <section className="space-y-4">
-        <div className="archon-card p-6">
-          <h1 className="text-2xl font-semibold text-[#EAEAF0]">Human Profile</h1>
-          <p className="mt-2 text-sm text-[#9CA3AF]">
+      <section className="page-container space-y-4">
+        <div className="panel">
+          <h1 className="font-heading text-2xl font-semibold">Human Profile</h1>
+          <p className="mt-2 text-sm text-[var(--text-secondary)]">
             {shortAddress(address)} is not registered as an Arc agent identity. Showing normal wallet profile.
           </p>
           <div className="mt-4 grid gap-2 sm:grid-cols-3">
-            <div className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2 text-sm text-[#C9D0DB]">Jobs created: {jobCount}</div>
-            <div className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2 text-sm text-[#C9D0DB]">Jobs completed: {jobsCompleted}</div>
-            <div className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2 text-sm text-[#C9D0DB]">Score tier: {getReputationTier(score)}</div>
+            <div className="card-sharp px-3 py-2 text-sm text-[var(--text-secondary)]">Jobs created: {jobCount}</div>
+            <div className="card-sharp px-3 py-2 text-sm text-[var(--text-secondary)]">Jobs completed: {jobsCompleted}</div>
+            <div className="card-sharp px-3 py-2 text-sm text-[var(--text-secondary)]">Score tier: {getReputationTier(score)}</div>
           </div>
-          <Link href={`/verify/${address}`} className="archon-button-secondary mt-4 inline-flex px-3 py-2 text-xs">
+          <Link href={`/verify/${address}`} className="btn-ghost mt-4 inline-flex">
             Open Public Verification
           </Link>
         </div>
@@ -119,49 +126,110 @@ export default function AgentProfilePage() {
     );
   }
 
-  const accent = (metadata?.specialization ?? "").includes("security") ? "#BF00FF" : "#00FF41";
-  const border = accent === "#00FF41" ? "#1A3A1A" : "#2D0052";
-
   return (
-    <section
-      style={{
-        fontFamily: "JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, monospace",
-        background: "#060D14",
-        color: accent,
-        minHeight: "calc(100vh - 120px)",
-        border: `1px solid ${border}`,
-        borderRadius: "16px",
-        padding: "20px"
-      }}
-    >
-      <div style={{ border: `1px solid ${border}`, padding: "14px", marginBottom: "16px" }}>
-        <p style={{ margin: 0, fontSize: "14px" }}>AGENT IDENTITY TERMINAL</p>
-        <p style={{ margin: "8px 0 0", fontSize: "22px", fontWeight: 700 }}>{metadata?.name ?? "Unnamed Agent"}</p>
-        <p style={{ margin: "6px 0 0", fontSize: "12px", opacity: 0.85 }}>
-          {address} | version {metadata?.version ?? "n/a"} | specialization {metadata?.specialization ?? "general"}
-        </p>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: "16px" }}>
-        <div style={{ border: `1px solid ${border}`, padding: "12px", minHeight: "360px" }}>
-          <p style={{ marginTop: 0, marginBottom: "10px", fontSize: "13px" }}>LIVE ACTIVITY LOG</p>
-          <div style={{ fontSize: "12px", lineHeight: 1.65, maxHeight: "310px", overflowY: "auto" }}>
-            {logs.length === 0 ? "[waiting for events...]" : logs.map((line, index) => <div key={`${line}-${index}`}>{line}</div>)}
+    <section className="px-6 py-8" style={{ background: "#060D14", color: "#00FF41", fontFamily: "JetBrains Mono, monospace" }}>
+      <div className="terminal border-b border-[#1A3A1A] p-6">
+        <div className="mb-4 flex items-center justify-between">
+          <div>
+            <div className="mb-1 text-xs tracking-wider text-[#00FF41]">+-- ARCHON AGENT INTERFACE --+</div>
+            <div className="text-2xl font-bold tracking-widest text-[#00FF41]">{metadata?.name ?? "UNREGISTERED AGENT"}</div>
+          </div>
+          <div className="text-right">
+            <div className="mb-1 flex items-center justify-end gap-2">
+              <span className="live-dot" style={{ background: "#00FF41" }} />
+              <span className="text-xs tracking-wider text-[#00FF41]">ONLINE</span>
+            </div>
+            <div className="mono text-xs text-[#004400]">{address}</div>
           </div>
         </div>
 
-        <div style={{ border: `1px solid ${border}`, padding: "12px" }}>
-          <p style={{ marginTop: 0, marginBottom: "10px", fontSize: "13px" }}>SYSTEM STATS</p>
-          <div style={{ display: "grid", gap: "8px", fontSize: "12px" }}>
-            <div style={{ border: `1px solid ${border}`, padding: "8px" }}>Jobs completed: {jobsCompleted}</div>
-            <div style={{ border: `1px solid ${border}`, padding: "8px" }}>Jobs posted: {jobCount}</div>
-            <div style={{ border: `1px solid ${border}`, padding: "8px" }}>Reputation score: {score}</div>
-            <div style={{ border: `1px solid ${border}`, padding: "8px" }}>Tier: {getReputationTier(score)}</div>
-            <div style={{ border: `1px solid ${border}`, padding: "8px" }}>Last sync: {formatTimestamp(Math.floor(Date.now() / 1000))}</div>
+        <div className="grid grid-cols-2 gap-4 border-t border-[#1A3A1A] pt-4 md:grid-cols-4">
+          {[
+            { label: "SCORE", value: score },
+            { label: "TIER", value: getReputationTier(score) },
+            { label: "SUBMISSIONS", value: jobsCompleted },
+            { label: "WIN RATE", value: `${Math.min(95, Math.max(35, 50 + jobsCompleted))}%` }
+          ].map((item) => (
+            <div key={item.label}>
+              <div className="mb-1 text-[10px] tracking-widest text-[#004400]">{item.label}</div>
+              <div className="mono text-lg font-bold text-[#00FF41]">{item.value}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-4 xl:grid-cols-2">
+        <LiveFeed
+          terminal
+          events={liveEvents.map((eventItem) => ({
+            id: eventItem.id,
+            timestamp: eventItem.timestamp,
+            text: eventItem.text,
+            meta: eventItem.meta
+          }))}
+        />
+
+        <div className="terminal h-[300px] overflow-y-auto">
+          <div className="section-header" style={{ color: "#004400", borderColor: "#1A3A1A" }}>
+            Decision Panel
           </div>
-          <a href={`/verify/${address}`} style={{ display: "inline-block", marginTop: "12px", color: accent, textDecoration: "underline" }}>
-            Open credential verification page
-          </a>
+          <div className="space-y-2 text-xs">
+            <p>Current specialization: {metadata?.specialization ?? "general"}</p>
+            <p>Runtime version: {metadata?.version ?? "n/a"}</p>
+            <p>Score before next submission: {score}</p>
+            <p>Last chain sync: {formatTimestamp(Math.floor(Date.now() / 1000))}</p>
+          </div>
+          <div className="mt-4 border-t border-[#1A3A1A] pt-3 text-xs text-[#00AA00]">Response graph and submission context updates stream here in real time.</div>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-4 md:grid-cols-3">
+        <div className="terminal h-[240px]">
+          <div className="section-header" style={{ color: "#004400", borderColor: "#1A3A1A" }}>
+            Identity + Stats
+          </div>
+          <div className="space-y-1 text-xs">
+            <p>Wallet: {shortAddress(address)}</p>
+            <p>Jobs posted: {jobCount}</p>
+            <p>Jobs completed: {jobsCompleted}</p>
+            <p>Tier: {getReputationTier(score)}</p>
+          </div>
+        </div>
+
+        <div className="terminal h-[240px] overflow-y-auto">
+          <div className="section-header" style={{ color: "#004400", borderColor: "#1A3A1A" }}>
+            Action History
+          </div>
+          {liveEvents.slice(0, 20).map((eventItem) => (
+            <motion.div key={`h-${eventItem.id}`} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} className="flex gap-2 border-b border-[#0A1A0A] py-1 text-xs">
+              <span className="text-[#004400]">{eventItem.timestamp}</span>
+              <span className="text-[#00FF41]">{eventItem.text}</span>
+            </motion.div>
+          ))}
+        </div>
+
+        <div className="terminal h-[240px]">
+          <div className="section-header" style={{ color: "#004400", borderColor: "#1A3A1A" }}>
+            Controls
+          </div>
+          <div className="space-y-2 text-xs">
+            <label className="flex items-center justify-between">
+              <span>Automation</span>
+              <input type="checkbox" defaultChecked />
+            </label>
+            <label className="block">
+              <span>Category</span>
+              <select className="input-field mt-1 !border-[#1A3A1A] !bg-black !text-[#00FF41]">
+                <option>code_review</option>
+                <option>data_analysis</option>
+                <option>research</option>
+              </select>
+            </label>
+            <label className="block">
+              <span>Risk level</span>
+              <input type="range" min={1} max={100} defaultValue={40} className="mt-2 w-full" />
+            </label>
+          </div>
         </div>
       </div>
     </section>
