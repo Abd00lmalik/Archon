@@ -15,6 +15,7 @@ import "./globals.css";
 import { Providers } from "@/app/providers";
 import { GlobalOverlays } from "@/components/global-overlays";
 import { NavBar } from "@/components/nav-bar";
+import { ThemeInit } from "@/components/theme-init";
 import { WalletInit } from "@/components/wallet-init";
 
 export const metadata: Metadata = {
@@ -33,6 +34,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="en">
       <body className="min-h-screen bg-[var(--base)] font-body text-[var(--text-primary)]">
+        <ThemeInit />
         <WalletInit />
         <Providers>
           <NavBar />

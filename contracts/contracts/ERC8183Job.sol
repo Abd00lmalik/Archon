@@ -7,6 +7,16 @@ import {IERC20Minimal} from "./interfaces/IERC20Minimal.sol";
 import {IValidationRegistry} from "./interfaces/IValidationRegistry.sol";
 
 contract ERC8183Job is ICredentialSource {
+    enum JobStatus {
+        Open,
+        InProgress,
+        Submitted,
+        SelectionPhase,
+        RevealPhase,
+        Approved,
+        Rejected
+    }
+
     enum SubmissionStatus {
         None,
         Submitted,
@@ -34,6 +44,7 @@ contract ERC8183Job is ICredentialSource {
         uint256 claimedCount;
         uint256 paidOutUSDC;
         bool refunded;
+        JobStatus status;
     }
 
     struct Submission {
@@ -76,6 +87,7 @@ contract ERC8183Job is ICredentialSource {
     uint256 public constant MIN_REVIEW_DELAY = 15 minutes;
     uint256 public constant CREDENTIAL_COOLDOWN = 6 hours;
     uint256 public constant RESPONSE_STAKE = 2_000_000; // 2 USDC
+    uint256 public constant REVEAL_DURATION = 5 days;
 
     address public owner;
     uint256 public nextJobId;
@@ -107,6 +119,10 @@ contract ERC8183Job is ICredentialSource {
     mapping(uint256 => mapping(address => bool)) public hasResponded;
     mapping(uint256 => uint256) public submissionIdToTaskId;
     mapping(uint256 => address) public submissionIdToAgent;
+    mapping(uint256 => address[]) public selectedFinalists;
+    mapping(uint256 => mapping(address => bool)) public isFinalist;
+    mapping(uint256 => uint256) public revealPhaseStart;
+    mapping(uint256 => uint256) public revealPhaseEnd;
 
     uint256 private _reentrancyLock;
 
@@ -152,6 +168,12 @@ contract ERC8183Job is ICredentialSource {
     );
     event StakeSlashed(uint256 indexed responseId, address indexed responder, uint256 amount);
     event StakeReturned(uint256 indexed responseId, address indexed responder, uint256 amount);
+    event FinalistsSelected(uint256 indexed jobId, address[] agents, uint256 revealEndsAt);
+    event WinnersFinalized(
+        uint256 indexed jobId,
+        address[] winners,
+        uint256[] rewardAmounts
+    );
 
     modifier onlyOwner() {
         require(msg.sender == owner, "only owner");
@@ -282,7 +304,8 @@ contract ERC8183Job is ICredentialSource {
             approvedCount: 0,
             claimedCount: 0,
             paidOutUSDC: 0,
-            refunded: false
+            refunded: false,
+            status: JobStatus.Open
         });
         maxApprovalsForJob[createdJobId] = maxApprovals;
         approvedAgentCount[createdJobId] = 0;
@@ -297,11 +320,20 @@ contract ERC8183Job is ICredentialSource {
         require(block.timestamp <= job.deadline, "job deadline passed");
         require(msg.sender != job.client, "client cannot accept own job");
         require(!isAccepted[jobId][msg.sender], "already accepted");
+        require(
+            uint8(job.status) == uint8(JobStatus.Open) ||
+                uint8(job.status) == uint8(JobStatus.InProgress) ||
+                uint8(job.status) == uint8(JobStatus.Submitted),
+            "job not accepting accepts"
+        );
 
         isAccepted[jobId][msg.sender] = true;
         acceptedAgentsByJob[jobId].push(msg.sender);
         jobsByAgent[msg.sender].push(jobId);
         job.acceptedCount += 1;
+        if (uint8(job.status) == uint8(JobStatus.Open)) {
+            job.status = JobStatus.InProgress;
+        }
 
         emit JobAccepted(jobId, msg.sender);
     }
@@ -311,6 +343,12 @@ contract ERC8183Job is ICredentialSource {
         require(block.timestamp <= job.deadline, "job deadline passed");
         require(isAccepted[jobId][msg.sender], "accept job first");
         require(bytes(deliverableLink).length > 0, "deliverable link required");
+        require(
+            uint8(job.status) == uint8(JobStatus.Open) ||
+                uint8(job.status) == uint8(JobStatus.InProgress) ||
+                uint8(job.status) == uint8(JobStatus.Submitted),
+            "job not accepting submissions"
+        );
 
         Submission storage submission = submissions[jobId][msg.sender];
         if (submission.agent == address(0)) {
@@ -332,6 +370,7 @@ contract ERC8183Job is ICredentialSource {
         submission.status = SubmissionStatus.Submitted;
         submission.submittedAt = block.timestamp;
         submission.reviewerNote = "";
+        job.status = JobStatus.Submitted;
 
         emit DeliverableSubmitted(jobId, msg.sender, deliverableLink);
     }
@@ -386,6 +425,103 @@ contract ERC8183Job is ICredentialSource {
         submission.reviewerNote = reviewerNote;
 
         emit SubmissionRejected(jobId, agent, reviewerNote);
+    }
+
+    function selectFinalists(uint256 jobId, address[] calldata agents) external {
+        Job storage job = _getExistingJob(jobId);
+        require(msg.sender == job.client, "only client");
+        require(
+            uint8(job.status) == uint8(JobStatus.Submitted) ||
+                uint8(job.status) == uint8(JobStatus.InProgress),
+            "wrong status"
+        );
+        require(agents.length > 0, "at least one finalist");
+        require(
+            agents.length <= maxApprovalsForJob[jobId] + 5,
+            "too many finalists"
+        );
+        require(selectedFinalists[jobId].length == 0, "finalists already selected");
+
+        for (uint256 i = 0; i < agents.length; i++) {
+            address finalist = agents[i];
+            require(finalist != address(0), "invalid finalist");
+
+            for (uint256 j = i + 1; j < agents.length; j++) {
+                require(agents[j] != finalist, "duplicate finalist");
+            }
+
+            require(
+                submissions[jobId][finalist].status == SubmissionStatus.Submitted,
+                "agent did not submit"
+            );
+            isFinalist[jobId][finalist] = true;
+        }
+
+        selectedFinalists[jobId] = agents;
+        job.status = JobStatus.SelectionPhase;
+        revealPhaseStart[jobId] = block.timestamp;
+        revealPhaseEnd[jobId] = block.timestamp + REVEAL_DURATION;
+        job.status = JobStatus.RevealPhase;
+
+        emit FinalistsSelected(jobId, agents, revealPhaseEnd[jobId]);
+    }
+
+    function finalizeWinners(
+        uint256 jobId,
+        address[] calldata winners,
+        uint256[] calldata rewardAmounts
+    ) external nonReentrant {
+        Job storage job = _getExistingJob(jobId);
+        require(msg.sender == job.client, "only client");
+        require(
+            uint8(job.status) == uint8(JobStatus.RevealPhase),
+            "must be in reveal phase"
+        );
+        require(
+            block.timestamp > revealPhaseEnd[jobId],
+            "reveal phase not ended"
+        );
+        require(winners.length == rewardAmounts.length, "length mismatch");
+        require(winners.length <= maxApprovalsForJob[jobId], "too many winners");
+
+        uint256 totalReward = 0;
+        for (uint256 i = 0; i < winners.length; i++) {
+            address winner = winners[i];
+            uint256 rewardAmount = rewardAmounts[i];
+
+            require(isFinalist[jobId][winner], "not a finalist");
+            require(rewardAmount > 0, "reward must be positive");
+
+            for (uint256 j = i + 1; j < winners.length; j++) {
+                require(winners[j] != winner, "duplicate winner");
+            }
+
+            Submission storage sub = submissions[jobId][winner];
+            require(sub.agent != address(0), "submission missing");
+            require(sub.status != SubmissionStatus.Rejected, "winner rejected");
+
+            totalReward += rewardAmount;
+        }
+
+        uint256 alreadyAllocated = _totalAllocated(jobId);
+        require(
+            alreadyAllocated + totalReward <= job.rewardUSDC,
+            "reward exceeds remaining escrow balance"
+        );
+
+        for (uint256 i = 0; i < winners.length; i++) {
+            Submission storage sub = submissions[jobId][winners[i]];
+            if (sub.status != SubmissionStatus.Approved) {
+                approvedAgentCount[jobId] += 1;
+                job.approvedCount += 1;
+            }
+            sub.status = SubmissionStatus.Approved;
+            sub.allocatedReward = rewardAmounts[i];
+            sub.reviewerNote = "";
+        }
+
+        job.status = JobStatus.Approved;
+        emit WinnersFinalized(jobId, winners, rewardAmounts);
     }
 
     function claimCredential(uint256 jobId) external returns (uint256 credentialRecordId) {
@@ -542,9 +678,13 @@ contract ERC8183Job is ICredentialSource {
         address parentAgent = submissionIdToAgent[parentSubmissionId];
 
         require(parentAgent != address(0), "submission not found");
-
         Job storage job = _getExistingJob(taskId);
-        require(block.timestamp <= job.deadline, "task closed");
+        require(
+            uint8(job.status) == uint8(JobStatus.RevealPhase),
+            "interactions only allowed during reveal phase"
+        );
+        require(isFinalist[taskId][parentAgent], "can only interact with finalist submissions");
+        require(block.timestamp <= revealPhaseEnd[taskId], "reveal phase ended");
         require(msg.sender != parentAgent, "cannot respond to own submission");
         require(!hasResponded[parentSubmissionId][msg.sender], "already responded");
         require(bytes(contentURI).length > 0, "content required");
@@ -611,6 +751,23 @@ contract ERC8183Job is ICredentialSource {
 
     function getResponse(uint256 responseId) external view returns (SubmissionResponse memory) {
         return responses[responseId];
+    }
+
+    function getSelectedFinalists(uint256 jobId) external view returns (address[] memory) {
+        _getExistingJob(jobId);
+        return selectedFinalists[jobId];
+    }
+
+    function getRevealPhaseEnd(uint256 jobId) external view returns (uint256) {
+        _getExistingJob(jobId);
+        return revealPhaseEnd[jobId];
+    }
+
+    function isInRevealPhase(uint256 jobId) external view returns (bool) {
+        Job storage job = _getExistingJob(jobId);
+        return
+            uint8(job.status) == uint8(JobStatus.RevealPhase) &&
+            block.timestamp <= revealPhaseEnd[jobId];
     }
 
     function _getExistingJob(uint256 jobId) internal view returns (Job storage) {

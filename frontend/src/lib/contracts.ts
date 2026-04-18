@@ -2,7 +2,15 @@ import { ethers } from "ethers";
 import deploymentRaw from "@/lib/generated/contracts.json";
 
 export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
-export const JOB_STATUS_LABELS = ["Open", "Deadline Reached"] as const;
+export const JOB_STATUS_LABELS: Record<number, string> = {
+  0: "Open",
+  1: "In Progress",
+  2: "Submitted",
+  3: "Selection Phase",
+  4: "Reveal Phase",
+  5: "Approved",
+  6: "Rejected"
+};
 export const SUBMISSION_STATUS_LABELS = ["Not Submitted", "Submitted", "Approved", "Rejected"] as const;
 
 type DeploymentContract = {
@@ -63,6 +71,7 @@ type RawJobRecord = {
   claimedCount?: unknown;
   paidOutUSDC?: unknown;
   refunded?: unknown;
+  status?: unknown;
 };
 
 type RawSubmissionRecord = {
@@ -303,6 +312,11 @@ const COMMUNITY_SOURCE_ABI = [
   "function rejectApplication(uint256 applicationId,string reviewNote)"
 ] as const;
 const JOB_OPTIONAL_ABI = [
+  "function getAllJobs() view returns (tuple(uint256 jobId,address client,string title,string description,uint256 deadline,uint256 rewardUSDC,uint256 createdAt,uint256 acceptedCount,uint256 submissionCount,uint256 approvedCount,uint256 claimedCount,uint256 paidOutUSDC,bool refunded,uint8 status)[])",
+  "function getJob(uint256 jobId) view returns (tuple(uint256 jobId,address client,string title,string description,uint256 deadline,uint256 rewardUSDC,uint256 createdAt,uint256 acceptedCount,uint256 submissionCount,uint256 approvedCount,uint256 claimedCount,uint256 paidOutUSDC,bool refunded,uint8 status))",
+  "function getSubmission(uint256 jobId,address agent) view returns (tuple(uint256 submissionId,address agent,string deliverableLink,uint8 status,uint256 submittedAt,string reviewerNote,bool credentialClaimed,uint256 allocatedReward))",
+  "function getSubmissions(uint256 jobId) view returns (tuple(uint256 submissionId,address agent,string deliverableLink,uint8 status,uint256 submittedAt,string reviewerNote,bool credentialClaimed,uint256 allocatedReward)[])",
+  "function isAccepted(uint256 jobId,address agent) view returns (bool)",
   "function getJobsByClient(address client) view returns (uint256[])",
   "function getJobsByAgent(address agent) view returns (uint256[])",
   "function jobEscrow(uint256 jobId) view returns (uint256)",
@@ -325,7 +339,14 @@ const JOB_OPTIONAL_ABI = [
   "function getResponse(uint256 responseId) view returns (tuple(uint256 responseId, uint256 parentSubmissionId, uint256 taskId, address responder, uint8 responseType, string contentURI, uint256 stakedAmount, uint256 createdAt, bool stakeSlashed, bool stakeReturned))",
   "function submissionResponseCount(uint256 submissionId) view returns (uint256)",
   "function submissionIdToAgent(uint256 submissionId) view returns (address)",
+  "function selectFinalists(uint256 jobId, address[] agents) external",
+  "function finalizeWinners(uint256 jobId, address[] winners, uint256[] rewardAmounts) external",
+  "function getSelectedFinalists(uint256 jobId) external view returns (address[])",
+  "function getRevealPhaseEnd(uint256 jobId) external view returns (uint256)",
+  "function isInRevealPhase(uint256 jobId) external view returns (bool)",
   "event SubmissionResponseAdded(uint256 indexed taskId, uint256 indexed parentSubmissionId, uint256 indexed responseId, uint8 responseType)",
+  "event FinalistsSelected(uint256 indexed jobId, address[] agents, uint256 revealEndsAt)",
+  "event WinnersFinalized(uint256 indexed jobId, address[] winners, uint256[] rewardAmounts)",
   "function setMinJobStake(uint256 amount)",
   "function setRequireCredentialToPost(bool required)",
   "function setPlatformConfig(address treasuryAddress,uint256 feeBps)"
@@ -483,7 +504,7 @@ export function submissionStatusLabel(status: number) {
 }
 
 export function isJobOpen(job: JobRecord) {
-  return job.status === 0;
+  return job.status >= 0 && job.status <= 4;
 }
 
 export function formatUsdc(units: string | number | bigint) {
@@ -507,23 +528,26 @@ export function formatTimestamp(ts: number) {
 }
 
 export function parseJob(rawJob: unknown): JobRecord {
-  const candidate = rawJob as Partial<RawJobRecord>;
-  const deadline = toNumber(candidate.deadline);
+  const candidate = rawJob as Partial<RawJobRecord> & unknown[];
+  const deadline = toNumber(candidate.deadline ?? candidate[4]);
+  const statusRaw = candidate.status ?? candidate[13];
+  const hasStatus = statusRaw !== undefined && statusRaw !== null;
+  const onChainStatus = hasStatus ? toNumber(statusRaw) : -1;
   return {
-    jobId: toNumber(candidate.jobId),
-    client: toString(candidate.client),
-    title: toString(candidate.title),
-    description: toString(candidate.description),
+    jobId: toNumber(candidate.jobId ?? candidate[0]),
+    client: toString(candidate.client ?? candidate[1]),
+    title: toString(candidate.title ?? candidate[2]),
+    description: toString(candidate.description ?? candidate[3]),
     deadline,
-    rewardUSDC: toString(candidate.rewardUSDC),
-    createdAt: toNumber(candidate.createdAt),
-    acceptedCount: toNumber(candidate.acceptedCount),
-    submissionCount: toNumber(candidate.submissionCount),
-    approvedCount: toNumber(candidate.approvedCount),
-    claimedCount: toNumber(candidate.claimedCount),
-    paidOutUSDC: toString(candidate.paidOutUSDC),
-    refunded: toBoolean(candidate.refunded),
-    status: normalizeJobStatus(deadline)
+    rewardUSDC: toString(candidate.rewardUSDC ?? candidate[5]),
+    createdAt: toNumber(candidate.createdAt ?? candidate[6]),
+    acceptedCount: toNumber(candidate.acceptedCount ?? candidate[7]),
+    submissionCount: toNumber(candidate.submissionCount ?? candidate[8]),
+    approvedCount: toNumber(candidate.approvedCount ?? candidate[9]),
+    claimedCount: toNumber(candidate.claimedCount ?? candidate[10]),
+    paidOutUSDC: toString(candidate.paidOutUSDC ?? candidate[11]),
+    refunded: toBoolean(candidate.refunded ?? candidate[12]),
+    status: onChainStatus >= 0 ? onChainStatus : normalizeJobStatus(deadline)
   };
 }
 
@@ -1082,7 +1106,7 @@ export async function fetchUsdcAllowance(ownerAddress: string, spenderAddress: s
 }
 
 export async function fetchAllJobs(): Promise<JobRecord[]> {
-  const contract = getJobReadContract();
+  const contract = getOptionalJobReadContract();
   try {
     const rawJobs = (await contract.getAllJobs()) as unknown[];
     return rawJobs.map((item) => parseJob(item)).sort((a, b) => b.jobId - a.jobId);
@@ -1113,7 +1137,7 @@ export async function fetchTotalJobsCreated(): Promise<number> {
 
 export async function fetchJob(jobId: number): Promise<JobRecord | null> {
   try {
-    const contract = getJobReadContract();
+    const contract = getOptionalJobReadContract();
     const raw = await contract.getJob(jobId);
     return parseJob(raw);
   } catch {
@@ -1127,7 +1151,7 @@ export async function fetchSubmissionForAgent(
 ): Promise<SubmissionRecord | null> {
   if (!agentAddress) return null;
   try {
-    const contract = getJobReadContract();
+    const contract = getOptionalJobReadContract();
     const raw = await contract.getSubmission(jobId, agentAddress);
     const parsed = parseSubmission(raw);
     if (!parsed.agent || parsed.agent === ZERO_ADDRESS) return null;
@@ -1138,23 +1162,44 @@ export async function fetchSubmissionForAgent(
 }
 
 export async function fetchSubmissions(jobId: number): Promise<SubmissionRecord[]> {
-  const contract = getJobReadContract();
+  const contract = getOptionalJobReadContract();
   const raw = (await contract.getSubmissions(jobId)) as unknown[];
   return raw.map((item) => parseSubmission(item));
 }
 
-export async function fetchSubmissionGraph(
+export async function fetchSelectedFinalists(jobId: number): Promise<string[]> {
+  try {
+    const contract = getOptionalJobReadContract();
+    return (await contract.getSelectedFinalists(jobId)) as string[];
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchRevealPhaseEnd(jobId: number): Promise<number> {
+  try {
+    const contract = getOptionalJobReadContract();
+    return Number(await contract.getRevealPhaseEnd(jobId));
+  } catch {
+    return 0;
+  }
+}
+
+export async function fetchIsInRevealPhase(jobId: number): Promise<boolean> {
+  try {
+    const contract = getOptionalJobReadContract();
+    return Boolean(await contract.isInRevealPhase(jobId));
+  } catch {
+    return false;
+  }
+}
+
+export async function fetchSignalMap(
   provider: ethers.BrowserProvider | ethers.JsonRpcProvider,
   taskId: number
-): Promise<{ nodes: Array<Record<string, unknown>>; edges: Array<Record<string, unknown>> }> {
-  console.log("[graph:start] taskId:", taskId);
-  const { buildTaskGraph } = await import("@/lib/graph");
-  const graph = await buildTaskGraph(provider, taskId);
-  console.log("[graph:result]", graph.nodes.length, "nodes,", graph.edges.length, "edges");
-  return {
-    nodes: graph.nodes as unknown as Array<Record<string, unknown>>,
-    edges: graph.edges as unknown as Array<Record<string, unknown>>
-  };
+): Promise<Record<string, unknown>> {
+  const { buildSignalMap } = await import("@/lib/signal-map");
+  return (await buildSignalMap(provider, taskId)) as unknown as Record<string, unknown>;
 }
 
 export async function fetchJobsByClient(clientAddress: string): Promise<JobRecord[]> {
@@ -1864,6 +1909,25 @@ export async function txApproveSubmission(
 ) {
   const contract = await getJobWriteContract(browserProvider);
   return (await contract.approveSubmission(jobId, agent, rewardAmount)) as ethers.TransactionResponse;
+}
+
+export async function txSelectFinalists(
+  browserProvider: ethers.BrowserProvider,
+  jobId: number,
+  agents: string[]
+) {
+  const contract = new ethers.Contract(contractAddresses.job, JOB_OPTIONAL_ABI, await browserProvider.getSigner());
+  return (await contract.selectFinalists(jobId, agents)) as ethers.TransactionResponse;
+}
+
+export async function txFinalizeWinners(
+  browserProvider: ethers.BrowserProvider,
+  jobId: number,
+  winners: string[],
+  rewardAmounts: bigint[]
+) {
+  const contract = new ethers.Contract(contractAddresses.job, JOB_OPTIONAL_ABI, await browserProvider.getSigner());
+  return (await contract.finalizeWinners(jobId, winners, rewardAmounts)) as ethers.TransactionResponse;
 }
 
 export async function txRejectSubmission(

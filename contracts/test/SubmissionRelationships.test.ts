@@ -54,64 +54,128 @@ describe("Submission Relationships", function () {
     return Number(submission.submissionId);
   }
 
-  it("responder can build on an existing submission", async function () {
+  async function enterRevealPhase(job: any, client: any, finalists: string[]) {
+    await job.connect(client).selectFinalists(0, finalists);
+  }
+
+  it("only client can selectFinalists", async function () {
     const { job, client, agentA, agentB } = await deployFixture();
     await createJob(job, client);
-    const submissionId = await submitBaseSubmission(job, agentA);
-    await expect(job.connect(agentB).respondToSubmission(submissionId, 0, "ipfs://builds-on"))
-      .to.emit(job, "SubmissionResponseAdded");
+    await submitBaseSubmission(job, agentA);
+
+    await expect(job.connect(agentB).selectFinalists(0, [agentA.address])).to.be.revertedWith("only client");
   });
 
-  it("responder can critique an existing submission", async function () {
+  it("only submitted agents can be selected as finalists", async function () {
+    const { job, client, agentA, agentB } = await deployFixture();
+    await createJob(job, client);
+    await submitBaseSubmission(job, agentA);
+    await job.connect(agentB).acceptJob(0);
+
+    await expect(job.connect(client).selectFinalists(0, [agentA.address, agentB.address])).to.be.revertedWith(
+      "agent did not submit"
+    );
+  });
+
+  it("responder can build on an existing finalist submission", async function () {
     const { job, client, agentA, agentB } = await deployFixture();
     await createJob(job, client);
     const submissionId = await submitBaseSubmission(job, agentA);
+    await enterRevealPhase(job, client, [agentA.address]);
+
+    await expect(job.connect(agentB).respondToSubmission(submissionId, 0, "ipfs://builds-on")).to.emit(
+      job,
+      "SubmissionResponseAdded"
+    );
+  });
+
+  it("responder can critique an existing finalist submission", async function () {
+    const { job, client, agentA, agentB } = await deployFixture();
+    await createJob(job, client);
+    const submissionId = await submitBaseSubmission(job, agentA);
+    await enterRevealPhase(job, client, [agentA.address]);
+
     await job.connect(agentB).respondToSubmission(submissionId, 1, "ipfs://critique");
     const ids = await job.getSubmissionResponses(submissionId);
     const response = await job.getResponse(ids[0]);
     expect(response.responseType).to.equal(1);
   });
 
-  it("responder can submit alternative to existing submission", async function () {
+  it("responder can submit alternative to existing finalist submission", async function () {
     const { job, client, agentA, agentB } = await deployFixture();
     await createJob(job, client);
     const submissionId = await submitBaseSubmission(job, agentA);
+    await enterRevealPhase(job, client, [agentA.address]);
+
     await job.connect(agentB).respondToSubmission(submissionId, 2, "ipfs://alternative");
     const ids = await job.getSubmissionResponses(submissionId);
     const response = await job.getResponse(ids[0]);
     expect(response.responseType).to.equal(2);
   });
 
+  it("respondToSubmission reverts outside reveal phase", async function () {
+    const { job, client, agentA, agentB } = await deployFixture();
+    await createJob(job, client);
+    const submissionId = await submitBaseSubmission(job, agentA);
+
+    await expect(job.connect(agentB).respondToSubmission(submissionId, 0, "ipfs://too-early")).to.be.revertedWith(
+      "interactions only allowed during reveal phase"
+    );
+  });
+
+  it("respondToSubmission reverts for non-finalist submissions", async function () {
+    const { job, client, agentA, agentB, agentC } = await deployFixture();
+    await createJob(job, client);
+    const submissionAId = await submitBaseSubmission(job, agentA);
+    await submitBaseSubmission(job, agentC);
+    await enterRevealPhase(job, client, [agentC.address]);
+
+    await expect(job.connect(agentB).respondToSubmission(submissionAId, 0, "ipfs://not-finalist")).to.be.revertedWith(
+      "can only interact with finalist submissions"
+    );
+  });
+
   it("submitter cannot respond to their own submission", async function () {
     const { job, client, agentA } = await deployFixture();
     await createJob(job, client);
     const submissionId = await submitBaseSubmission(job, agentA);
-    await expect(job.connect(agentA).respondToSubmission(submissionId, 0, "ipfs://self"))
-      .to.be.revertedWith("cannot respond to own submission");
+    await enterRevealPhase(job, client, [agentA.address]);
+
+    await expect(job.connect(agentA).respondToSubmission(submissionId, 0, "ipfs://self")).to.be.revertedWith(
+      "cannot respond to own submission"
+    );
   });
 
   it("responder cannot respond twice to same submission", async function () {
     const { job, client, agentA, agentB } = await deployFixture();
     await createJob(job, client);
     const submissionId = await submitBaseSubmission(job, agentA);
+    await enterRevealPhase(job, client, [agentA.address]);
+
     await job.connect(agentB).respondToSubmission(submissionId, 0, "ipfs://first");
-    await expect(job.connect(agentB).respondToSubmission(submissionId, 1, "ipfs://second"))
-      .to.be.revertedWith("already responded");
+    await expect(job.connect(agentB).respondToSubmission(submissionId, 1, "ipfs://second")).to.be.revertedWith(
+      "already responded"
+    );
   });
 
   it("responding requires 2 USDC stake", async function () {
     const { job, client, agentA, agentB, usdc } = await deployFixture();
     await createJob(job, client);
     const submissionId = await submitBaseSubmission(job, agentA);
+    await enterRevealPhase(job, client, [agentA.address]);
+
     await usdc.connect(agentB).approve(await job.getAddress(), 0);
-    await expect(job.connect(agentB).respondToSubmission(submissionId, 0, "ipfs://needs-stake"))
-      .to.be.revertedWith("insufficient allowance");
+    await expect(job.connect(agentB).respondToSubmission(submissionId, 0, "ipfs://needs-stake")).to.be.revertedWith(
+      "insufficient allowance"
+    );
   });
 
   it("stake returned after 7 days post-deadline", async function () {
     const { job, client, agentA, agentB, usdc } = await deployFixture();
     const deadline = await createJob(job, client);
     const submissionId = await submitBaseSubmission(job, agentA);
+    await enterRevealPhase(job, client, [agentA.address]);
+
     await job.connect(agentB).respondToSubmission(submissionId, 0, "ipfs://stake-return");
     const ids = await job.getSubmissionResponses(submissionId);
     const responseId = ids[0];
@@ -128,6 +192,8 @@ describe("Submission Relationships", function () {
     const { job, client, agentA, agentB, usdc, treasury } = await deployFixture();
     await createJob(job, client);
     const submissionId = await submitBaseSubmission(job, agentA);
+    await enterRevealPhase(job, client, [agentA.address]);
+
     await job.connect(agentB).respondToSubmission(submissionId, 1, "ipfs://slash-me");
     const ids = await job.getSubmissionResponses(submissionId);
     const responseId = ids[0];
@@ -143,32 +209,47 @@ describe("Submission Relationships", function () {
     expect(responderAfter - responderBefore).to.equal(ethers.parseUnits("1", 6));
   });
 
-  it("getSubmissionResponses returns correct response IDs", async function () {
-    const { job, client, agentA, agentB, agentC } = await deployFixture();
+  it("finalizeWinners reverts before reveal phase ends", async function () {
+    const { job, client, agentA } = await deployFixture();
     await createJob(job, client);
-    const submissionId = await submitBaseSubmission(job, agentA);
-    await job.connect(agentB).respondToSubmission(submissionId, 0, "ipfs://r1");
-    await job.connect(agentC).respondToSubmission(submissionId, 1, "ipfs://r2");
-    const ids = await job.getSubmissionResponses(submissionId);
-    expect(ids.length).to.equal(2);
+    await submitBaseSubmission(job, agentA);
+    await enterRevealPhase(job, client, [agentA.address]);
+
+    await expect(
+      job.connect(client).finalizeWinners(0, [agentA.address], [ethers.parseUnits("100", 6)])
+    ).to.be.revertedWith("reveal phase not ended");
   });
 
-  it("response type is stored correctly on-chain", async function () {
+  it("finalizeWinners only accepts finalists as winners", async function () {
     const { job, client, agentA, agentB } = await deployFixture();
     await createJob(job, client);
-    const submissionId = await submitBaseSubmission(job, agentA);
-    await job.connect(agentB).respondToSubmission(submissionId, 2, "ipfs://alt");
-    const ids = await job.getSubmissionResponses(submissionId);
-    const response = await job.getResponse(ids[0]);
-    expect(response.responseType).to.equal(2);
+    await submitBaseSubmission(job, agentA);
+    await submitBaseSubmission(job, agentB);
+    await enterRevealPhase(job, client, [agentA.address]);
+
+    const revealEnd = Number(await job.getRevealPhaseEnd(0));
+    await time.increaseTo(revealEnd + 1);
+
+    await expect(
+      job.connect(client).finalizeWinners(0, [agentB.address], [ethers.parseUnits("100", 6)])
+    ).to.be.revertedWith("not a finalist");
   });
 
-  it("responding to closed task reverts", async function () {
-    const { job, client, agentA, agentB } = await deployFixture();
-    const deadline = await createJob(job, client);
-    const submissionId = await submitBaseSubmission(job, agentA);
-    await time.increaseTo(deadline + 1);
-    await expect(job.connect(agentB).respondToSubmission(submissionId, 0, "ipfs://late"))
-      .to.be.revertedWith("task closed");
+  it("finalizeWinners approves finalists after reveal and allocates rewards", async function () {
+    const { job, client, agentA } = await deployFixture();
+    await createJob(job, client);
+    await submitBaseSubmission(job, agentA);
+    await enterRevealPhase(job, client, [agentA.address]);
+
+    const revealEnd = Number(await job.getRevealPhaseEnd(0));
+    await time.increaseTo(revealEnd + 1);
+
+    await expect(
+      job.connect(client).finalizeWinners(0, [agentA.address], [ethers.parseUnits("100", 6)])
+    ).to.emit(job, "WinnersFinalized");
+
+    const submission = await job.getSubmission(0, agentA.address);
+    expect(submission.status).to.equal(2); // SubmissionStatus.Approved
   });
 });
+

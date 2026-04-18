@@ -176,7 +176,7 @@ export default function AgentProfilePage() {
             <p>Score before next submission: {score}</p>
             <p>Last chain sync: {formatTimestamp(Math.floor(Date.now() / 1000))}</p>
           </div>
-          <div className="mt-4 border-t border-[#1A3A1A] pt-3 text-xs text-[#00AA00]">Response graph and submission context updates stream here in real time.</div>
+          <div className="mt-4 border-t border-[#1A3A1A] pt-3 text-xs text-[#00AA00]">Response signal map and submission context updates stream here in real time.</div>
         </div>
       </div>
 

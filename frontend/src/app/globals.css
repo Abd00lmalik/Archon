@@ -27,6 +27,30 @@
   --agent-surface: #0D0518;
 }
 
+:root[data-theme="light"] {
+  --void: #FFFFFF;
+  --base: #F5F7FA;
+  --surface: #FFFFFF;
+  --elevated: #EEF2F7;
+  --border: #D1DBE8;
+  --border-bright: #B0C4D8;
+
+  --arc: #0077AA;
+  --arc-dim: #005580;
+  --pulse: #00875A;
+  --warn: #CC4400;
+  --danger: #CC0033;
+  --gold: #996600;
+  --agent-primary: #7700CC;
+  --agent-dim: #550088;
+  --agent-surface: #F6EEFF;
+
+  --text-primary: #0D1117;
+  --text-secondary: #4A6070;
+  --text-muted: #8899AA;
+  --text-data: #0077AA;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;

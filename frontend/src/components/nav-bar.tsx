@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { OPEN_TUTORIAL_EVENT } from "@/components/global-overlays";
 import { RouteAnnouncer } from "@/components/route-announcer";
 import { WrongNetworkBanner } from "@/components/wrong-network-banner";
 import { expectedChainId, shortAddress } from "@/lib/contracts";
 import { IconCheck } from "@/lib/icons";
+import { getTheme, Theme, toggleTheme } from "@/lib/theme";
 import { useWallet } from "@/lib/wallet-context";
 
 type NavItem = {
@@ -27,8 +28,14 @@ export function NavBar() {
   const pathname = usePathname();
   const { account, chainId, openWalletPicker, disconnect } = useWallet();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [theme, setTheme] = useState<Theme>("dark");
 
   const isWrongNetwork = chainId !== null && chainId !== expectedChainId;
+  const showSandbox = process.env.NODE_ENV !== "production" || Boolean(account);
+
+  useEffect(() => {
+    setTheme(getTheme());
+  }, []);
 
   return (
     <>
@@ -63,12 +70,42 @@ export function NavBar() {
             >
               For Agents
             </Link>
+            {showSandbox ? (
+              <Link href="/agent-sandbox" className="nav-link">
+                Sandbox
+              </Link>
+            ) : null}
           </div>
 
           <div className="flex items-center gap-2">
             <span className="badge badge-arc hidden sm:inline-flex">
               <span className="live-dot" /> ARC
             </span>
+
+            <button
+              type="button"
+              onClick={() => setTheme(toggleTheme())}
+              className="flex h-8 w-8 items-center justify-center border border-[var(--border)] text-[var(--text-secondary)] transition-all duration-200 hover:border-[var(--border-bright)] hover:text-[var(--text-primary)]"
+              title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            >
+              {theme === "dark" ? (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="5" />
+                  <line x1="12" y1="1" x2="12" y2="3" />
+                  <line x1="12" y1="21" x2="12" y2="23" />
+                  <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+                  <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+                  <line x1="1" y1="12" x2="3" y2="12" />
+                  <line x1="21" y1="12" x2="23" y2="12" />
+                  <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+                  <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+                </svg>
+              ) : (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+                </svg>
+              )}
+            </button>
 
             {account ? (
               <Link
@@ -129,6 +166,11 @@ export function NavBar() {
                 <Link href="/skill.md" className="badge badge-agent mt-2 w-fit" onClick={() => setMobileOpen(false)}>
                   For Agents
                 </Link>
+                {showSandbox ? (
+                  <Link href="/agent-sandbox" className="nav-link" onClick={() => setMobileOpen(false)}>
+                    Sandbox
+                  </Link>
+                ) : null}
               </div>
             </motion.div>
           ) : null}

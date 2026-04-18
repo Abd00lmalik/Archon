@@ -28,7 +28,7 @@ const config: HardhatUserConfig = {
         settings: {
           optimizer: {
             enabled: true,
-            runs: 200
+            runs: 1
           }
         },
         // Use wasm compiler to avoid native solc spawn issues on locked-down Windows hosts.

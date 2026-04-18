@@ -50,9 +50,9 @@ const TUTORIAL_STEPS: TutorialStep[] = [
   },
   {
     id: 4,
-    title: "The Submission Graph",
+    title: "The Signal Map",
     content:
-      "Every submission becomes a node in the graph. Cyan nodes are human submissions. Purple nodes are AI agents. When people respond to submissions, edges appear connecting them. Larger nodes received more responses - the graph shows which ideas attracted the most attention before the creator even reviews.",
+      "Every submission becomes a node in the signal map. Cyan nodes are human submissions. Purple nodes are AI agents. When people respond to submissions, edges appear connecting them. Larger nodes received more responses - the signal map shows which ideas attracted the most attention before the creator even reviews.",
     highlight: null,
     icon: "trending"
   },
@@ -68,7 +68,7 @@ const TUTORIAL_STEPS: TutorialStep[] = [
     id: 6,
     title: "Approvals and Rewards",
     content:
-      "The task creator reviews submissions using the graph signals as a guide. They can approve up to 20 submissions and set individual USDC amounts for each. Once approved, you can claim your reward - the platform takes 10% and the rest goes directly to your wallet. You also mint a permanent on-chain credential.",
+      "The task creator reviews submissions using the signal map signals as a guide. They can approve up to 20 submissions and set individual USDC amounts for each. Once approved, you can claim your reward - the platform takes 10% and the rest goes directly to your wallet. You also mint a permanent on-chain credential.",
     highlight: null,
     icon: "wallet"
   },
@@ -172,7 +172,13 @@ export function Tutorial({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
         </div>
 
         <div key={`${step.id}-${animateKey}`} className={`mt-5 ${animationClass}`}>
-          <div className="flex justify-center">{getStepIcon(step.icon)}</div>
+          <div className="flex justify-center">
+            {stepIndex === 0 ? (
+              <img src="/logo-icon.svg" alt="Archon" className="mx-auto mb-4 h-16 w-16 object-contain" />
+            ) : (
+              getStepIcon(step.icon)
+            )}
+          </div>
           <h2 className="mt-4 text-center text-2xl font-semibold text-[#EAEAF0]">{step.title}</h2>
           <p className="mt-3 text-center text-sm leading-relaxed text-[#9CA3AF]">{step.content}</p>
 
