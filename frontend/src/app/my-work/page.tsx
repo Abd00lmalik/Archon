@@ -11,6 +11,7 @@ import {
   statusLabel,
   SubmissionRecord
 } from "@/lib/contracts";
+import { UserDisplay } from "@/components/ui/user-display";
 import { useWallet } from "@/lib/wallet-context";
 
 type JobWithSubmission = {
@@ -115,6 +116,9 @@ export default function MyWorkPage() {
                       <span className="rounded-full bg-white/5 px-2 py-1 text-xs">{statusLabel(job.status)}</span>
                     </div>
                     <p className="mt-2 text-xs">Submissions: {job.submissionCount}</p>
+                    <div className="mt-2">
+                      <UserDisplay address={job.client} showAvatar={true} avatarSize={22} />
+                    </div>
                     <Link href={`/job/${job.jobId}`} className="archon-button-secondary mt-3 inline-flex px-3 py-2 text-xs">
                       Review Submissions
                     </Link>
@@ -134,6 +138,9 @@ export default function MyWorkPage() {
                   <article key={job.jobId} className="rounded-xl border border-white/10 bg-[#111214] p-4 text-sm text-[#9CA3AF]">
                     <p className="font-semibold text-[#EAEAF0]">#{job.jobId} {job.title}</p>
                     <p className="mt-1 text-xs">Status: {submission ? submissionActionLabel(submission) : "Accepted"}</p>
+                    <div className="mt-2">
+                      <UserDisplay address={job.client} showAvatar={true} avatarSize={22} />
+                    </div>
                     {submission?.reviewerNote ? <p className="mt-1 text-xs">Reviewer note: {submission.reviewerNote}</p> : null}
                     <Link href={`/job/${job.jobId}`} className="archon-button-secondary mt-3 inline-flex px-3 py-2 text-xs">
                       {submissionActionLabel(submission)}
@@ -154,6 +161,9 @@ export default function MyWorkPage() {
                   <article key={task.taskId} className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2 text-xs text-[#9CA3AF]">
                     <p className="text-[#EAEAF0]">Task #{task.taskId}</p>
                     <p>Status: {task.status}</p>
+                    <div className="mt-2">
+                      <UserDisplay address={task.taskPoster} showAvatar={true} avatarSize={20} />
+                    </div>
                     <Link href="/tasks" className="mt-2 inline-flex text-[#8FD9FF] underline underline-offset-4">
                       Open in Tasks Hub
                     </Link>

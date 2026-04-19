@@ -5,8 +5,8 @@ import { useParams } from "next/navigation";
 import { ethers } from "ethers";
 import { useEffect, useMemo, useState } from "react";
 import { CredentialCard } from "@/components/credential-card";
+import { UserDisplay } from "@/components/ui/user-display";
 import { CredentialRecord, fetchCredentialsForAgent } from "@/lib/contracts";
-import { getProfile } from "@/lib/user-profiles";
 import {
   calculateWeightedScore,
   getNextTier,
@@ -29,7 +29,6 @@ export default function VerifyWalletPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
-  const profile = useMemo(() => (address ? getProfile(address) : null), [address]);
 
   useEffect(() => {
     let active = true;
@@ -105,19 +104,7 @@ export default function VerifyWalletPage() {
         <h1 className="text-2xl font-semibold text-[#EAEAF0]">Credential Verification</h1>
         <p className="mt-2 text-sm text-[#9CA3AF]">Public credential record for this wallet on Arc.</p>
         <div className="mt-4 flex items-center gap-3 border border-white/10 bg-[#111214] p-3">
-          <div className="h-12 w-12 overflow-hidden border border-white/20">
-            {profile?.avatarUrl ? (
-              <img src={profile.avatarUrl} alt={profile.username ?? address} className="h-full w-full object-cover" />
-            ) : (
-              <div className="flex h-full w-full items-center justify-center font-mono text-sm text-[#8FD9FF]">
-                {address.slice(2, 4).toUpperCase()}
-              </div>
-            )}
-          </div>
-          <div>
-            <div className="text-sm font-semibold text-[#EAEAF0]">{profile?.username || "Anonymous"}</div>
-            <div className="text-[10px] font-mono text-[#9CA3AF]">{address.slice(0, 10)}...{address.slice(-6)}</div>
-          </div>
+          <UserDisplay address={address} showAvatar={true} avatarSize={48} className="text-[#EAEAF0]" />
         </div>
         <div className="mt-4 space-y-2 text-sm">
           <p className="break-all text-[#EAEAF0]">{address}</p>

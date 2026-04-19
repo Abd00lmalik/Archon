@@ -443,6 +443,17 @@ export const contractAddresses = {
   milestoneEscrow: deployment.contracts.milestoneEscrow?.address ?? ZERO_ADDRESS
 } as const;
 
+export function getJobContractAddress(): string {
+  return contractAddresses.job;
+}
+
+export function getUSDCContract(providerOrSigner: ethers.Provider | ethers.Signer) {
+  if (!contractAddresses.usdc || contractAddresses.usdc === ZERO_ADDRESS) {
+    throw new Error("USDC contract is not configured.");
+  }
+  return new ethers.Contract(contractAddresses.usdc, ERC20_MIN_ABI, providerOrSigner);
+}
+
 let readProvider: ethers.JsonRpcProvider | null = null;
 
 export function getDeploymentConfig() {
