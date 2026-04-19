@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   fetchJobsByAgent,
+  formatTaskDescription,
+  formatTaskTitle,
   formatTimestamp,
   formatUsdc,
   JobRecord,
@@ -98,10 +100,10 @@ export default function SubmitWorkPage() {
             {acceptedJobs.map((job) => (
               <article key={job.jobId} className="rounded-xl border border-white/10 bg-[#111214] p-4 text-sm text-[#9CA3AF]">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="font-semibold text-[#EAEAF0]">#{job.jobId} {job.title}</p>
+                  <p className="font-semibold text-[#EAEAF0]">#{job.jobId} {formatTaskTitle(job.title)}</p>
                   <span className="rounded-full bg-white/5 px-2 py-1 text-xs">{statusLabel(job.status)}</span>
                 </div>
-                <p className="mt-2 line-clamp-2 text-xs">{job.description}</p>
+                <p className="mt-2 line-clamp-2 text-xs">{formatTaskDescription(job.description)}</p>
                 <p className="mt-2 text-xs">Reward: {formatUsdc(job.rewardUSDC)} USDC</p>
                 <p className="text-xs">Deadline: {formatTimestamp(job.deadline)}</p>
                 <Link href={`/job/${job.jobId}`} className="archon-button-secondary mt-3 inline-flex px-3 py-2 text-xs">

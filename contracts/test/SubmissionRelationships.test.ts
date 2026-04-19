@@ -4,7 +4,7 @@ import { time } from "@nomicfoundation/hardhat-network-helpers";
 
 describe("Submission Relationships", function () {
   async function deployFixture() {
-    const [owner, client, agentA, agentB, agentC, treasury] = await ethers.getSigners();
+    const [owner, client, agentA, agentB, agentC, treasury, ...others] = await ethers.getSigners();
 
     const sourceRegistry = await (await ethers.getContractFactory("SourceRegistry")).connect(owner).deploy();
     await sourceRegistry.waitForDeployment();
@@ -24,6 +24,9 @@ describe("Submission Relationships", function () {
     await usdc.connect(owner).mint(agentA.address, oneMillion);
     await usdc.connect(owner).mint(agentB.address, oneMillion);
     await usdc.connect(owner).mint(agentC.address, oneMillion);
+    for (const signer of others.slice(0, 12)) {
+      await usdc.connect(owner).mint(signer.address, oneMillion);
+    }
 
     const job = await (await ethers.getContractFactory("ERC8183Job"))
       .connect(owner)
@@ -35,8 +38,11 @@ describe("Submission Relationships", function () {
     await usdc.connect(agentA).approve(await job.getAddress(), oneMillion);
     await usdc.connect(agentB).approve(await job.getAddress(), oneMillion);
     await usdc.connect(agentC).approve(await job.getAddress(), oneMillion);
+    for (const signer of others.slice(0, 12)) {
+      await usdc.connect(signer).approve(await job.getAddress(), oneMillion);
+    }
 
-    return { owner, client, agentA, agentB, agentC, treasury, job, usdc };
+    return { owner, client, agentA, agentB, agentC, treasury, others, job, usdc };
   }
 
   async function createJob(job: any, client: any) {
@@ -334,5 +340,48 @@ describe("Submission Relationships", function () {
     expect(buildOn.allocatedReward).to.equal(ethers.parseUnits("30", 6));
     expect(buildOn.isBuildOnWinner).to.equal(true);
     expect(parent.buildOnBonus).to.equal(ethers.parseUnits("70", 6));
+  });
+
+  it("autoStartReveal works after deadline when submissions are under threshold", async function () {
+    const { job, client, agentA, agentB, agentC } = await deployFixture();
+    const deadline = await createJob(job, client);
+
+    await job.connect(agentA).submitDirect(0, "https://example.com/a");
+    await job.connect(agentB).submitDirect(0, "https://example.com/b");
+
+    await time.increaseTo(deadline + 1);
+
+    await expect(job.connect(agentC).autoStartReveal(0)).to.emit(job, "AutoRevealStarted");
+    expect(await job.isInRevealPhase(0)).to.equal(true);
+
+    const finalists = await job.getSelectedFinalists(0);
+    expect(finalists.length).to.equal(2);
+    expect(finalists).to.include(agentA.address);
+    expect(finalists).to.include(agentB.address);
+  });
+
+  it("autoStartReveal reverts before deadline", async function () {
+    const { job, client, agentA } = await deployFixture();
+    await createJob(job, client);
+    await job.connect(agentA).submitDirect(0, "https://example.com/a");
+
+    await expect(job.connect(agentA).autoStartReveal(0)).to.be.revertedWith("deadline not passed");
+  });
+
+  it("autoStartReveal reverts when submissions exceed maxApprovals + 5", async function () {
+    const { job, client, others } = await deployFixture();
+    const deadline = await createJob(job, client);
+
+    const participants = others.slice(0, 9);
+    expect(participants.length).to.equal(9);
+
+    for (const signer of participants) {
+      await job.connect(signer).submitDirect(0, `https://example.com/${signer.address}`);
+    }
+
+    await time.increaseTo(deadline + 1);
+    await expect(job.connect(participants[0]).autoStartReveal(0)).to.be.revertedWith(
+      "manual selection required: too many submissions"
+    );
   });
 });

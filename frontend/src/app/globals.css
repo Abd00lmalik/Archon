@@ -29,25 +29,25 @@
 
 :root[data-theme="light"] {
   --void: #FFFFFF;
-  --base: #F5F7FA;
+  --base: #F0F4F8;
   --surface: #FFFFFF;
-  --elevated: #EEF2F7;
-  --border: #D1DBE8;
-  --border-bright: #B0C4D8;
+  --elevated: #E8EFF6;
+  --border: #CBD5E1;
+  --border-bright: #94A3B8;
 
   --arc: #0077AA;
   --arc-dim: #005580;
-  --pulse: #00875A;
-  --warn: #CC4400;
-  --danger: #CC0033;
-  --gold: #996600;
-  --agent-primary: #7700CC;
-  --agent-dim: #550088;
-  --agent-surface: #F6EEFF;
+  --pulse: #007A45;
+  --warn: #B84500;
+  --danger: #B80030;
+  --gold: #8A6000;
+  --agent-primary: #6600AA;
+  --agent-dim: #440077;
+  --agent-surface: #F3EAFE;
 
-  --text-primary: #0D1117;
-  --text-secondary: #4A6070;
-  --text-muted: #8899AA;
+  --text-primary: #0F172A;
+  --text-secondary: #334155;
+  --text-muted: #64748B;
   --text-data: #0077AA;
 }
 
@@ -537,4 +537,190 @@ pre,
 
 .stagger-children > *:nth-child(6) {
   animation-delay: 400ms;
+}
+
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 0.8;
+  }
+
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+[data-theme="light"] .card-sharp {
+  background: #FFFFFF;
+  border-color: #CBD5E1;
+}
+
+[data-theme="light"] .card-sharp:hover {
+  border-color: #0077AA;
+  box-shadow: 0 4px 20px rgba(0, 119, 170, 0.12);
+}
+
+[data-theme="light"] .panel {
+  background: #FFFFFF;
+  border-color: #CBD5E1;
+}
+
+[data-theme="light"] .panel-elevated {
+  background: #F8FAFC;
+  border-color: #CBD5E1;
+}
+
+[data-theme="light"] .terminal {
+  background: #0F172A;
+  border-color: #334155;
+}
+
+[data-theme="light"] .input-field {
+  background: #FFFFFF;
+  border-color: #CBD5E1;
+  color: #0F172A;
+}
+
+[data-theme="light"] .input-field:focus {
+  border-color: #0077AA;
+  box-shadow: 0 0 0 1px #0077AA;
+}
+
+[data-theme="light"] .btn-primary {
+  background: #0077AA;
+  color: #FFFFFF;
+}
+
+[data-theme="light"] .btn-primary:hover {
+  background: #005580;
+  box-shadow: 0 4px 16px rgba(0, 119, 170, 0.3);
+}
+
+[data-theme="light"] .btn-ghost {
+  border-color: #CBD5E1;
+  color: #334155;
+}
+
+[data-theme="light"] .btn-ghost:hover {
+  border-color: #0077AA;
+  color: #0F172A;
+}
+
+[data-theme="light"] .section-header {
+  color: #64748B;
+  border-color: #CBD5E1;
+}
+
+[data-theme="light"] .badge-arc {
+  background: rgba(0, 119, 170, 0.08);
+  color: #0077AA;
+  border-color: rgba(0, 119, 170, 0.25);
+}
+
+[data-theme="light"] .badge-gold {
+  background: rgba(138, 96, 0, 0.08);
+  color: #8A6000;
+  border-color: rgba(138, 96, 0, 0.25);
+}
+
+[data-theme="light"] .badge-pulse {
+  background: rgba(0, 122, 69, 0.08);
+  color: #007A45;
+  border-color: rgba(0, 122, 69, 0.25);
+}
+
+[data-theme="light"] .badge-danger {
+  background: rgba(184, 0, 48, 0.08);
+  color: #B80030;
+  border-color: rgba(184, 0, 48, 0.25);
+}
+
+[data-theme="light"] .badge-agent {
+  background: rgba(102, 0, 170, 0.08);
+  color: #6600AA;
+  border-color: rgba(102, 0, 170, 0.25);
+}
+
+[data-theme="light"] nav {
+  background: rgba(240, 244, 248, 0.95);
+  border-color: #CBD5E1;
+}
+
+[data-theme="light"] .nav-link {
+  color: #334155;
+}
+
+[data-theme="light"] .nav-link:hover {
+  color: #0F172A;
+  background: #E8EFF6;
+}
+
+[data-theme="light"] .nav-link.active {
+  color: #0077AA;
+  background: rgba(0, 119, 170, 0.06);
+  border-bottom-color: transparent;
+}
+
+[data-theme="light"] .signal-map-container {
+  background: #F8FAFC;
+  border-color: #CBD5E1;
+}
+
+[data-theme="light"] ::-webkit-scrollbar-track {
+  background: #F0F4F8;
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: #94A3B8;
+}
+
+@media (max-width: 640px) {
+  h1 {
+    font-size: clamp(32px, 9vw, 48px) !important;
+    letter-spacing: -0.02em;
+  }
+
+  .hero-subheadline {
+    font-size: 15px !important;
+  }
+
+  .page-container {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .terminal {
+    font-size: 11px !important;
+  }
+
+  .terminal code {
+    font-size: 11px !important;
+  }
+
+  .hero-ctas {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .hero-ctas a {
+    text-align: center;
+    justify-content: center;
+  }
+
+  .nav-link {
+    font-size: 12px;
+    padding: 4px 8px;
+  }
 }

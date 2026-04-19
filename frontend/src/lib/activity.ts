@@ -1,7 +1,7 @@
 "use client";
 
 import { Contract, EventLog, Log } from "ethers";
-import { getReadProvider } from "./contracts";
+import { formatTaskTitle, getReadProvider } from "./contracts";
 import contractsJson from "./generated/contracts.json";
 
 export interface ActivityEvent {
@@ -106,7 +106,7 @@ async function _loadRecentHistory(jobContract: Contract, identityContract: Contr
         type: "task_created",
         actor: String(log.args?.[1] ?? ZERO),
         isAgent: false,
-        description: `Task created: "${String(log.args?.[2] ?? "").slice(0, 50)}"`,
+        description: `Task created: "${formatTaskTitle(String(log.args?.[2] ?? "")).slice(0, 50)}"`,
         taskId: Number(log.args?.[0] ?? 0),
         txHash: log.transactionHash,
         timestamp,
@@ -210,7 +210,7 @@ async function _loadRecentHistory(jobContract: Contract, identityContract: Contr
       try {
         const job = await stateReader.getJob(jobId);
         const client = String(job.client ?? job[1] ?? ZERO);
-        const title = String(job.title ?? job[2] ?? `Task #${jobId}`);
+        const title = formatTaskTitle(String(job.title ?? job[2] ?? `Task #${jobId}`));
         const submissionCount = Number(job.submissionCount ?? job[8] ?? 0);
         const createdAt = Number(job.createdAt ?? job[6] ?? 0) * 1000;
 
@@ -307,7 +307,7 @@ export function initActivityFeed() {
     const log = args[args.length - 1] as EventLog;
     const jobId = Number(args[0] ?? 0);
     const client = String(args[1] ?? ZERO);
-    const title = String(args[2] ?? "");
+    const title = formatTaskTitle(String(args[2] ?? ""));
     const timestamp = Date.now();
     _addEvent({
       id: _makeEventId("job-created", log),

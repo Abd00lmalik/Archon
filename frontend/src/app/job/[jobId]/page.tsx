@@ -21,6 +21,8 @@ import {
   fetchSelectedFinalists,
   fetchSubmissionForAgent,
   fetchSubmissions,
+  formatTaskDescription,
+  formatTaskTitle,
   formatTimestamp,
   formatUsdc,
   getJobContractAddress,
@@ -37,6 +39,7 @@ import {
   txClaimJobCredential,
   txFinalizeWinners,
   txRespondToSubmission,
+  txAutoStartReveal,
   txSelectFinalists,
   txSubmitDeliverable,
   ZERO_ADDRESS
@@ -799,6 +802,24 @@ export default function JobDetailsPage() {
     }
   };
 
+  const handleAutoStartReveal = async () => {
+    if (!signer) {
+      setErrorMessage("Connect wallet to start reveal phase.");
+      return;
+    }
+    try {
+      setBusyAction("autoReveal");
+      const txHash = await txAutoStartReveal(signer, BigInt(jobId));
+      setStatusMessage(`Auto reveal tx: ${txHash}`);
+      await loadTask();
+      await loadHeatmap();
+    } catch (error) {
+      setErrorMessage(errorText(error, "Failed to start auto-reveal"));
+    } finally {
+      setBusyAction("");
+    }
+  };
+
   const handleFinalizeWinners = async () => {
     try {
       setBusyAction("finalize");
@@ -851,6 +872,14 @@ export default function JobDetailsPage() {
     job && job.deadline > 0 && BigInt(Math.floor(Date.now() / 1000)) > BigInt(job.deadline)
   );
   const awaitingSelection = Boolean(job && submissionDeadlinePassed && (job.status === 2 || job.status === 0 || job.status === 1));
+  const canAutoReveal = Boolean(
+    job &&
+      submissionDeadlinePassed &&
+      (job.status === 0 || job.status === 1 || job.status === 2) &&
+      job.submissionCount > 0 &&
+      job.submissionCount <= maxApprovals + 5 &&
+      selectedFinalists.length === 0
+  );
   const nowSeconds = Math.floor(Date.now() / 1000);
   const isRevealActive = Boolean(job?.status === 4 && revealEndValue > 0 && nowSeconds <= revealEndValue);
   const shouldShowSignalMap = Boolean(job?.status === 4 || job?.status === 5);
@@ -924,7 +953,7 @@ export default function JobDetailsPage() {
         </div>
 
         <div className="flex items-start justify-between gap-6">
-          <h1 className="text-heading-1 flex-1">{job.title}</h1>
+            <h1 className="text-heading-1 flex-1">{formatTaskTitle(job.title)}</h1>
           <div className="text-right">
             <div className="font-heading text-[var(--gold)]" style={{ fontSize: "clamp(24px, 3vw, 36px)", fontWeight: 700 }}>
               {formatUsdc(job.rewardUSDC)} USDC
@@ -943,7 +972,7 @@ export default function JobDetailsPage() {
 
       <div className="grid gap-4 xl:grid-cols-[260px_minmax(0,1fr)_320px]">
         <aside className="panel h-fit space-y-6">
-          <div><div className="section-header">DESCRIPTION</div><p className="text-sm text-[var(--text-secondary)]">{job.description}</p></div>
+          <div><div className="section-header">DESCRIPTION</div><p className="text-sm text-[var(--text-secondary)]">{formatTaskDescription(job.description)}</p></div>
           <div><div className="section-header">METADATA</div><div className="space-y-2 text-xs"><div className="flex justify-between"><span className="text-[var(--text-muted)]">Creator</span><UserDisplay address={job.client} showAvatar={true} avatarSize={22} /></div><div className="flex justify-between"><span className="text-[var(--text-muted)]">Tasks posted</span><span className="font-mono">{creatorPostedCount}</span></div><div className="flex justify-between"><span className="text-[var(--text-muted)]">Created</span><span className="font-mono">{formatTimestamp(job.createdAt)}</span></div></div></div>
           <div><div className="section-header">REWARD BREAKDOWN</div><div className="space-y-2 text-xs"><div className="flex justify-between"><span className="text-[var(--text-muted)]">Total pool</span><span className="font-mono text-[var(--gold)]">{formatUsdc(job.rewardUSDC)} USDC</span></div><div className="flex justify-between"><span className="text-[var(--text-muted)]">Escrow locked</span><span className="font-mono">{formatUsdc(escrowLocked)} USDC</span></div><div className="flex justify-between"><span className="text-[var(--text-muted)]">Approval slots</span><span className="font-mono">{approvalsUsed}/{maxApprovals}</span></div></div></div>
         </aside>
@@ -1119,6 +1148,48 @@ export default function JobDetailsPage() {
                 Connect Wallet
               </button>
             </>
+          ) : null}
+
+          {canAutoReveal ? (
+            <div className="border p-4" style={{ borderColor: "#00E5FF60", background: "rgba(0,229,255,0.04)" }}>
+              <div
+                style={{
+                  fontFamily: "Space Grotesk, sans-serif",
+                  fontWeight: 600,
+                  fontSize: 14,
+                  color: "#E8F4FD",
+                  marginBottom: 8
+                }}
+              >
+                Deadline Passed - Auto-Start Available
+              </div>
+              <div
+                style={{
+                  fontFamily: "Inter, sans-serif",
+                  fontSize: 12,
+                  color: "#7A9BB5",
+                  marginBottom: 12,
+                  lineHeight: 1.5
+                }}
+              >
+                This task has {job.submissionCount} submission{job.submissionCount !== 1 ? "s" : ""} - under the{" "}
+                {maxApprovals + 5} finalist threshold. All submissions will become finalists and the 5-day reveal
+                phase will begin.
+              </div>
+              <button
+                type="button"
+                className="btn-primary w-full"
+                onClick={() => void handleAutoStartReveal()}
+                disabled={busyAction === "autoReveal" || !signer}
+              >
+                {busyAction === "autoReveal" ? "Starting..." : "Start Reveal Phase Automatically"}
+              </button>
+              {!signer ? (
+                <div className="mt-2 text-[11px] font-mono text-[var(--text-muted)]">
+                  Connect wallet to submit the transaction.
+                </div>
+              ) : null}
+            </div>
           ) : null}
 
           {isConnected && !isCreator ? (

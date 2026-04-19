@@ -13,6 +13,8 @@ import {
   deriveDisplayStatus,
   fetchAllJobs,
   fetchCredentialsForAgent,
+  formatTaskDescription,
+  formatTaskTitle,
   formatUsdc,
   JobRecord,
 } from "@/lib/contracts";
@@ -164,41 +166,108 @@ export default function HomePage() {
                 task.revealPhaseEnd ?? 0n
               );
               return (
-                <Link key={task.jobId} href={`/job/${task.jobId}`} className="card-sharp group cursor-pointer overflow-hidden p-0">
-                  <div className="h-[2px]" style={{ background: displayStatus.color }} />
-                  <div className="p-5">
+                <Link
+                  key={task.jobId}
+                  href={`/job/${task.jobId}`}
+                  className="card-sharp cursor-pointer overflow-hidden p-0"
+                  style={{ transition: "border-color 0.2s, box-shadow 0.2s" }}
+                >
+                  <div style={{ height: 2, background: displayStatus.color }} />
+
+                  <div style={{ padding: "16px 20px 20px" }}>
                     <div className="mb-3 flex items-center justify-between">
-                      <span className="mono text-xs text-[var(--text-muted)]">#{task.jobId}</span>
+                      <span
+                        style={{
+                          fontFamily: "JetBrains Mono, monospace",
+                          fontSize: 11,
+                          color: "#3D5A73"
+                        }}
+                      >
+                        #{task.jobId}
+                      </span>
                       <div className="flex items-center gap-2">
-                        <span className="badge badge-gold mono">{formatUsdc(task.rewardUSDC)} USDC</span>
                         <span
-                          className="badge mono"
                           style={{
-                            color: displayStatus.color,
-                            borderColor: displayStatus.color,
-                            background: "transparent",
-                            borderWidth: "1px",
-                            borderStyle: "solid"
+                            fontFamily: "JetBrains Mono, monospace",
+                            fontSize: 11,
+                            fontWeight: 700,
+                            color: "#F5A623",
+                            background: "rgba(245,166,35,0.1)",
+                            border: "1px solid rgba(245,166,35,0.3)",
+                            padding: "2px 8px"
                           }}
                         >
-                          {displayStatus.label}
+                          {(Number(formatUsdc(task.rewardUSDC)) || 0).toFixed(1)} USDC
+                        </span>
+                        <span
+                          style={{
+                            fontFamily: "JetBrains Mono, monospace",
+                            fontSize: 10,
+                            fontWeight: 700,
+                            color: displayStatus.color,
+                            background: `${displayStatus.color}10`,
+                            border: `1px solid ${displayStatus.color}40`,
+                            padding: "2px 8px",
+                            letterSpacing: "0.05em"
+                          }}
+                        >
+                          {displayStatus.label.toUpperCase()}
                         </span>
                       </div>
                     </div>
 
-                    <h3 className="font-heading mb-2 text-base font-semibold transition-colors group-hover:text-[var(--arc)]">
-                      {task.title}
+                    <h3
+                      style={{
+                        fontFamily: "Space Grotesk, sans-serif",
+                        fontWeight: 600,
+                        fontSize: 15,
+                        color: "#E8F4FD",
+                        lineHeight: 1.3,
+                        marginBottom: 8,
+                        textTransform: "none"
+                      }}
+                    >
+                      {formatTaskTitle(task.title)}
                     </h3>
 
-                    <p className="mb-4 line-clamp-2 text-sm leading-relaxed text-[var(--text-secondary)]">{task.description}</p>
+                    <p
+                      style={{
+                        fontFamily: "Inter, sans-serif",
+                        fontSize: 13,
+                        color: "#7A9BB5",
+                        lineHeight: 1.5,
+                        marginBottom: 16,
+                        display: "-webkit-box",
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: "vertical",
+                        overflow: "hidden"
+                      }}
+                    >
+                      {formatTaskDescription(task.description)}
+                    </p>
 
-                    <div className="flex items-center justify-between border-t border-[var(--border)] pt-3">
-                      <div className="flex items-center gap-2 text-xs text-[var(--text-muted)] min-w-0">
+                    <div className="flex items-center justify-between pt-3" style={{ borderTop: "1px solid #162334" }}>
+                      <div
+                        style={{
+                          fontFamily: "JetBrains Mono, monospace",
+                          fontSize: 10,
+                          color: "#3D5A73"
+                        }}
+                        className="flex items-center gap-2"
+                      >
                         <UserDisplay address={task.client} showAvatar={true} avatarSize={22} className="min-w-0" />
-                        <span>-</span>
+                        <span>·</span>
                         <span>{formatDeadline(task.deadline)}</span>
                       </div>
-                      <span className="text-xs text-[var(--text-muted)]">{task.submissionCount} submissions</span>
+                      <span
+                        style={{
+                          fontFamily: "JetBrains Mono, monospace",
+                          fontSize: 10,
+                          color: "#3D5A73"
+                        }}
+                      >
+                        {task.submissionCount} submission{task.submissionCount !== 1 ? "s" : ""}
+                      </span>
                     </div>
                   </div>
                 </Link>

@@ -188,6 +188,11 @@ contract ERC8183Job is ICredentialSource {
         address[] winners,
         uint256[] rewardAmounts
     );
+    event AutoRevealStarted(
+        uint256 indexed jobId,
+        uint256 finalistCount,
+        uint256 revealEndsAt
+    );
 
     modifier onlyOwner() {
         require(msg.sender == owner, "only owner");
@@ -542,6 +547,58 @@ contract ERC8183Job is ICredentialSource {
         job.status = JobStatus.RevealPhase;
 
         emit FinalistsSelected(jobId, agents, revealPhaseEnd[jobId]);
+    }
+
+    /**
+     * @dev autoStartReveal allows anyone to start reveal phase after deadline
+     * when submitted finalists are at or below the (maxApprovals + 5) threshold.
+     */
+    function autoStartReveal(uint256 jobId) external nonReentrant {
+        Job storage job = _getExistingJob(jobId);
+        require(block.timestamp > job.deadline, "deadline not passed");
+        require(
+            uint8(job.status) == uint8(JobStatus.Submitted) ||
+                uint8(job.status) == uint8(JobStatus.InProgress) ||
+                uint8(job.status) == uint8(JobStatus.Open),
+            "wrong status for auto-reveal"
+        );
+        require(selectedFinalists[jobId].length == 0, "finalists already selected");
+
+        address[] storage submitters = submittedAgents[jobId];
+        address[] memory valid = new address[](submitters.length);
+        uint256 actualCount = 0;
+
+        for (uint256 i = 0; i < submitters.length; i++) {
+            address agent = submitters[i];
+            if (
+                agent != address(0) &&
+                submissions[jobId][agent].status == SubmissionStatus.Submitted
+            ) {
+                valid[actualCount] = agent;
+                actualCount += 1;
+            }
+        }
+
+        require(actualCount > 0, "no submissions");
+        require(
+            actualCount <= maxApprovalsForJob[jobId] + 5,
+            "manual selection required: too many submissions"
+        );
+
+        for (uint256 i = 0; i < actualCount; i++) {
+            address finalist = valid[i];
+            if (!isFinalist[jobId][finalist]) {
+                isFinalist[jobId][finalist] = true;
+                selectedFinalists[jobId].push(finalist);
+            }
+        }
+
+        revealPhaseStart[jobId] = block.timestamp;
+        revealPhaseEnd[jobId] = block.timestamp + REVEAL_DURATION;
+        job.status = JobStatus.RevealPhase;
+
+        emit FinalistsSelected(jobId, selectedFinalists[jobId], revealPhaseEnd[jobId]);
+        emit AutoRevealStarted(jobId, actualCount, revealPhaseEnd[jobId]);
     }
 
     function finalizeWinners(

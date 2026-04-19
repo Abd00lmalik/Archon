@@ -231,7 +231,7 @@ function PersonBox({
         <div className="relative flex h-full flex-col p-2">
           {isTop ? (
             <div className="absolute right-1 top-1 text-sm" style={{ color: textColor }}>
-              ♛
+              {"\u265B"}
             </div>
           ) : null}
           <div className="mb-1 flex items-center gap-2">
@@ -456,7 +456,7 @@ export default function SignalMap({
                   onClick={() => setSelected(null)}
                   style={{ color: "#3D5A73", fontSize: 14 }}
                 >
-                  x
+                  {"\u2715"}
                 </button>
               </div>
 
@@ -521,3 +521,4 @@ export default function SignalMap({
     </div>
   );
 }
+

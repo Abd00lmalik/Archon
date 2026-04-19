@@ -7,6 +7,7 @@ import {
   fetchJobsByAgent,
   fetchJobsByClient,
   fetchSubmissionForAgent,
+  formatTaskTitle,
   JobRecord,
   statusLabel,
   SubmissionRecord
@@ -112,7 +113,7 @@ export default function MyWorkPage() {
                 {jobsPosted.map((job) => (
                   <article key={job.jobId} className="rounded-xl border border-white/10 bg-[#111214] p-4 text-sm text-[#9CA3AF]">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="font-semibold text-[#EAEAF0]">#{job.jobId} {job.title}</p>
+                      <p className="font-semibold text-[#EAEAF0]">#{job.jobId} {formatTaskTitle(job.title)}</p>
                       <span className="rounded-full bg-white/5 px-2 py-1 text-xs">{statusLabel(job.status)}</span>
                     </div>
                     <p className="mt-2 text-xs">Submissions: {job.submissionCount}</p>
@@ -136,7 +137,7 @@ export default function MyWorkPage() {
               <div className="mt-3 space-y-3">
                 {jobsWorking.map(({ job, submission }) => (
                   <article key={job.jobId} className="rounded-xl border border-white/10 bg-[#111214] p-4 text-sm text-[#9CA3AF]">
-                    <p className="font-semibold text-[#EAEAF0]">#{job.jobId} {job.title}</p>
+                    <p className="font-semibold text-[#EAEAF0]">#{job.jobId} {formatTaskTitle(job.title)}</p>
                     <p className="mt-1 text-xs">Status: {submission ? submissionActionLabel(submission) : "Accepted"}</p>
                     <div className="mt-2">
                       <UserDisplay address={job.client} showAvatar={true} avatarSize={22} />

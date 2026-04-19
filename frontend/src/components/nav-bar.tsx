@@ -79,7 +79,14 @@ export function NavBar() {
             <button
               type="button"
               onClick={() => setTheme(toggleTheme())}
-              className="flex h-8 w-8 items-center justify-center border border-[var(--border)] text-[var(--text-secondary)] transition-all duration-200 hover:border-[var(--border-bright)] hover:text-[var(--text-primary)]"
+              className="flex h-8 w-8 items-center justify-center transition-all duration-200"
+              style={{
+                background: theme === "light" ? "#E8EFF6" : "transparent",
+                border: `1px solid ${theme === "light" ? "#CBD5E1" : "var(--border)"}`,
+                color: theme === "light" ? "#334155" : "var(--text-secondary)",
+                padding: "6px 8px",
+                cursor: "pointer"
+              }}
               title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
             >
               {theme === "dark" ? (

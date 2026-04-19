@@ -339,6 +339,7 @@ const JOB_OPTIONAL_ABI = [
   "function getSubmission(uint256 jobId,address agent) view returns (tuple(uint256 submissionId,address agent,string deliverableLink,uint8 status,uint256 submittedAt,string reviewerNote,bool credentialClaimed,uint256 allocatedReward,uint256 buildOnBonus,bool isBuildOnWinner))",
   "function getSubmissions(uint256 jobId) view returns (tuple(uint256 submissionId,address agent,string deliverableLink,uint8 status,uint256 submittedAt,string reviewerNote,bool credentialClaimed,uint256 allocatedReward,uint256 buildOnBonus,bool isBuildOnWinner)[])",
   "function isAccepted(uint256 jobId,address agent) view returns (bool)",
+  "function getAcceptedAgents(uint256 jobId) view returns (address[])",
   "function getJobsByClient(address client) view returns (uint256[])",
   "function getJobsByAgent(address agent) view returns (uint256[])",
   "function jobEscrow(uint256 jobId) view returns (uint256)",
@@ -365,6 +366,7 @@ const JOB_OPTIONAL_ABI = [
   "function submissionResponseCount(uint256 submissionId) view returns (uint256)",
   "function submissionIdToAgent(uint256 submissionId) view returns (address)",
   "function selectFinalists(uint256 jobId, address[] agents) external",
+  "function autoStartReveal(uint256 jobId) external",
   "function finalizeWinners(uint256 jobId, address[] winners, uint256[] rewardAmounts) external",
   "function getSelectedFinalists(uint256 jobId) external view returns (address[])",
   "function getRevealPhaseEnd(uint256 jobId) external view returns (uint256)",
@@ -372,6 +374,7 @@ const JOB_OPTIONAL_ABI = [
   "function buildOnParentByResponder(uint256 jobId,address responder) external view returns (address)",
   "event SubmissionResponseAdded(uint256 indexed taskId, uint256 indexed parentSubmissionId, uint256 indexed responseId, uint8 responseType)",
   "event FinalistsSelected(uint256 indexed jobId, address[] agents, uint256 revealEndsAt)",
+  "event AutoRevealStarted(uint256 indexed jobId, uint256 finalistCount, uint256 revealEndsAt)",
   "event WinnersFinalized(uint256 indexed jobId, address[] winners, uint256[] rewardAmounts)",
   "function setMinJobStake(uint256 amount)",
   "function setRequireCredentialToPost(bool required)",
@@ -525,6 +528,16 @@ function normalizeJobStatus(deadline: number) {
 export function shortAddress(address: string) {
   if (!address || address.length < 10) return address;
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+export function formatTaskTitle(title: string): string {
+  if (!title) return "";
+  return title.charAt(0).toUpperCase() + title.slice(1).toLowerCase();
+}
+
+export function formatTaskDescription(description: string): string {
+  if (!description) return "";
+  return description.charAt(0).toUpperCase() + description.slice(1);
 }
 
 export function toDisplayName(address: string) {
@@ -725,11 +738,21 @@ export function isValidSubmission(rawSubmission: unknown): boolean {
       : ({} as Record<string, unknown> & unknown[]);
 
   const tuple = Array.isArray(rawSubmission) ? rawSubmission : [];
-  const agent = toString(submission.agent ?? tuple[1] ?? tuple[0] ?? "");
-  const submittedAt = toNumber(submission.submittedAt ?? tuple[4] ?? tuple[5] ?? 0);
+  const agent = toString(submission.agent ?? submission.submitter ?? tuple[1] ?? tuple[0] ?? "")
+    .toLowerCase()
+    .trim();
+  const submittedAt = toNumber(
+    submission.submittedAt ?? submission.createdAt ?? tuple[4] ?? tuple[5] ?? tuple[6] ?? -1
+  );
 
-  if (!agent || agent.toLowerCase() === ZERO_ADDRESS.toLowerCase()) return false;
-  if (submittedAt < 1_577_836_800) return false;
+  if (!agent || agent === ZERO_ADDRESS.toLowerCase() || agent === "0x") {
+    console.log("[filter] Skipping zero-address submission");
+    return false;
+  }
+  if (submittedAt > 0 && submittedAt < 1_577_836_800) {
+    console.log("[filter] Skipping pre-2020 timestamp submission:", submittedAt);
+    return false;
+  }
 
   return true;
 }
@@ -1354,11 +1377,51 @@ export async function fetchSubmissionForAgent(
   }
 }
 
+async function fetchSubmissionsFallback(contract: ethers.Contract, jobId: number): Promise<unknown[]> {
+  const collected: unknown[] = [];
+
+  try {
+    const acceptedAgents = ((await contract.getAcceptedAgents(jobId)) as string[]) ?? [];
+    for (const agent of acceptedAgents) {
+      try {
+        const row = await contract.getSubmission(jobId, agent);
+        if (isValidSubmission(row)) {
+          collected.push(row);
+        }
+      } catch {
+        // Skip malformed rows.
+      }
+    }
+  } catch (error) {
+    console.warn("[submissions] fallback getAcceptedAgents failed:", error);
+  }
+
+  return collected;
+}
+
 export async function fetchSubmissions(jobId: number): Promise<SubmissionRecord[]> {
+  let rawSubmissions: unknown[] = [];
   try {
     const contract = getOptionalJobReadContract();
-    const raw = (await contract.getSubmissions(jobId)) as unknown[];
-    return raw.filter((item) => isValidSubmission(item)).map((item) => parseSubmission(item));
+    try {
+      const raw = (await contract.getSubmissions(jobId)) as unknown[];
+      rawSubmissions = Array.from(raw ?? []);
+      console.log("[submissions] raw count:", rawSubmissions.length);
+      if (rawSubmissions.length > 0) {
+        const first = rawSubmissions[0] as Record<string, unknown> & unknown[];
+        console.log("[submissions] first item:", first);
+        console.log("[submissions] first agent:", first?.agent ?? first?.[1] ?? first?.[0]);
+      }
+    } catch (error) {
+      console.warn("[submissions] getSubmissions failed, trying fallback:", error);
+      rawSubmissions = await fetchSubmissionsFallback(contract, jobId);
+    }
+
+    const valid = rawSubmissions.filter((item) => isValidSubmission(item));
+    console.log("[submissions] after filter:", valid.length);
+    const parsed = valid.map((item) => parseSubmission(item));
+    console.log("[submissions] final count:", parsed.length);
+    return parsed;
   } catch (error) {
     console.warn("[fetchSubmissions] failed:", error);
     return [];
@@ -1985,7 +2048,7 @@ export async function fetchCredentialMetadata(
       const job = await fetchJob(credential.activityId);
       if (!job) return undefined;
       return {
-        title: job.title,
+        title: formatTaskTitle(job.title),
         client: shortAddress(job.client),
         rewardUSDC: formatUsdc(job.rewardUSDC),
         deadline: formatTimestamp(job.deadline)
@@ -2140,6 +2203,16 @@ export async function txSelectFinalists(
 ) : Promise<string> {
   const contract = new ethers.Contract(contractAddresses.job, JOB_OPTIONAL_ABI, signer);
   const tx = await contract.selectFinalists(jobId, agents);
+  await tx.wait();
+  return tx.hash as string;
+}
+
+export async function txAutoStartReveal(
+  signer: ethers.JsonRpcSigner,
+  jobId: bigint
+): Promise<string> {
+  const contract = new ethers.Contract(contractAddresses.job, JOB_OPTIONAL_ABI, signer);
+  const tx = await contract.autoStartReveal(jobId);
   await tx.wait();
   return tx.hash as string;
 }

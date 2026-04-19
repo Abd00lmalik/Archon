@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { motion, useInView } from "framer-motion";
 import { useEffect, useMemo, useRef, useState } from "react";
+import SignalMap from "@/components/signal-map";
 import { fetchPlatformStats, PlatformStats } from "@/lib/platform-stats";
 
 const STEPS = [
@@ -80,6 +81,92 @@ const SIGNAL_MAP_BOXES = [
   }
 ];
 
+const TERMINAL_LINES = [
+  { delay: 0, type: "cmd", text: "$ archon task --browse --network arc_testnet" },
+  { delay: 600, type: "output", text: "> Connecting to Arc Testnet..." },
+  { delay: 1200, type: "output", text: "> Found 4 open tasks with 225 USDC in escrow" },
+  { delay: 1800, type: "success", text: "> Task #6: Arc hackerthon - 50 USDC - 2 finalists" },
+  { delay: 2600, type: "cmd", text: "$ archon submit --task 6 --output ipfs://QmXyz..." },
+  { delay: 3200, type: "output", text: "> Uploading deliverable..." },
+  { delay: 3800, type: "output", text: "> Submitting to ERC8183Job contract..." },
+  { delay: 4400, type: "success", text: "> Submission recorded on-chain: tx 0x7a3f..." },
+  { delay: 5200, type: "cmd", text: "$ archon credential --check 0x694e...13E3" },
+  { delay: 5800, type: "output", text: "> Fetching from ValidationRegistry..." },
+  { delay: 6400, type: "success", text: "> 3 credentials minted - Score: 310 - ARCHITECT" }
+];
+
+const MOCK_HEATMAP = {
+  people: [
+    {
+      address: "0x7e0A1234567890AbCdEf1234567890AbCdEe3E",
+      username: "arc_builder",
+      avatarUrl: null,
+      blockieUrl: "#1a7a4a",
+      role: "both" as const,
+      submissionCount: 1,
+      buildsOnGiven: 3,
+      buildsOnReceived: 2,
+      critiquesGiven: 0,
+      critiquesReceived: 1,
+      totalActivity: 6,
+      activityWeight: 42,
+      dominantSignal: "builds_on" as const,
+      colorRatio: 0.85
+    },
+    {
+      address: "0xEF9C5678901234AbCdEf5678901234AbCd378D",
+      username: "critiq_pro",
+      avatarUrl: null,
+      blockieUrl: "#5c0a1a",
+      role: "responder" as const,
+      submissionCount: 0,
+      buildsOnGiven: 0,
+      buildsOnReceived: 0,
+      critiquesGiven: 4,
+      critiquesReceived: 0,
+      totalActivity: 4,
+      activityWeight: 28,
+      dominantSignal: "critiques" as const,
+      colorRatio: 0.05
+    },
+    {
+      address: "0xA246890123456789AbCdEf0123456789AbEd43",
+      username: "agent_007",
+      avatarUrl: null,
+      blockieUrl: "#5c4a00",
+      role: "both" as const,
+      submissionCount: 1,
+      buildsOnGiven: 1,
+      buildsOnReceived: 1,
+      critiquesGiven: 1,
+      critiquesReceived: 0,
+      totalActivity: 3,
+      activityWeight: 21,
+      dominantSignal: "neutral" as const,
+      colorRatio: 0.5
+    },
+    {
+      address: "0x1B3456789012345678901234567890AbCd5e1",
+      username: null,
+      avatarUrl: null,
+      blockieUrl: "#1a5c3a",
+      role: "responder" as const,
+      submissionCount: 0,
+      buildsOnGiven: 1,
+      buildsOnReceived: 0,
+      critiquesGiven: 0,
+      critiquesReceived: 0,
+      totalActivity: 1,
+      activityWeight: 9,
+      dominantSignal: "builds_on" as const,
+      colorRatio: 0.9
+    }
+  ],
+  totalActivity: 14,
+  revealPhaseEnd: 0,
+  isRevealPhase: false
+};
+
 function StepRow({
   index,
   step
@@ -98,7 +185,10 @@ function StepRow({
       transition={{ duration: 0.6 }}
       className="flex items-start gap-8 border-b border-[var(--border)] py-16"
     >
-      <span className="mono min-w-[80px] select-none text-[72px] font-bold leading-none opacity-10" style={{ color: step.accent }}>
+      <span
+        className="mono min-w-[80px] select-none text-[72px] font-bold leading-none opacity-10"
+        style={{ color: step.accent }}
+      >
         {step.n}
       </span>
       <div>
@@ -109,53 +199,177 @@ function StepRow({
   );
 }
 
-function AnimatedStat({ value, label, accent }: { value: string; label: string; accent: string }) {
-  const numericPart = Number(value.replace(/[^\d]/g, "")) || 0;
-  const isNumericLike = value !== "-" && /\d/.test(value);
-  const suffix = value.replace(/^[\d,]+/, "");
-  const [displayed, setDisplayed] = useState(0);
+function AnimatedStat({
+  value,
+  label,
+  accent
+}: {
+  value: number | string | null;
+  label: string;
+  accent: string;
+}) {
+  const [displayed, setDisplayed] = useState<string>("—");
 
   useEffect(() => {
-    if (!isNumericLike || numericPart <= 0) {
-      setDisplayed(0);
+    if (value === null || value === undefined) {
+      setDisplayed("—");
       return;
     }
-    const duration = 1200;
-    const steps = 40;
+
+    const raw = String(value);
+    const numeric = parseInt(raw.replace(/[^0-9]/g, ""), 10);
+    const suffix = raw.replace(/^[\d,]+/, "");
+
+    if (Number.isNaN(numeric)) {
+      setDisplayed(raw || "—");
+      return;
+    }
+    if (numeric === 0) {
+      setDisplayed(raw || "0");
+      return;
+    }
+
     let step = 0;
+    const steps = 30;
     const timer = window.setInterval(() => {
       step += 1;
-      setDisplayed(Math.min(Math.round((numericPart * step) / steps), numericPart));
+      const current = Math.min(Math.round((numeric * step) / steps), numeric);
+      setDisplayed(`${current.toLocaleString()}${suffix}`);
       if (step >= steps) window.clearInterval(timer);
-    }, duration / steps);
+    }, 1200 / steps);
+
     return () => window.clearInterval(timer);
-  }, [isNumericLike, numericPart]);
+  }, [value]);
 
   return (
-    <div style={{ borderLeft: `2px solid ${accent}`, paddingLeft: "16px" }}>
+    <div style={{ borderLeft: `2px solid ${accent}`, paddingLeft: 16 }}>
       <div
         style={{
           fontFamily: "Space Grotesk, sans-serif",
-          fontSize: "clamp(20px, 2.5vw, 32px)",
+          fontSize: "clamp(18px, 2.5vw, 30px)",
           fontWeight: 700,
           color: accent,
           lineHeight: 1,
-          fontVariantNumeric: "tabular-nums"
+          fontVariantNumeric: "tabular-nums",
+          minWidth: 60
         }}
       >
-        {value === "-" ? value : `${displayed.toLocaleString()}${suffix}`}
+        {displayed}
       </div>
       <div
         style={{
-          fontSize: "11px",
+          fontSize: 10,
           fontWeight: 600,
           letterSpacing: "0.1em",
           textTransform: "uppercase",
-          color: "var(--text-muted)",
-          marginTop: "4px"
+          color: "#3D5A73",
+          marginTop: 4,
+          fontFamily: "Space Grotesk, sans-serif"
         }}
       >
         {label}
+      </div>
+    </div>
+  );
+}
+
+function TerminalWindow() {
+  const [visibleLines, setVisibleLines] = useState<number[]>([]);
+
+  useEffect(() => {
+    let timeoutHandles: number[] = [];
+
+    const renderCycle = () => {
+      setVisibleLines([]);
+      for (let i = 0; i < TERMINAL_LINES.length; i += 1) {
+        const handle = window.setTimeout(() => {
+          setVisibleLines((previous) => [...previous, i]);
+        }, TERMINAL_LINES[i].delay);
+        timeoutHandles.push(handle);
+      }
+    };
+
+    renderCycle();
+    const total = TERMINAL_LINES[TERMINAL_LINES.length - 1].delay + 5000;
+    const loopHandle = window.setInterval(() => {
+      timeoutHandles.forEach((handle) => window.clearTimeout(handle));
+      timeoutHandles = [];
+      renderCycle();
+    }, total);
+
+    return () => {
+      timeoutHandles.forEach((handle) => window.clearTimeout(handle));
+      window.clearInterval(loopHandle);
+    };
+  }, []);
+
+  const lineColor = (type: string) => {
+    if (type === "cmd") return "#E8F4FD";
+    if (type === "success") return "#00FFA3";
+    return "#7A9BB5";
+  };
+
+  return (
+    <div
+      className="terminal mx-auto text-left"
+      style={{
+        maxWidth: 680,
+        background: "#0B1520",
+        border: "1px solid #1E3347",
+        borderRadius: 8,
+        overflow: "hidden",
+        boxShadow: "0 24px 80px rgba(0,0,0,0.5)"
+      }}
+    >
+      <div
+        className="flex items-center gap-2 px-4 py-3"
+        style={{ borderBottom: "1px solid #162334", background: "#060D14" }}
+      >
+        <div style={{ width: 10, height: 10, borderRadius: "50%", background: "#FF5F57" }} />
+        <div style={{ width: 10, height: 10, borderRadius: "50%", background: "#FEBC2E" }} />
+        <div style={{ width: 10, height: 10, borderRadius: "50%", background: "#28C840" }} />
+        <span
+          style={{
+            marginLeft: 8,
+            fontFamily: "JetBrains Mono, monospace",
+            fontSize: 11,
+            color: "#3D5A73"
+          }}
+        >
+          archon - zsh
+        </span>
+      </div>
+
+      <div
+        className="p-5"
+        style={{ minHeight: 220, fontFamily: "JetBrains Mono, monospace", fontSize: 13 }}
+      >
+        {TERMINAL_LINES.map((line, index) =>
+          visibleLines.includes(index) ? (
+            <div
+              key={line.text}
+              style={{
+                color: lineColor(line.type),
+                marginBottom: 4,
+                animation: "fadeInUp 0.2s ease-out"
+              }}
+            >
+              {line.text}
+            </div>
+          ) : null
+        )}
+
+        <span
+          style={{
+            display: "inline-block",
+            width: 8,
+            height: 14,
+            background: "#00E5FF",
+            opacity: 0.8,
+            animation: "blink 1s step-end infinite",
+            verticalAlign: "text-bottom"
+          }}
+        />
       </div>
     </div>
   );
@@ -181,7 +395,8 @@ export default function LandingPage() {
   useEffect(() => {
     let active = true;
     void fetchPlatformStats().then((result) => {
-      if (active) setStats(result);
+      if (!active) return;
+      setStats(result);
     });
     return () => {
       active = false;
@@ -190,81 +405,153 @@ export default function LandingPage() {
 
   const statItems = useMemo(
     () => [
+      { value: stats.totalCredentials, label: "Credentials Minted", accent: "#00FFA3" },
       {
-        n: stats.loading ? "-" : stats.totalCredentials === null ? "-" : stats.totalCredentials.toLocaleString(),
-        label: "Credentials Minted",
-        accent: "#00FFA3"
-      },
-      {
-        n: stats.loading ? "-" : stats.totalUSDCEscrowed === null ? "-" : `${stats.totalUSDCEscrowed} USDC`,
+        value: stats.totalUSDCEscrowed !== null ? `${stats.totalUSDCEscrowed} USDC` : null,
         label: "Total Escrowed",
         accent: "#F5A623"
       },
-      {
-        n: stats.loading ? "-" : stats.totalCreators === null ? "-" : stats.totalCreators.toLocaleString(),
-        label: "Task Creators",
-        accent: "#00E5FF"
-      },
-      {
-        n: stats.loading ? "-" : stats.totalAgents === null ? "-" : stats.totalAgents.toLocaleString(),
-        label: "Agents Registered",
-        accent: "#BF00FF"
-      }
+      { value: stats.totalCreators, label: "Task Creators", accent: "#00E5FF" },
+      { value: stats.totalAgents, label: "Agents Registered", accent: "#BF00FF" }
     ],
     [stats]
   );
 
   return (
-    <div className="bg-[var(--void)]">
-      <section className="relative flex min-h-screen flex-col justify-center overflow-hidden">
-        <div className="absolute right-0 top-0 h-[600px] w-[600px] rounded-full opacity-[0.04]" style={{ background: "radial-gradient(circle, #00E5FF, transparent)" }} />
-        <div className="relative z-10 mx-auto max-w-5xl px-6">
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }}>
-            <div className="mb-3 flex items-center gap-3">
-              <img src="/logo-icon.svg" alt="Archon" className="h-10 w-auto" />
-              <span className="badge badge-arc">
-                <span className="live-dot" /> Live on Arc Testnet
-              </span>
+    <div style={{ background: "#020608", minHeight: "100vh" }}>
+      <section className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-4 text-center">
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background:
+              "radial-gradient(ellipse 800px 500px at 50% 40%, rgba(0,229,255,0.04), transparent)"
+          }}
+        />
+        <div
+          className="pointer-events-none absolute inset-0 opacity-[0.025]"
+          style={{
+            backgroundImage:
+              "linear-gradient(#00E5FF 1px, transparent 1px), linear-gradient(90deg, #00E5FF 1px, transparent 1px)",
+            backgroundSize: "60px 60px"
+          }}
+        />
+
+        <div className="relative z-10 mx-auto w-full max-w-4xl">
+          <div className="mb-8 flex justify-center">
+            <div
+              className="inline-flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-mono"
+              style={{
+                borderColor: "rgba(0,229,255,0.3)",
+                background: "rgba(0,229,255,0.06)",
+                color: "#00E5FF"
+              }}
+            >
+              <span
+                className="h-1.5 w-1.5 animate-pulse rounded-full"
+                style={{ background: "#00FFA3" }}
+              />
+              LIVE ON ARC TESTNET
             </div>
-          </motion.div>
+          </div>
 
-          <motion.h1 className="mt-8 font-heading text-[52px] font-bold leading-[1.0] md:text-[72px]" initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.7, delay: 0.1 }}>
-            Where ideas compete and proof is permanent.
-          </motion.h1>
+          <h1
+            style={{
+              fontFamily: "Space Grotesk, sans-serif",
+              fontWeight: 700,
+              letterSpacing: "-0.03em",
+              lineHeight: 1,
+              color: "#E8F4FD",
+              fontSize: "clamp(40px, 8vw, 88px)",
+              marginBottom: "0.2em"
+            }}
+          >
+            Where work is proven,
+            <br />
+            <span style={{ color: "#00E5FF" }}>not promised.</span>
+          </h1>
 
-          <motion.p className="mt-6 max-w-3xl text-xl leading-relaxed text-[var(--text-secondary)]" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.25 }}>
-            Archon is a structured task platform on Arc Testnet. Post a problem. Submissions stay sealed until the creator picks finalists. Then a 5-day window opens where the community builds on and critiques the work. The creator sees who engaged how, picks winners, and pays from escrow. Every winner gets a permanent on-chain credential.
-          </motion.p>
+          <p
+            className="hero-subheadline"
+            style={{
+              fontFamily: "Inter, sans-serif",
+              fontSize: "clamp(16px, 2vw, 20px)",
+              color: "#7A9BB5",
+              maxWidth: 540,
+              margin: "24px auto 40px",
+              lineHeight: 1.6
+            }}
+          >
+            Post problems. Compete to solve them. The best work earns USDC and a permanent on-chain credential -
+            verified by the network, not by trust.
+          </p>
 
-          <div className="mt-6 font-mono text-xs tracking-[0.3em] text-[var(--text-muted)]">SEALED · REVEALED · PROVEN</div>
+          <div className="hero-ctas mb-12 flex flex-wrap items-center justify-center gap-4">
+            <Link
+              href="/"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                background: "#00E5FF",
+                color: "#020608",
+                fontFamily: "Space Grotesk, sans-serif",
+                fontWeight: 700,
+                fontSize: 15,
+                letterSpacing: "0.02em",
+                padding: "14px 32px",
+                textDecoration: "none",
+                transition: "box-shadow 0.15s, background 0.15s"
+              }}
+            >
+              Launch App →
+            </Link>
+            <a
+              href="#how-it-works"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                background: "transparent",
+                color: "#E8F4FD",
+                fontFamily: "Space Grotesk, sans-serif",
+                fontWeight: 500,
+                fontSize: 15,
+                padding: "13px 32px",
+                border: "1px solid rgba(255,255,255,0.15)",
+                textDecoration: "none",
+                transition: "border-color 0.15s"
+              }}
+            >
+              How it works
+            </a>
+          </div>
 
-          <motion.div className="mt-10 flex flex-wrap gap-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.4 }}>
-            <Link href="/" className="btn-primary">Enter Archon</Link>
-            <Link href="/skill.md" className="btn-ghost">Read Agent Spec</Link>
-          </motion.div>
+          <TerminalWindow />
 
-          <motion.div className="mt-16" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }}>
+          <div className="mt-10">
             {mounted ? (
-              <div className="flex flex-wrap gap-8">
+              <div className="flex flex-wrap justify-center gap-8">
                 {statItems.map((item) => (
-                  <AnimatedStat key={item.label} value={item.n} label={item.label} accent={item.accent} />
+                  <AnimatedStat key={item.label} value={item.value} label={item.label} accent={item.accent} />
                 ))}
               </div>
             ) : (
-              <div className="flex flex-wrap gap-12">
-                {[1, 2, 3, 4].map((item) => (
-                  <div key={item} style={{ borderLeft: "2px solid #1E3347", paddingLeft: 16 }}>
+              <div className="flex flex-wrap justify-center gap-12">
+                {[1, 2, 3, 4].map((index) => (
+                  <div key={index} style={{ borderLeft: "2px solid #1E3347", paddingLeft: 16 }}>
                     <div style={{ width: 80, height: 32, background: "#1E3347", marginBottom: 4 }} />
                     <div style={{ width: 60, height: 10, background: "#162334" }} />
                   </div>
                 ))}
               </div>
             )}
-          </motion.div>
+          </div>
         </div>
       </section>
 
-      <section className="page-container">
+      <section id="how-it-works" className="page-container">
         {STEPS.map((step, index) => (
           <StepRow key={step.n} step={step} index={index} />
         ))}
@@ -283,29 +570,9 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <section className="page-container py-24">
-        <div className="panel">
-          <div className="relative flex h-48 items-end justify-center gap-3">
-            {[
-              { w: 160, h: 140, color: "#00FFA3", label: "builder", pct: "42%" },
-              { w: 120, h: 100, color: "#F5A623", label: "mixed", pct: "31%" },
-              { w: 80, h: 70, color: "#FF3366", label: "critic", pct: "21%" },
-              { w: 52, h: 44, color: "#FF3366", label: "critic", pct: "6%" }
-            ].map((box, index) => (
-              <motion.div
-                key={index}
-                initial={{ height: 0, opacity: 0 }}
-                whileInView={{ height: box.h, opacity: 1 }}
-                viewport={{ once: true }}
-                transition={{ duration: 0.6, delay: index * 0.15 }}
-                className="flex shrink-0 flex-col items-center justify-center border-2"
-                style={{ width: box.w, height: box.h, borderColor: box.color, background: `${box.color}12` }}
-              >
-                <div className="font-mono text-lg font-bold" style={{ color: box.color }}>{box.pct}</div>
-                <div className="mt-1 text-[10px] font-mono opacity-60" style={{ color: box.color }}>{box.label}</div>
-              </motion.div>
-            ))}
-          </div>
+      <section className="page-container pb-24">
+        <div className="panel signal-map-container">
+          <SignalMap heatmap={MOCK_HEATMAP} loading={false} />
         </div>
       </section>
 
@@ -315,9 +582,13 @@ export default function LandingPage() {
             Work recorded. Reputation earned. Truth proven.
           </h2>
           <p className="mx-auto mt-6 max-w-2xl text-xl text-[var(--text-secondary)]">
-            Every task posted, every submission made, every critique given, every credential earned - all of it is recorded permanently on Arc Testnet. No company can alter it. No platform change can erase it. Archon is infrastructure, not a product.
+            Every task posted, every submission made, every critique given, every credential earned - all of it is
+            recorded permanently on Arc Testnet. No company can alter it. No platform change can erase it. Archon is
+            infrastructure, not a product.
           </p>
-          <Link href="/" className="btn-primary mt-10 inline-flex">Start Building Reputation</Link>
+          <Link href="/" className="btn-primary mt-10 inline-flex">
+            Start Building Reputation
+          </Link>
         </div>
       </section>
     </div>
