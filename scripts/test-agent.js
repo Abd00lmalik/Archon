@@ -1,12 +1,8 @@
 /**
- * Archon Agent Test Script
- *
- * Tests the full agent flow: discover -> submit -> respond -> claim
+ * Archon Agent Test Script - ABI-safe version
  *
  * Usage:
  *   AGENT_PRIVATE_KEY=0x... node scripts/test-agent.js
- *
- * Or with a specific task:
  *   AGENT_PRIVATE_KEY=0x... TASK_ID=1 node scripts/test-agent.js
  */
 
@@ -16,46 +12,48 @@ const { ethers } = require("ethers");
 
 const RPC = "https://rpc.testnet.arc.network";
 const USDC = "0x3600000000000000000000000000000000000000";
+const CONTRACTS_PATH = path.resolve(__dirname, "../frontend/src/lib/generated/contracts.json");
 
-async function getContracts() {
+function loadDeployment() {
   try {
-    const res = await fetch("https://archon-dapp.vercel.app/api/contracts");
-    const json = await res.json();
-    const c = json.contracts ?? {};
-    return {
-      job: c.jobContract?.address ?? c.mockJob?.address ?? c.job?.address,
-      registry: c.validationRegistry?.address
-    };
-  } catch {
-    const filePath = path.resolve(__dirname, "../frontend/src/lib/generated/contracts.json");
-    const local = JSON.parse(fs.readFileSync(filePath, "utf8"));
-    const c = local.contracts ?? {};
-    return {
-      job: c.jobContract?.address ?? c.mockJob?.address ?? c.job?.address,
-      registry: c.validationRegistry?.address
-    };
+    return JSON.parse(fs.readFileSync(CONTRACTS_PATH, "utf8"));
+  } catch (error) {
+    console.error("Could not load contracts.json:", error.message);
+    process.exit(1);
   }
 }
 
-const JOB_ABI = [
-  "function nextJobId() view returns (uint256)",
-  "function totalJobs() view returns (uint256)",
-  "function getJob(uint256) view returns (uint256,address,string,string,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,bool,uint8)",
+function loadAddressesAndAbi() {
+  const deployment = loadDeployment();
+  const contracts = deployment.contracts ?? {};
+  const jobConfig = contracts.jobContract ?? contracts.job ?? contracts.mockJob;
+  const registryConfig = contracts.validationRegistry ?? contracts.credentialRegistry;
+
+  if (!jobConfig?.address || !Array.isArray(jobConfig.abi)) {
+    console.error("Job contract address or ABI missing from contracts.json");
+    process.exit(1);
+  }
+
+  return {
+    job: jobConfig.address,
+    jobAbi: jobConfig.abi,
+    registry: registryConfig?.address ?? null,
+    registryAbi: registryConfig?.abi ?? [],
+  };
+}
+
+const OPTIONAL_WRITE_ABI = [
   "function submitDirect(uint256 jobId, string deliverableLink) external",
-  "function submitDeliverable(uint256 jobId, string deliverableLink) external",
   "function acceptJob(uint256 jobId) external",
-  "function claimCredential(uint256 jobId) external",
-  "function respondToSubmission(uint256 parentSubmissionId, uint8 responseType, string contentURI) external returns (uint256)",
-  "function getSubmissions(uint256 jobId) view returns (tuple(uint256 submissionId, address agent, string deliverableLink, uint8 status, uint256 submittedAt, string reviewerNote, bool credentialClaimed, uint256 allocatedReward, uint256 buildOnBonus, bool isBuildOnWinner)[])",
+  "function submitDeliverable(uint256 jobId, string deliverableLink) external",
   "event JobCreated(uint256 indexed jobId, address indexed client, string title, string description, uint256 deadline, uint256 rewardUSDC)"
 ];
 
 const USDC_ABI = [
   "function balanceOf(address) view returns (uint256)",
-  "function approve(address spender, uint256 amount) external returns (bool)"
+  "function approve(address spender, uint256 amount) external returns (bool)",
+  "function allowance(address owner, address spender) view returns (uint256)"
 ];
-
-const REG_ABI = ["function getWeightedScore(address) view returns (uint256)"];
 
 function log(step, message, data) {
   const prefix = `[${step.padEnd(12)}]`;
@@ -65,10 +63,32 @@ function log(step, message, data) {
   }
 }
 
-async function runAgentTest() {
-  console.log("\n═══════════════════════════════════════");
+function formatUsdc(value) {
+  try {
+    return (Number(BigInt(value)) / 1e6).toFixed(2);
+  } catch {
+    return "0.00";
+  }
+}
+
+function deriveTaskLabel(job) {
+  const deadline = Number(job.deadline ?? job[4] ?? 0);
+  const refunded = Boolean(job.refunded ?? job[12] ?? false);
+  const approvedCount = Number(job.approvedCount ?? job[9] ?? 0);
+  const claimedCount = Number(job.claimedCount ?? job[10] ?? 0);
+  const now = Math.floor(Date.now() / 1000);
+
+  if (refunded) return "REFUNDED";
+  if (deadline > now) return "OPEN";
+  if (approvedCount > 0 && claimedCount > 0) return "CLAIMED";
+  if (approvedCount > 0) return "APPROVED";
+  return "CLOSED";
+}
+
+async function main() {
+  console.log("\n========================================");
   console.log("  ARCHON AGENT TEST SCRIPT");
-  console.log("═══════════════════════════════════════\n");
+  console.log("========================================\n");
 
   if (!process.env.AGENT_PRIVATE_KEY) {
     console.error("ERROR: Set AGENT_PRIVATE_KEY environment variable");
@@ -78,120 +98,153 @@ async function runAgentTest() {
 
   const provider = new ethers.JsonRpcProvider(RPC);
   const wallet = new ethers.Wallet(process.env.AGENT_PRIVATE_KEY, provider);
+  const config = loadAddressesAndAbi();
+  const mergedJobAbi = [...config.jobAbi, ...OPTIONAL_WRITE_ABI];
+
   log("WALLET", "Agent address:", wallet.address);
+  log("CONTRACTS", "Job contract:", config.job);
+  log("CONTRACTS", "Registry:", config.registry ?? "not configured");
 
-  const addresses = await getContracts();
-  log("CONTRACTS", "Job contract:", addresses.job);
-  log("CONTRACTS", "Registry:", addresses.registry);
+  const jobRead = new ethers.Contract(config.job, config.jobAbi, provider);
+  const jobWrite = new ethers.Contract(config.job, mergedJobAbi, wallet);
+  const usdc = new ethers.Contract(USDC, USDC_ABI, provider);
+  const registry = config.registry
+    ? new ethers.Contract(config.registry, config.registryAbi, provider)
+    : null;
 
-  if (!addresses.job) {
-    console.error("ERROR: Could not load contract addresses. Deploy contracts first.");
+  const balance = await usdc.balanceOf(wallet.address);
+  log("BALANCE", `${formatUsdc(balance)} USDC`);
+
+  if (Number(balance) < 500_000) {
+    console.warn("WARNING: Less than 0.5 USDC. Get testnet funds at faucet.arc.network");
+  }
+
+  console.log("\n[VERIFY] Testing getJob ABI...");
+  try {
+    const testJob = await jobRead.getJob(1);
+    console.log("[VERIFY] getJob(1) raw:", Array.from(testJob));
+    console.log("[VERIFY] Fields available:", Object.keys(testJob));
+    console.log("[VERIFY] title:", testJob.title ?? testJob[2]);
+    console.log("[VERIFY] deadline:", String(testJob.deadline ?? testJob[4]));
+    console.log("[VERIFY] reward:", String(testJob.rewardUSDC ?? testJob[5]));
+    console.log("[VERIFY] getJob works");
+  } catch (error) {
+    console.error("[VERIFY] getJob failed:", error.message);
+    console.error("[VERIFY] This means the ABI does not match the deployed contract");
     process.exit(1);
   }
 
-  const jobContract = new ethers.Contract(addresses.job, JOB_ABI, wallet);
-  const usdc = new ethers.Contract(USDC, USDC_ABI, wallet);
-  const registry = new ethers.Contract(addresses.registry, REG_ABI, provider);
-
-  const balance = await usdc.balanceOf(wallet.address);
-  const balanceFormatted = (Number(balance) / 1e6).toFixed(2);
-  log("BALANCE", `${balanceFormatted} USDC`);
-  if (Number(balance) < 1_000_000) {
-    console.warn("WARNING: Less than 1 USDC. Get testnet funds at faucet.arc.network");
+  if (registry) {
+    const score = await registry.getWeightedScore(wallet.address).catch(() => 0n);
+    const creds = await registry.credentialCount(wallet.address).catch(() => 0n);
+    log("REPUTATION", `Score: ${score.toString()} / 2000`);
+    log("REPUTATION", `Credentials: ${creds.toString()}`);
   }
 
-  const score = await registry.getWeightedScore(wallet.address);
-  log("REPUTATION", `Current score: ${score}/2000`);
-
-  let total = 0n;
-  try {
-    total = await jobContract.totalJobs();
-  } catch {
-    total = await jobContract.nextJobId();
-  }
-  log("DISCOVERY", `Total tasks on chain: ${total}`);
-
-  let targetTaskId = process.env.TASK_ID ? Number(process.env.TASK_ID) : null;
-  if (!targetTaskId) {
-    log("DISCOVERY", "Scanning for open tasks...");
-    for (let i = Number(total) - 1; i >= 0; i -= 1) {
-      const job = await jobContract.getJob(i);
-      const status = Number(job[13]);
-      const deadline = Number(job[4]);
-      const now = Math.floor(Date.now() / 1000);
-      log(
-        "SCAN",
-        `Task #${i}: "${job[2]}" | Status: ${status} | Deadline: ${
-          deadline > now ? `${Math.floor((deadline - now) / 3600)}h remaining` : "EXPIRED"
-        }`
-      );
-      if (status === 0 && deadline > now) {
-        targetTaskId = i;
-        log("FOUND", `Selected task #${i} for submission`);
+  let totalTasks = 0n;
+  for (const fn of ["totalJobs", "nextJobId"]) {
+    try {
+      if (typeof jobRead[fn] === "function") {
+        totalTasks = await jobRead[fn]();
+        log("DISCOVERY", `Total tasks via ${fn}: ${totalTasks.toString()}`);
         break;
       }
+    } catch (error) {
+      console.warn(`[DISCOVERY] ${fn} failed:`, error.message);
     }
   }
 
-  if (!targetTaskId && targetTaskId !== 0) {
-    log("RESULT", "No open tasks found. Create one at archon-dapp.vercel.app");
+  if (totalTasks === 0n) {
+    console.log("No tasks found. Create one at archon-dapp.vercel.app");
     return;
   }
 
-  const task = await jobContract.getJob(targetTaskId);
-  log("TASK", `#${targetTaskId}: ${task[2]}`);
-  log("TASK", "Description:", String(task[3]).slice(0, 100) + "...");
-  log("TASK", "Reward:", `${Number(task[5]) / 1e6} USDC`);
+  console.log("\n-- Scanning tasks --");
+  const openTasks = [];
+  const requestedTaskId = process.env.TASK_ID ? Number(process.env.TASK_ID) : null;
 
-  log("WORK", "Generating solution (simulated)...");
-  await new Promise((resolve) => setTimeout(resolve, 1000));
-  const simulatedOutput = `https://gist.github.com/agent-test-${Date.now()}`;
-  log("WORK", "Solution ready:", simulatedOutput);
+  for (let i = 0; i < Number(totalTasks); i += 1) {
+    try {
+      const job = await jobRead.getJob(i);
+      const title = String(job.title ?? job[2] ?? `Task #${i}`);
+      const client = String(job.client ?? job[1] ?? "");
+      const deadline = Number(job.deadline ?? job[4] ?? 0);
+      const reward = BigInt(job.rewardUSDC ?? job[5] ?? 0n);
+      const label = deriveTaskLabel(job);
+      const now = Math.floor(Date.now() / 1000);
+      const deadlineText = deadline > now ? `${Math.floor((deadline - now) / 3600)}h remaining` : "EXPIRED";
+      const isOwnTask = client.toLowerCase() === wallet.address.toLowerCase();
 
-  log("SUBMIT", "Attempting submitDirect...");
-  try {
-    const tx = await jobContract.submitDirect(targetTaskId, simulatedOutput);
-    log("SUBMIT", "Transaction sent:", tx.hash);
-    const receipt = await tx.wait();
-    log("SUBMIT", "Confirmed in block:", receipt.blockNumber);
-    log("SUCCESS", `Submission recorded on-chain for task #${targetTaskId}`);
-  } catch (error) {
-    const msg = error?.reason ?? error?.message ?? "Unknown error";
-    if (String(msg).includes("already submitted")) {
-      log("SKIP", "Already submitted to this task");
-    } else if (String(msg).includes("deadline passed")) {
-      log("ERROR", "Deadline has passed for this task");
-    } else {
-      log("FALLBACK", "submitDirect failed, trying acceptJob + submit...");
-      try {
-        await (await jobContract.acceptJob(targetTaskId)).wait();
-        log("FALLBACK", "acceptJob confirmed");
-        await (await jobContract.submitDeliverable(targetTaskId, simulatedOutput)).wait();
-        log("SUCCESS", "Submitted via fallback flow");
-      } catch (fallbackError) {
-        log("ERROR", "Both submit methods failed:", fallbackError?.reason ?? fallbackError?.message);
+      console.log(
+        `  #${i} [${label}] \"${title}\" - ${formatUsdc(reward)} USDC - ${deadlineText}${isOwnTask ? " - OWN TASK" : ""}`
+      );
+
+      if (deadline > now && label === "OPEN" && !isOwnTask) {
+        openTasks.push({ id: i, title, reward, deadline });
       }
+    } catch (error) {
+      console.log(`  #${i} [ERROR reading] ${String(error.message).slice(0, 100)}`);
     }
   }
 
-  log("EVENTS", "Starting 30s event listener test...");
-  const timeout = setTimeout(() => {
-    log("EVENTS", "No new events in 30s - listener test complete");
-    process.exit(0);
-  }, 30000);
+  const targetId = requestedTaskId ?? openTasks.at(-1)?.id ?? null;
 
-  jobContract.on("JobCreated", (jobId, client, title) => {
-    log("EVENT", `JobCreated: #${jobId} "${title}" by ${String(client).slice(0, 8)}...`);
-    clearTimeout(timeout);
-    process.exit(0);
-  });
+  if (targetId === null) {
+    console.log("\nNo open tasks to submit to. Script verified ABI and read flow only.");
+    return;
+  }
 
-  console.log("\n  Listening for JobCreated events...");
-  console.log("  Post a task on archon-dapp.vercel.app to trigger it");
-  console.log("  (Will timeout in 30 seconds)\n");
+  const targetJob = await jobRead.getJob(targetId);
+  const targetClient = String(targetJob.client ?? targetJob[1] ?? "");
+  if (targetClient.toLowerCase() === wallet.address.toLowerCase()) {
+    console.log("\nSelected task belongs to this wallet. Skipping submission to avoid self-submission revert.");
+    return;
+  }
+  log("TASK", `#${targetId}: ${String(targetJob.title ?? targetJob[2])}`);
+  log("TASK", "Reward:", `${formatUsdc(targetJob.rewardUSDC ?? targetJob[5])} USDC`);
+  log("TASK", "Submission count:", String(targetJob.submissionCount ?? targetJob[8] ?? 0));
+
+  const deliverableLink = `https://github.com/archon-agent-test-${Date.now()}`;
+  let submitted = false;
+  const hasSubmitDirect = config.jobAbi.some((entry) => entry.type === "function" && entry.name === "submitDirect");
+
+  if (hasSubmitDirect) {
+    try {
+      log("SUBMIT", "Trying submitDirect...");
+      const tx = await jobWrite.submitDirect(BigInt(targetId), deliverableLink);
+      log("SUBMIT", "Transaction sent:", tx.hash);
+      const receipt = await tx.wait();
+      log("SUBMIT", "submitDirect confirmed in block:", receipt.blockNumber);
+      submitted = true;
+    } catch (error) {
+      log("SUBMIT", "submitDirect failed:", error.reason ?? error.message);
+    }
+  } else {
+    log("SUBMIT", "submitDirect not present in deployed ABI - using fallback flow");
+  }
+
+  if (!submitted) {
+    try {
+      log("FALLBACK", "Trying acceptJob + submitDeliverable...");
+      const acceptTx = await jobWrite.acceptJob(BigInt(targetId));
+      await acceptTx.wait();
+      log("FALLBACK", "acceptJob confirmed");
+
+      const submitTx = await jobWrite.submitDeliverable(BigInt(targetId), deliverableLink);
+      const receipt = await submitTx.wait();
+      log("FALLBACK", "submitDeliverable confirmed in block:", receipt.blockNumber);
+      submitted = true;
+    } catch (error) {
+      log("ERROR", "Fallback flow failed:", error.reason ?? error.message);
+    }
+  }
+
+  console.log("\n-- Summary --");
+  console.log(`Submission: ${submitted ? "SUCCESS" : "FAILED"}`);
+  console.log(`Agent profile: https://archon-dapp.vercel.app/agents/${wallet.address}`);
 }
 
-runAgentTest().catch((error) => {
-  console.error("FATAL:", error?.message ?? error);
+main().catch((error) => {
+  console.error("\nFATAL:", error.message);
   process.exit(1);
 });

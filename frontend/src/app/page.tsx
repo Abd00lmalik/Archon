@@ -7,7 +7,7 @@ import { UserDisplay } from "@/components/ui/user-display";
 import { LiveFeed } from "@/components/ui/live-feed";
 import { SectionHeader } from "@/components/ui/section-header";
 import { StatBlock } from "@/components/ui/stat";
-import { ActivityEvent, initActivityFeed, subscribeToActivity } from "@/lib/activity";
+import { ActivityEvent, subscribeToActivity } from "@/lib/activity";
 import {
   CredentialRecord,
   deriveDisplayStatus,
@@ -31,7 +31,19 @@ function formatDeadline(deadline: number) {
   return `${hours}h ${mins}m left`;
 }
 
-const FILTERS = ["All", "Tasks", "Tournaments"] as const;
+function isDeadlinePassed(deadline: number) {
+  return deadline > 0 && Math.floor(Date.now() / 1000) > deadline;
+}
+
+type TaskFilter = "all" | "open" | "submitted" | "reveal" | "closed";
+
+const FILTER_OPTIONS: { value: TaskFilter; label: string; color: string }[] = [
+  { value: "all", label: "ALL", color: "#E8F4FD" },
+  { value: "open", label: "OPEN", color: "#00FFA3" },
+  { value: "submitted", label: "SUBMITTED", color: "#F5A623" },
+  { value: "reveal", label: "REVEAL PHASE", color: "#00E5FF" },
+  { value: "closed", label: "CLOSED", color: "#7A9BB5" },
+];
 
 export default function HomePage() {
   const { account } = useWallet();
@@ -39,7 +51,7 @@ export default function HomePage() {
   const [restoreGraceElapsed, setRestoreGraceElapsed] = useState(false);
   const [jobs, setJobs] = useState<JobRecord[]>([]);
   const [myCredentials, setMyCredentials] = useState<CredentialRecord[]>([]);
-  const [selectedFilter, setSelectedFilter] = useState<(typeof FILTERS)[number]>("All");
+  const [selectedFilter, setSelectedFilter] = useState<TaskFilter>("all");
   const [loading, setLoading] = useState(false);
   const [activityEvents, setActivityEvents] = useState<ActivityEvent[]>([]);
 
@@ -66,7 +78,6 @@ export default function HomePage() {
   }, [loadFeed]);
 
   useEffect(() => {
-    initActivityFeed();
     const unsubscribe = subscribeToActivity(setActivityEvents);
     return unsubscribe;
   }, []);
@@ -75,8 +86,22 @@ export default function HomePage() {
   const myTier = useMemo(() => getReputationTier(myScore), [myScore]);
 
   const visibleJobs = useMemo(() => {
-    if (selectedFilter === "Tournaments") return jobs;
-    return jobs;
+    return jobs.filter((job) => {
+      if (selectedFilter === "all") return true;
+      if (selectedFilter === "open") {
+        return (job.status === 0 || job.status === 1) && !isDeadlinePassed(job.deadline);
+      }
+      if (selectedFilter === "submitted") {
+        return job.status === 2 || job.status === 3;
+      }
+      if (selectedFilter === "reveal") {
+        return job.status === 4;
+      }
+      if (selectedFilter === "closed") {
+        return job.status === 5 || job.status === 6 || isDeadlinePassed(job.deadline);
+      }
+      return true;
+    });
   }, [jobs, selectedFilter]);
 
   const hasStoredWallet =
@@ -113,7 +138,7 @@ export default function HomePage() {
         <div className="space-y-2 border-t border-[var(--border)] pt-4">
           <div className="mono text-xs text-[var(--text-secondary)]">Credentials: {myCredentials.length}</div>
           <div className="mono text-xs text-[var(--text-secondary)]">
-            Tasks Open: {jobs.filter((job) => deriveDisplayStatus(job.status, job.deadline, job.revealPhaseEnd ?? 0n).code === 0).length}
+            Tasks Open: {jobs.filter((job) => (job.status === 0 || job.status === 1) && !isDeadlinePassed(job.deadline)).length}
           </div>
         </div>
       </aside>
@@ -125,32 +150,28 @@ export default function HomePage() {
         </div>
 
         <div className="panel-elevated flex flex-wrap gap-2">
-          {FILTERS.map((filter) => {
-            if (filter === "Tournaments") {
-              return (
-                <button
-                  key={filter}
-                  type="button"
-                  disabled
-                  className="cursor-not-allowed border border-dashed border-[#162334] px-4 py-2 text-xs font-mono tracking-wider text-[#3D5A73] opacity-40"
-                >
-                  TOURNAMENTS
-                  <span className="ml-2 border border-[#3D5A73] px-1 text-[9px]">SOON</span>
-                </button>
-              );
-            }
-
-            return (
-              <button
-                key={filter}
-                type="button"
-                onClick={() => setSelectedFilter(filter)}
-                className={selectedFilter === filter ? "btn-primary px-3 py-2 text-xs" : "btn-ghost px-3 py-2 text-xs"}
-              >
-                {filter}
-              </button>
-            );
-          })}
+          {FILTER_OPTIONS.map((filter) => (
+            <button
+              key={filter.value}
+              type="button"
+              onClick={() => setSelectedFilter(filter.value)}
+              style={{
+                fontFamily: "JetBrains Mono, monospace",
+                fontSize: 11,
+                fontWeight: 700,
+                letterSpacing: "0.08em",
+                padding: "6px 14px",
+                border: "1px solid",
+                cursor: "pointer",
+                transition: "all 0.15s",
+                borderColor: selectedFilter === filter.value ? filter.color : "var(--border)",
+                color: selectedFilter === filter.value ? filter.color : "var(--text-muted)",
+                background: selectedFilter === filter.value ? `${filter.color}12` : "transparent",
+              }}
+            >
+              {filter.label}
+            </button>
+          ))}
         </div>
 
         {loading ? (
@@ -160,11 +181,7 @@ export default function HomePage() {
         ) : (
           <div className="grid gap-4 md:grid-cols-2">
             {visibleJobs.slice(0, 20).map((task) => {
-              const displayStatus = deriveDisplayStatus(
-                task.status,
-                task.deadline,
-                task.revealPhaseEnd ?? 0n
-              );
+              const displayStatus = deriveDisplayStatus(task.status, task.deadline, task.revealPhaseEnd ?? 0n);
               return (
                 <Link
                   key={task.jobId}
@@ -172,7 +189,7 @@ export default function HomePage() {
                   className="card-sharp cursor-pointer overflow-hidden p-0"
                   style={{ transition: "border-color 0.2s, box-shadow 0.2s" }}
                 >
-                  <div style={{ height: 2, background: displayStatus.color }} />
+                  <div className="task-status-accent" style={{ height: 2, background: displayStatus.color }} />
 
                   <div style={{ padding: "16px 20px 20px" }}>
                     <div className="mb-3 flex items-center justify-between">
@@ -180,7 +197,7 @@ export default function HomePage() {
                         style={{
                           fontFamily: "JetBrains Mono, monospace",
                           fontSize: 11,
-                          color: "#3D5A73"
+                          color: "var(--text-muted)",
                         }}
                       >
                         #{task.jobId}
@@ -191,10 +208,10 @@ export default function HomePage() {
                             fontFamily: "JetBrains Mono, monospace",
                             fontSize: 11,
                             fontWeight: 700,
-                            color: "#F5A623",
-                            background: "rgba(245,166,35,0.1)",
-                            border: "1px solid rgba(245,166,35,0.3)",
-                            padding: "2px 8px"
+                            color: "var(--gold)",
+                            background: "color-mix(in srgb, var(--gold) 12%, transparent)",
+                            border: "1px solid color-mix(in srgb, var(--gold) 35%, transparent)",
+                            padding: "2px 8px",
                           }}
                         >
                           {(Number(formatUsdc(task.rewardUSDC)) || 0).toFixed(1)} USDC
@@ -208,7 +225,7 @@ export default function HomePage() {
                             background: `${displayStatus.color}10`,
                             border: `1px solid ${displayStatus.color}40`,
                             padding: "2px 8px",
-                            letterSpacing: "0.05em"
+                            letterSpacing: "0.05em",
                           }}
                         >
                           {displayStatus.label.toUpperCase()}
@@ -221,10 +238,10 @@ export default function HomePage() {
                         fontFamily: "Space Grotesk, sans-serif",
                         fontWeight: 600,
                         fontSize: 15,
-                        color: "#E8F4FD",
+                        color: "var(--text-primary)",
                         lineHeight: 1.3,
                         marginBottom: 8,
-                        textTransform: "none"
+                        textTransform: "none",
                       }}
                     >
                       {formatTaskTitle(task.title)}
@@ -234,36 +251,36 @@ export default function HomePage() {
                       style={{
                         fontFamily: "Inter, sans-serif",
                         fontSize: 13,
-                        color: "#7A9BB5",
+                        color: "var(--text-secondary)",
                         lineHeight: 1.5,
                         marginBottom: 16,
                         display: "-webkit-box",
                         WebkitLineClamp: 2,
                         WebkitBoxOrient: "vertical",
-                        overflow: "hidden"
+                        overflow: "hidden",
                       }}
                     >
                       {formatTaskDescription(task.description)}
                     </p>
 
-                    <div className="flex items-center justify-between pt-3" style={{ borderTop: "1px solid #162334" }}>
+                    <div className="flex items-center justify-between pt-3" style={{ borderTop: "1px solid var(--border)" }}>
                       <div
                         style={{
                           fontFamily: "JetBrains Mono, monospace",
                           fontSize: 10,
-                          color: "#3D5A73"
+                          color: "var(--text-muted)",
                         }}
                         className="flex items-center gap-2"
                       >
                         <UserDisplay address={task.client} showAvatar={true} avatarSize={22} className="min-w-0" />
-                        <span>·</span>
+                        <span>|</span>
                         <span>{formatDeadline(task.deadline)}</span>
                       </div>
                       <span
                         style={{
                           fontFamily: "JetBrains Mono, monospace",
                           fontSize: 10,
-                          color: "#3D5A73"
+                          color: "var(--text-muted)",
                         }}
                       >
                         {task.submissionCount} submission{task.submissionCount !== 1 ? "s" : ""}

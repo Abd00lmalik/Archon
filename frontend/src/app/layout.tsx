@@ -13,6 +13,7 @@ import "@fontsource/jetbrains-mono/500.css";
 import "@fontsource/jetbrains-mono/600.css";
 import "./globals.css";
 import { Providers } from "@/app/providers";
+import { AppInit } from "@/components/app-init";
 import { GlobalOverlays } from "@/components/global-overlays";
 import { NavBar } from "@/components/nav-bar";
 import { ThemeInit } from "@/components/theme-init";
@@ -36,6 +37,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       <body className="min-h-screen bg-[var(--base)] font-body text-[var(--text-primary)]">
         <ThemeInit />
         <WalletInit />
+        <AppInit />
         <Providers>
           <NavBar />
           <main className="min-h-[calc(100vh-120px)]">{children}</main>

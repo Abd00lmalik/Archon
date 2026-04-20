@@ -39,7 +39,6 @@ import {
   txClaimJobCredential,
   txFinalizeWinners,
   txRespondToSubmission,
-  txAutoStartReveal,
   txSelectFinalists,
   txSubmitDeliverable,
   ZERO_ADDRESS
@@ -49,7 +48,22 @@ import { useWallet } from "@/lib/wallet-context";
 type ViewMode = "signal" | "list" | "timeline";
 
 function errorText(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback;
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "object" && error !== null && "message" in error
+        ? String((error as { message?: unknown }).message ?? fallback)
+        : fallback;
+
+  if (message.includes("missing revert data") || message.includes("CALL_EXCEPTION")) {
+    return (
+      "Transaction reverted. Possible causes: deadline has not passed yet, wrong task status, " +
+      "or this function does not exist in the deployed contract version. Raw error: " +
+      message
+    );
+  }
+
+  return message;
 }
 
 function parseUsdcInput(value: string): bigint | null {
@@ -809,8 +823,19 @@ export default function JobDetailsPage() {
     }
     try {
       setBusyAction("autoReveal");
-      const txHash = await txAutoStartReveal(signer, BigInt(jobId));
-      setStatusMessage(`Auto reveal tx: ${txHash}`);
+      const allAgents = [
+        ...new Set(
+          safeSubmissions
+            .map((submission) => submission.agent)
+            .filter((agent) => agent && agent.toLowerCase() !== ZERO_ADDRESS.toLowerCase())
+        )
+      ];
+      console.log("[autoReveal] Calling selectFinalists with:", allAgents);
+      if (!allAgents.length) {
+        throw new Error("No valid submissions available to promote.");
+      }
+      const txHash = await txSelectFinalists(signer, BigInt(jobId), allAgents);
+      setStatusMessage(`Reveal phase started via selectFinalists: ${txHash}`);
       await loadTask();
       await loadHeatmap();
     } catch (error) {
@@ -876,8 +901,8 @@ export default function JobDetailsPage() {
     job &&
       submissionDeadlinePassed &&
       (job.status === 0 || job.status === 1 || job.status === 2) &&
-      job.submissionCount > 0 &&
-      job.submissionCount <= maxApprovals + 5 &&
+      safeSubmissions.length > 0 &&
+      safeSubmissions.length <= maxApprovals + 5 &&
       selectedFinalists.length === 0
   );
   const nowSeconds = Math.floor(Date.now() / 1000);
@@ -1151,13 +1176,19 @@ export default function JobDetailsPage() {
           ) : null}
 
           {canAutoReveal ? (
-            <div className="border p-4" style={{ borderColor: "#00E5FF60", background: "rgba(0,229,255,0.04)" }}>
+            <div
+              className="border p-4"
+              style={{
+                borderColor: "color-mix(in srgb, var(--arc) 35%, transparent)",
+                background: "color-mix(in srgb, var(--arc) 8%, transparent)"
+              }}
+            >
               <div
                 style={{
                   fontFamily: "Space Grotesk, sans-serif",
                   fontWeight: 600,
                   fontSize: 14,
-                  color: "#E8F4FD",
+                  color: "var(--text-primary)",
                   marginBottom: 8
                 }}
               >
@@ -1167,14 +1198,14 @@ export default function JobDetailsPage() {
                 style={{
                   fontFamily: "Inter, sans-serif",
                   fontSize: 12,
-                  color: "#7A9BB5",
+                  color: "var(--text-secondary)",
                   marginBottom: 12,
                   lineHeight: 1.5
                 }}
               >
-                This task has {job.submissionCount} submission{job.submissionCount !== 1 ? "s" : ""} - under the{" "}
-                {maxApprovals + 5} finalist threshold. All submissions will become finalists and the 5-day reveal
-                phase will begin.
+                This task has {safeSubmissions.length} submission{safeSubmissions.length !== 1 ? "s" : ""} - under
+                the {maxApprovals + 5} finalist threshold. The deployed contract does not expose autoStartReveal, so
+                Archon will call selectFinalists with every valid submission and begin the reveal phase that way.
               </div>
               <button
                 type="button"

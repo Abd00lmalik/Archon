@@ -28,6 +28,8 @@ export interface ActivityEvent {
 }
 
 let _initialized = false;
+let _historyLoaded = false;
+let _historyLoading = false;
 let _cleanupFns: Array<() => void> = [];
 let _timeagoTimer: ReturnType<typeof setInterval> | null = null;
 const _events: ActivityEvent[] = [];
@@ -83,12 +85,15 @@ async function _checkIsAgent(identityContract: Contract, address: string): Promi
 }
 
 async function _loadRecentHistory(jobContract: Contract, identityContract: Contract) {
+  if (_historyLoading) return;
+  _historyLoading = true;
   console.log("[activity] Loading history...");
   const provider = getReadProvider();
   const merged: ActivityEvent[] = [];
 
-  // Approach 1: query logs (fastest when RPC supports it)
   try {
+    // Approach 1: query logs (fastest when RPC supports it)
+    try {
     const latest = await provider.getBlockNumber();
     const fromBlock = Math.max(0, latest - 5000);
     console.log("[activity] Querying events from block", fromBlock, "to", latest);
@@ -177,21 +182,28 @@ async function _loadRecentHistory(jobContract: Contract, identityContract: Contr
         timeAgo: _timeAgo(timestamp)
       });
     }
-  } catch (err) {
-    console.warn("[activity] Event log query failed:", err);
-  }
+    } catch (err) {
+      console.warn("[activity] Event log query failed:", err);
+    }
 
-  // Approach 2: direct state fallback if logs are sparse/unavailable
-  try {
-    const stateReader = new Contract(
-      contractsJson.contracts.jobContract.address,
-      [
-        "function totalJobs() view returns (uint256)",
-        "function nextJobId() view returns (uint256)",
-        "function getJob(uint256) view returns (tuple(uint256 jobId,address client,string title,string description,uint256 deadline,uint256 rewardUSDC,uint256 createdAt,uint256 acceptedCount,uint256 submissionCount,uint256 approvedCount,uint256 claimedCount,uint256 paidOutUSDC,bool refunded,uint8 status))"
-      ],
-      provider
-    );
+    // Approach 2: direct state fallback if logs are sparse/unavailable
+    try {
+      const contracts = (contractsJson as { contracts?: Record<string, { address?: string }> }).contracts ?? {};
+      const jobAddress =
+        contracts.jobContract?.address ?? contracts.job?.address ?? contracts.erc8183Job?.address ?? ZERO;
+      if (!jobAddress || jobAddress === ZERO) {
+        throw new Error("Job contract not configured");
+      }
+
+      const stateReader = new Contract(
+        jobAddress,
+        [
+          "function totalJobs() view returns (uint256)",
+          "function nextJobId() view returns (uint256)",
+          "function getJob(uint256) view returns (tuple(uint256 jobId,address client,string title,string description,uint256 deadline,uint256 rewardUSDC,uint256 createdAt,uint256 acceptedCount,uint256 submissionCount,uint256 approvedCount,uint256 claimedCount,uint256 paidOutUSDC,bool refunded,uint8 status))"
+        ],
+        provider
+      );
 
     let total = 0;
     try {
@@ -243,21 +255,25 @@ async function _loadRecentHistory(jobContract: Contract, identityContract: Contr
         // ignore missing IDs
       }
     }
-  } catch (err) {
-    console.warn("[activity] State read failed:", err);
+    } catch (err) {
+      console.warn("[activity] State read failed:", err);
+    }
+
+    merged
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(0, MAX_EVENTS)
+      .reverse()
+      .forEach((event) => {
+        event.timeAgo = _timeAgo(event.timestamp);
+        _addEvent(event);
+      });
+
+    _historyLoaded = true;
+    console.log("[activity] History loaded:", _events.length, "events");
+    _notify();
+  } finally {
+    _historyLoading = false;
   }
-
-  merged
-    .sort((a, b) => b.timestamp - a.timestamp)
-    .slice(0, MAX_EVENTS)
-    .reverse()
-    .forEach((event) => {
-      event.timeAgo = _timeAgo(event.timestamp);
-      _addEvent(event);
-    });
-
-  console.log("[activity] History loaded:", _events.length, "events");
-  _notify();
 }
 
 export function subscribeToActivity(fn: (events: ActivityEvent[]) => void): () => void {
@@ -270,13 +286,47 @@ export function subscribeToActivity(fn: (events: ActivityEvent[]) => void): () =
 }
 
 export function initActivityFeed() {
-  if (_initialized) return;
+  if (_initialized) {
+    if (!_historyLoaded && !_historyLoading) {
+      const contracts = (contractsJson as { contracts?: Record<string, { address?: string }> }).contracts ?? {};
+      const jobAddress =
+        contracts.jobContract?.address ?? contracts.job?.address ?? contracts.erc8183Job?.address ?? ZERO;
+      if (jobAddress && jobAddress !== ZERO) {
+        const provider = getReadProvider();
+        const jobContract = new Contract(
+          jobAddress,
+          [
+            "event JobCreated(uint256 indexed jobId, address indexed client, string title, string description, uint256 deadline, uint256 rewardUSDC)",
+            "event DeliverableSubmitted(uint256 indexed jobId, address indexed agent, string deliverableLink)",
+            "event CredentialClaimed(uint256 indexed jobId, address indexed agent, uint256 credentialRecordId, uint256 weight)"
+          ],
+          provider
+        );
+        const identityContract = new Contract(
+          "0x8004A818BFB912233c491871b3d84c89A494BD9e",
+          [
+            "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)",
+            "function balanceOf(address owner) view returns (uint256)"
+          ],
+          provider
+        );
+        void _loadRecentHistory(jobContract, identityContract);
+      }
+    }
+    return;
+  }
   _initialized = true;
 
   const provider = getReadProvider();
-  const addresses = contractsJson.contracts;
+  const addresses = (contractsJson as { contracts?: Record<string, { address?: string }> }).contracts ?? {};
+  const jobAddress =
+    addresses.jobContract?.address ?? addresses.job?.address ?? addresses.erc8183Job?.address ?? ZERO;
+  if (!jobAddress || jobAddress === ZERO) {
+    console.warn("[activity] No job contract configured");
+    return;
+  }
   const jobContract = new Contract(
-    addresses.jobContract.address,
+    jobAddress,
     [
       "event JobCreated(uint256 indexed jobId, address indexed client, string title, string description, uint256 deadline, uint256 rewardUSDC)",
       "event JobAccepted(uint256 indexed jobId, address indexed agent)",
@@ -517,4 +567,6 @@ export function stopActivityFeed() {
   _cleanupFns.forEach((fn) => fn());
   _cleanupFns = [];
   _initialized = false;
+  _historyLoaded = false;
+  _historyLoading = false;
 }

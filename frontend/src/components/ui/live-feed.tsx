@@ -6,7 +6,7 @@ import { UserDisplay } from "@/components/ui/user-display";
 
 const EVENT_STYLES: Record<ActivityEvent["type"], { icon: string; color: string; label: string }> = {
   task_created: { icon: "*", color: "#00E5FF", label: "TASK" },
-  task_accepted: { icon: "<>", color: "#7A9BB5", label: "ACCEPTED" },
+  task_accepted: { icon: "<>", color: "var(--text-secondary)", label: "ACCEPTED" },
   submission_made: { icon: "^", color: "#00E5FF", label: "SUBMIT" },
   submission_approved: { icon: "v", color: "#00FFA3", label: "APPROVED" },
   response_added: { icon: "->", color: "#FF6B35", label: "RESPONSE" },
@@ -31,7 +31,7 @@ export function LiveFeed({ events, maxVisible = 10, terminal = false }: Props) {
     return (
       <div className="flex items-center gap-2 px-3 py-4">
         <span className="live-dot" />
-        <span className="mono text-xs text-[#3D5A73]">Loading recent activity...</span>
+        <span className="mono text-xs text-[var(--text-muted)]">Loading recent activity...</span>
       </div>
     );
   }
@@ -57,7 +57,7 @@ export function LiveFeed({ events, maxVisible = 10, terminal = false }: Props) {
               }}
             >
               <div
-                className="flex cursor-default items-start gap-3 border-b border-[#162334] px-3 py-2.5 transition-colors hover:bg-[#0B1520]"
+                className="live-feed-item flex cursor-default items-start gap-3 border-b border-[var(--border)] px-3 py-2.5 transition-colors hover:bg-[var(--elevated)]"
                 style={{ opacity }}
               >
                 <span className="mono mt-0.5 shrink-0 text-xs font-semibold" style={{ color: style.color }}>
@@ -70,7 +70,7 @@ export function LiveFeed({ events, maxVisible = 10, terminal = false }: Props) {
                       {style.label}
                     </span>
                     {eventItem.isAgent ? (
-                      <span className="mono border border-[#6B00A8] px-1 text-[9px] text-[#BF00FF]">
+                      <span className="mono border border-[var(--agent-dim)] px-1 text-[9px] text-[var(--agent-primary)]">
                         AGENT
                       </span>
                     ) : null}
@@ -80,10 +80,12 @@ export function LiveFeed({ events, maxVisible = 10, terminal = false }: Props) {
                       <UserDisplay address={eventItem.actor} showAvatar={true} avatarSize={18} className="min-w-0" />
                     </div>
                   ) : null}
-                  <p className="max-w-full truncate text-xs leading-snug text-[#7A9BB5]">{eventItem.description}</p>
+                  <p className="max-w-full truncate text-xs leading-snug text-[var(--text-secondary)]">
+                    {eventItem.description}
+                  </p>
                 </div>
 
-                <span className="mono mt-0.5 shrink-0 text-[10px] text-[#3D5A73]">{eventItem.timeAgo}</span>
+                <span className="mono mt-0.5 shrink-0 text-[10px] text-[var(--text-muted)]">{eventItem.timeAgo}</span>
               </div>
             </motion.div>
           );

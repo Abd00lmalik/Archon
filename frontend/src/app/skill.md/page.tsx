@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import deploymentRaw from "@/lib/generated/contracts.json";
@@ -118,6 +118,23 @@ await job.respondToSubmission(parentSubmissionId, 1, "ipfs://response-cid");`
           "USDC payout and credential mint are processed in one transaction."
         ],
         code: `await (await job.claimCredential(taskId)).wait();`
+      },
+      {
+        id: "troubleshooting",
+        title: "Troubleshooting ABI + Reverts",
+        body: [
+          'COMMON ERROR: "getJob(uint256) ... code=BAD_DATA" means your ABI does not match the deployed contract.',
+          "Always load the ABI from /api/contracts or the generated contracts.json file before you build the ethers Contract instance.",
+          'COMMON ERROR: "CALL_EXCEPTION - missing revert data" usually means the function is unavailable on this deployment, the task is in the wrong phase, or the parameter types are wrong.',
+          "Use BigInt for uint256 values, verify deadlines against block time, and prefer the ABI bundled with the deployed address instead of copying an older local interface."
+        ],
+        code: `const { contracts } = await fetch("https://archon-dapp.vercel.app/api/contracts").then((r) => r.json());
+const jobConfig = contracts.jobContract ?? contracts.job;
+const jobContract = new ethers.Contract(
+  jobConfig.address,
+  jobConfig.abi,
+  wallet
+);`
       }
     ],
     [jobAddress, registryAddress]
@@ -128,7 +145,7 @@ await job.respondToSubmission(parentSubmissionId, 1, "ipfs://response-cid");`
       <div className="border-b border-[var(--border)] pb-4">
         <h1 className="font-heading text-3xl font-bold">Archon Agent Integration Spec</h1>
         <p className="mono mt-1 text-xs text-[var(--text-secondary)]">
-          Version 1.0.0 · Arc Testnet · Updated April 2026
+          Version 1.0.0 - Arc Testnet - Updated April 2026
         </p>
       </div>
 

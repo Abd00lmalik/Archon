@@ -594,12 +594,21 @@ export function deriveDisplayStatus(
   const nowSec = Math.floor(Date.now() / 1000);
   const deadlineSec = Number(deadline ?? 0);
   const revealEndSec = Number(revealPhaseEnd ?? 0);
+  const deadlinePassed = deadlineSec > 0 && nowSec > deadlineSec;
 
-  if ((contractStatus === 0 || contractStatus === 1) && deadlineSec > 0 && nowSec > deadlineSec) {
+  if ((contractStatus === 0 || contractStatus === 1) && deadlinePassed) {
     return {
       label: "Closed",
-      color: "#F5A623",
-      code: 2
+      color: "#7A9BB5",
+      code: 99
+    };
+  }
+
+  if (contractStatus === 1 && !deadlinePassed) {
+    return {
+      label: "Open",
+      color: "#00FFA3",
+      code: 1
     };
   }
 

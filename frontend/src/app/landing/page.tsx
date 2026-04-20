@@ -204,26 +204,22 @@ function AnimatedStat({
   label,
   accent
 }: {
-  value: number | string | null;
+  value: number | string;
   label: string;
   accent: string;
 }) {
-  const [displayed, setDisplayed] = useState<string>("—");
+  const [displayed, setDisplayed] = useState<string>("0");
 
   useEffect(() => {
-    if (value === null || value === undefined) {
-      setDisplayed("—");
-      return;
-    }
-
     const raw = String(value);
     const numeric = parseInt(raw.replace(/[^0-9]/g, ""), 10);
     const suffix = raw.replace(/^[\d,]+/, "");
 
     if (Number.isNaN(numeric)) {
-      setDisplayed(raw || "—");
+      setDisplayed(raw || "0");
       return;
     }
+
     if (numeric === 0) {
       setDisplayed(raw || "0");
       return;
@@ -235,7 +231,9 @@ function AnimatedStat({
       step += 1;
       const current = Math.min(Math.round((numeric * step) / steps), numeric);
       setDisplayed(`${current.toLocaleString()}${suffix}`);
-      if (step >= steps) window.clearInterval(timer);
+      if (step >= steps) {
+        window.clearInterval(timer);
+      }
     }, 1200 / steps);
 
     return () => window.clearInterval(timer);
@@ -262,7 +260,7 @@ function AnimatedStat({
           fontWeight: 600,
           letterSpacing: "0.1em",
           textTransform: "uppercase",
-          color: "#3D5A73",
+          color: "var(--text-muted)",
           marginTop: 4,
           fontFamily: "Space Grotesk, sans-serif"
         }}
@@ -315,7 +313,7 @@ function TerminalWindow() {
       style={{
         maxWidth: 680,
         background: "#0B1520",
-        border: "1px solid #1E3347",
+        border: "1px solid var(--border)",
         borderRadius: 8,
         overflow: "hidden",
         boxShadow: "0 24px 80px rgba(0,0,0,0.5)"
@@ -323,7 +321,7 @@ function TerminalWindow() {
     >
       <div
         className="flex items-center gap-2 px-4 py-3"
-        style={{ borderBottom: "1px solid #162334", background: "#060D14" }}
+        style={{ borderBottom: "1px solid var(--border)", background: "#060D14" }}
       >
         <div style={{ width: 10, height: 10, borderRadius: "50%", background: "#FF5F57" }} />
         <div style={{ width: 10, height: 10, borderRadius: "50%", background: "#FEBC2E" }} />
@@ -333,17 +331,14 @@ function TerminalWindow() {
             marginLeft: 8,
             fontFamily: "JetBrains Mono, monospace",
             fontSize: 11,
-            color: "#3D5A73"
+            color: "var(--text-muted)"
           }}
         >
           archon - zsh
         </span>
       </div>
 
-      <div
-        className="p-5"
-        style={{ minHeight: 220, fontFamily: "JetBrains Mono, monospace", fontSize: 13 }}
-      >
+      <div className="p-5" style={{ minHeight: 220, fontFamily: "JetBrains Mono, monospace", fontSize: 13 }}>
         {TERMINAL_LINES.map((line, index) =>
           visibleLines.includes(index) ? (
             <div
@@ -364,7 +359,7 @@ function TerminalWindow() {
             display: "inline-block",
             width: 8,
             height: 14,
-            background: "#00E5FF",
+            background: "var(--arc)",
             opacity: 0.8,
             animation: "blink 1s step-end infinite",
             verticalAlign: "text-bottom"
@@ -378,12 +373,12 @@ function TerminalWindow() {
 export default function LandingPage() {
   const [mounted, setMounted] = useState(false);
   const [stats, setStats] = useState<PlatformStats>({
-    totalCredentials: null,
-    totalUSDCEscrowed: null,
-    totalCreators: null,
-    totalAgents: null,
-    totalTasks: null,
-    totalSubmissions: null,
+    totalCredentials: 0,
+    totalUSDCEscrowed: "0",
+    totalCreators: 0,
+    totalAgents: 0,
+    totalTasks: 0,
+    totalSubmissions: 0,
     loading: true,
     error: null
   });
@@ -406,11 +401,7 @@ export default function LandingPage() {
   const statItems = useMemo(
     () => [
       { value: stats.totalCredentials, label: "Credentials Minted", accent: "#00FFA3" },
-      {
-        value: stats.totalUSDCEscrowed !== null ? `${stats.totalUSDCEscrowed} USDC` : null,
-        label: "Total Escrowed",
-        accent: "#F5A623"
-      },
+      { value: `${stats.totalUSDCEscrowed} USDC`, label: "Total Escrowed", accent: "#F5A623" },
       { value: stats.totalCreators, label: "Task Creators", accent: "#00E5FF" },
       { value: stats.totalAgents, label: "Agents Registered", accent: "#BF00FF" }
     ],
@@ -418,13 +409,12 @@ export default function LandingPage() {
   );
 
   return (
-    <div style={{ background: "#020608", minHeight: "100vh" }}>
-      <section className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-4 text-center">
+    <div style={{ background: "var(--base)", minHeight: "100vh", color: "var(--text-primary)" }}>
+      <section className="hero-section relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-4 text-center">
         <div
           className="pointer-events-none absolute inset-0"
           style={{
-            background:
-              "radial-gradient(ellipse 800px 500px at 50% 40%, rgba(0,229,255,0.04), transparent)"
+            background: "radial-gradient(ellipse 800px 500px at 50% 40%, rgba(0,229,255,0.04), transparent)"
           }}
         />
         <div
@@ -441,15 +431,12 @@ export default function LandingPage() {
             <div
               className="inline-flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-mono"
               style={{
-                borderColor: "rgba(0,229,255,0.3)",
-                background: "rgba(0,229,255,0.06)",
-                color: "#00E5FF"
+                borderColor: "color-mix(in srgb, var(--arc) 25%, transparent)",
+                background: "color-mix(in srgb, var(--arc) 8%, transparent)",
+                color: "var(--arc)"
               }}
             >
-              <span
-                className="h-1.5 w-1.5 animate-pulse rounded-full"
-                style={{ background: "#00FFA3" }}
-              />
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full" style={{ background: "var(--pulse)" }} />
               LIVE ON ARC TESTNET
             </div>
           </div>
@@ -460,14 +447,14 @@ export default function LandingPage() {
               fontWeight: 700,
               letterSpacing: "-0.03em",
               lineHeight: 1,
-              color: "#E8F4FD",
+              color: "var(--text-primary)",
               fontSize: "clamp(40px, 8vw, 88px)",
               marginBottom: "0.2em"
             }}
           >
             Where work is proven,
             <br />
-            <span style={{ color: "#00E5FF" }}>not promised.</span>
+            <span style={{ color: "var(--arc)" }}>not promised.</span>
           </h1>
 
           <p
@@ -475,7 +462,7 @@ export default function LandingPage() {
             style={{
               fontFamily: "Inter, sans-serif",
               fontSize: "clamp(16px, 2vw, 20px)",
-              color: "#7A9BB5",
+              color: "var(--text-secondary)",
               maxWidth: 540,
               margin: "24px auto 40px",
               lineHeight: 1.6
@@ -493,8 +480,8 @@ export default function LandingPage() {
                 alignItems: "center",
                 justifyContent: "center",
                 gap: 8,
-                background: "#00E5FF",
-                color: "#020608",
+                background: "var(--arc)",
+                color: "var(--void)",
                 fontFamily: "Space Grotesk, sans-serif",
                 fontWeight: 700,
                 fontSize: 15,
@@ -504,7 +491,7 @@ export default function LandingPage() {
                 transition: "box-shadow 0.15s, background 0.15s"
               }}
             >
-              Launch App →
+              {"Launch App ->"}
             </Link>
             <a
               href="#how-it-works"
@@ -514,14 +501,14 @@ export default function LandingPage() {
                 justifyContent: "center",
                 gap: 8,
                 background: "transparent",
-                color: "#E8F4FD",
+                color: "var(--text-primary)",
                 fontFamily: "Space Grotesk, sans-serif",
                 fontWeight: 500,
                 fontSize: 15,
                 padding: "13px 32px",
-                border: "1px solid rgba(255,255,255,0.15)",
+                border: "1px solid var(--border)",
                 textDecoration: "none",
-                transition: "border-color 0.15s"
+                transition: "border-color 0.15s, background 0.15s"
               }}
             >
               How it works
@@ -534,15 +521,27 @@ export default function LandingPage() {
             {mounted ? (
               <div className="flex flex-wrap justify-center gap-8">
                 {statItems.map((item) => (
-                  <AnimatedStat key={item.label} value={item.value} label={item.label} accent={item.accent} />
+                  <AnimatedStat
+                    key={item.label}
+                    value={stats.loading ? 0 : item.value}
+                    label={item.label}
+                    accent={item.accent}
+                  />
                 ))}
               </div>
             ) : (
               <div className="flex flex-wrap justify-center gap-12">
                 {[1, 2, 3, 4].map((index) => (
-                  <div key={index} style={{ borderLeft: "2px solid #1E3347", paddingLeft: 16 }}>
-                    <div style={{ width: 80, height: 32, background: "#1E3347", marginBottom: 4 }} />
-                    <div style={{ width: 60, height: 10, background: "#162334" }} />
+                  <div key={index} style={{ borderLeft: "2px solid var(--border-bright)", paddingLeft: 16 }}>
+                    <div
+                      style={{
+                        width: 80,
+                        height: 32,
+                        background: "var(--border-bright)",
+                        marginBottom: 4
+                      }}
+                    />
+                    <div style={{ width: 60, height: 10, background: "var(--border)" }} />
                   </div>
                 ))}
               </div>

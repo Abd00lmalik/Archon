@@ -42,7 +42,8 @@ export function NavBar() {
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3 }}
-        className="sticky top-0 z-50 h-14 border-b border-[var(--border)] bg-[rgba(6,13,20,0.95)] backdrop-blur-md"
+        className="sticky top-0 z-50 h-14 border-b border-[var(--border)] backdrop-blur-md"
+        style={{ background: "color-mix(in srgb, var(--surface) 94%, transparent)" }}
       >
         <div className="mx-auto flex h-full max-w-[1400px] items-center justify-between px-4">
           <Link href="/" className="flex items-center gap-2">

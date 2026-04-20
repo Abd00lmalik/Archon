@@ -341,9 +341,9 @@ export default function SignalMap({
       <div
         ref={wrapRef}
         className="flex w-full items-center justify-center"
-        style={{ minHeight: resolvedHeight, background: "#020608" }}
+        style={{ minHeight: resolvedHeight, background: "var(--surface)" }}
       >
-        <span style={{ color: "#3D5A73", fontFamily: "JetBrains Mono, monospace", fontSize: 12 }}>
+        <span style={{ color: "var(--text-muted)", fontFamily: "JetBrains Mono, monospace", fontSize: 12 }}>
           Loading signal map...
         </span>
       </div>
@@ -355,12 +355,12 @@ export default function SignalMap({
       <div
         ref={wrapRef}
         className="flex w-full flex-col items-center justify-center p-8 text-center"
-        style={{ minHeight: resolvedHeight, background: "#020608", border: "1px solid #162334" }}
+        style={{ minHeight: resolvedHeight, background: "var(--surface)", border: "1px solid var(--border)" }}
       >
-        <div style={{ color: "#3D5A73", fontFamily: "JetBrains Mono, monospace", fontSize: 12, marginBottom: 8 }}>
+        <div style={{ color: "var(--text-muted)", fontFamily: "JetBrains Mono, monospace", fontSize: 12, marginBottom: 8 }}>
           NO SIGNALS YET
         </div>
-        <div style={{ color: "#3D5A73", fontSize: 11, maxWidth: 300 }}>
+        <div style={{ color: "var(--text-muted)", fontSize: 11, maxWidth: 300 }}>
           The signal map activates during the reveal phase when participants begin building on and critiquing finalist
           submissions.
         </div>
@@ -373,7 +373,7 @@ export default function SignalMap({
       <div className="flex-1">
         <div
           className="mb-2 flex items-center gap-4 px-1"
-          style={{ fontSize: 10, fontFamily: "JetBrains Mono, monospace", color: "#3D5A73" }}
+          style={{ fontSize: 10, fontFamily: "JetBrains Mono, monospace", color: "var(--text-muted)" }}
         >
           <div className="flex items-center gap-1.5">
             <div style={{ width: 10, height: 10, background: "#00C851" }} />
@@ -394,12 +394,12 @@ export default function SignalMap({
 
         <div
           ref={wrapRef}
-          className="relative overflow-hidden"
+          className="signal-map-container relative overflow-hidden"
           style={{
             width: mapWidth,
             height: resolvedHeight,
-            background: "#020608",
-            border: "1px solid #162334"
+            background: "var(--surface)",
+            border: "1px solid var(--border)"
           }}
         >
           {items.map((item) => (
@@ -431,10 +431,10 @@ export default function SignalMap({
             transition={{ duration: 0.2 }}
             className="shrink-0 overflow-hidden"
             style={{
-              background: "#0B1520",
-              borderTop: "1px solid #162334",
-              borderRight: "1px solid #162334",
-              borderBottom: "1px solid #162334",
+              background: "var(--surface)",
+              borderTop: "1px solid var(--border)",
+              borderRight: "1px solid var(--border)",
+              borderBottom: "1px solid var(--border)",
               marginTop: 22
             }}
           >
@@ -444,7 +444,7 @@ export default function SignalMap({
                   style={{
                     fontSize: 10,
                     fontFamily: "JetBrains Mono, monospace",
-                    color: "#3D5A73",
+                    color: "var(--text-muted)",
                     fontWeight: 700,
                     letterSpacing: "0.1em"
                   }}
@@ -454,7 +454,7 @@ export default function SignalMap({
                 <button
                   type="button"
                   onClick={() => setSelected(null)}
-                  style={{ color: "#3D5A73", fontSize: 14 }}
+                  style={{ color: "var(--text-muted)", fontSize: 14 }}
                 >
                   {"\u2715"}
                 </button>
@@ -463,7 +463,7 @@ export default function SignalMap({
               <UserDisplay address={selected.address} showAvatar={true} avatarSize={40} className="mb-3" />
               <div
                 className="mb-4 break-all"
-                style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: "#3D5A73" }}
+                style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: "var(--text-muted)" }}
               >
                 {selected.address}
               </div>
@@ -485,7 +485,7 @@ export default function SignalMap({
                     style={{
                       fontFamily: "JetBrains Mono, monospace",
                       fontSize: 9,
-                      color: "#3D5A73",
+                      color: "var(--text-muted)",
                       letterSpacing: "0.08em"
                     }}
                   >
@@ -511,7 +511,7 @@ export default function SignalMap({
               >
                 View submissions by this participant
               </button>
-              <div className="mt-2 text-[9px] font-mono text-[#3D5A73]">
+              <div className="mt-2 text-[9px] font-mono text-[var(--text-muted)]">
                 Tip: click the same tile again to jump directly to their submissions.
               </div>
             </div>

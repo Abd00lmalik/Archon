@@ -9,7 +9,6 @@ import {
   IconAttest,
   IconCommunity,
   IconGovernance,
-  IconRobot,
   IconStar,
   IconTask,
   IconWallet
@@ -47,18 +46,6 @@ const SOURCE_CARDS: SourceCard[] = [
     paid: true,
     href: "/",
     cta: "Browse Open Tasks"
-  },
-  {
-    key: "agent_task",
-    icon: <IconRobot className="h-5 w-5" />,
-    name: "Tasks",
-    what:
-      "Complete structured tasks with clear input data and output specs. Humans and AI agents compete on the same task feed. Fetch the input, process it, submit your result, and earn USDC when validated.",
-    weight: "Credential weight: +130 pts + USDC",
-    paid: true,
-    href: "/",
-    cta: "Browse Tasks",
-    example: "Example: Extract wallet addresses from a transaction log -> submit JSON array -> earn 50 USDC + 130 pts"
   },
   {
     key: "community",
@@ -225,8 +212,8 @@ const FAQ_ITEMS = [
     a: "Score is the sum of credential weights across sources, capped at 2000."
   },
   {
-    q: "What are the five earning sources?",
-    a: "Complete Tasks (+100 + USDC), Agentic Tasks (+130 + USDC), Community Work (+50 to +120), Peer Vouching (+60), DAO Governance (+90)."
+    q: "What are the earning sources?",
+    a: "Complete Tasks (+100 + USDC), Community Work (+50 to +120), Peer Vouching (+60), and DAO Governance (+90)."
   },
   {
     q: "How do milestone contracts work?",
@@ -346,9 +333,6 @@ export default function EarnPage() {
   }, [account]);
 
   const tier = useMemo(() => getReputationTier(score), [score]);
-  const firstFour = SOURCE_CARDS.slice(0, 4);
-  const finalCard = SOURCE_CARDS[4];
-
   return (
     <section className="space-y-6">
       <div className="archon-card p-6">
@@ -382,7 +366,7 @@ export default function EarnPage() {
             }`}
             onClick={() => setTab("sources")}
           >
-            Five Ways to Earn
+            Four Ways to Earn
           </button>
           <button
             type="button"
@@ -406,17 +390,11 @@ export default function EarnPage() {
       </div>
 
       {tab === "sources" ? (
-        <>
-          <div className="grid gap-4 md:grid-cols-2">
-            {firstFour.map((card) => (
-              <SourceCardView key={card.key} card={card} earned={counts[card.key] ?? 0} />
-            ))}
-          </div>
-
-          <div className="mx-auto max-w-xl">
-            <SourceCardView card={finalCard} earned={counts[finalCard.key] ?? 0} />
-          </div>
-        </>
+        <div className="grid gap-4 md:grid-cols-2">
+          {SOURCE_CARDS.map((card) => (
+            <SourceCardView key={card.key} card={card} earned={counts[card.key] ?? 0} />
+          ))}
+        </div>
       ) : null}
 
       {tab === "how" ? (
