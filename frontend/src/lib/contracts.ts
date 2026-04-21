@@ -254,6 +254,14 @@ export type TaskEconomyRecord = {
   poolRemaining: bigint;
 };
 
+export type PendingReleaseRecord = {
+  responseId: bigint;
+  stakeAmount: bigint;
+  rewardAmount: bigint;
+  canReturnStake: boolean;
+  canClaimReward: boolean;
+};
+
 export const RESPONSE_TYPE = {
   BuildsOn: 0,
   Critiques: 1,
@@ -2366,119 +2374,6 @@ export async function txRespondToSubmission(
   return tx.hash;
 }
 
-export type Eip3009PaymentAuthorization = {
-  scheme: "eip3009-transfer-with-authorization";
-  network: "eip155:5042002";
-  from: string;
-  to: string;
-  value: string;
-  validAfter: number;
-  validBefore: number;
-  nonce: string;
-  v: number;
-  r: string;
-  s: string;
-  domain: {
-    name: string;
-    version: string;
-    chainId: number;
-    verifyingContract: string;
-  };
-};
-
-function contractHasFunction(contract: ethers.Contract, name: string): boolean {
-  try {
-    contract.interface.getFunction(name);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export async function txRespondWithNanopayment(
-  signer: ethers.JsonRpcSigner,
-  parentSubmissionId: bigint,
-  responseType: number,
-  contentURI: string,
-  stakeAmount = 2_000_000n
-): Promise<{ txHash: string; paymentAuth: Eip3009PaymentAuthorization }> {
-  const address = await signer.getAddress();
-  const jobContractAddress = getJobContractAddress();
-  const now = Math.floor(Date.now() / 1000);
-  const validAfter = now - 60;
-  const validBefore = now + 4 * 24 * 60 * 60;
-  const nonce = ethers.hexlify(ethers.randomBytes(32));
-  const domain = {
-    name: "USDC",
-    version: "2",
-    chainId: expectedChainId,
-    verifyingContract: contractAddresses.usdc || "0x3600000000000000000000000000000000000000"
-  };
-  const types = {
-    TransferWithAuthorization: [
-      { name: "from", type: "address" },
-      { name: "to", type: "address" },
-      { name: "value", type: "uint256" },
-      { name: "validAfter", type: "uint256" },
-      { name: "validBefore", type: "uint256" },
-      { name: "nonce", type: "bytes32" }
-    ]
-  };
-  const message = {
-    from: address,
-    to: jobContractAddress,
-    value: stakeAmount,
-    validAfter: BigInt(validAfter),
-    validBefore: BigInt(validBefore),
-    nonce
-  };
-
-  const signature = await signer.signTypedData(domain, types, message);
-  const { v, r, s } = ethers.Signature.from(signature);
-  const paymentAuth: Eip3009PaymentAuthorization = {
-    scheme: "eip3009-transfer-with-authorization",
-    network: "eip155:5042002",
-    from: address,
-    to: jobContractAddress,
-    value: stakeAmount.toString(),
-    validAfter,
-    validBefore,
-    nonce,
-    v,
-    r,
-    s,
-    domain
-  };
-
-  const contract = getJobContract(signer);
-  if (contractHasFunction(contract, "respondWithAuthorization")) {
-    try {
-      const tx = await contract.respondWithAuthorization(
-        parentSubmissionId,
-        responseType,
-        contentURI,
-        message.from,
-        message.to,
-        message.value,
-        message.validAfter,
-        message.validBefore,
-        message.nonce,
-        v,
-        r,
-        s
-      );
-      await tx.wait();
-      return { txHash: tx.hash, paymentAuth };
-    } catch (error) {
-      console.warn("[nanopayment] respondWithAuthorization failed; falling back to approve+respond", error);
-    }
-  }
-
-  await approveUSDC(signer, jobContractAddress, stakeAmount);
-  const txHash = await txRespondToSubmission(signer, parentSubmissionId, responseType, contentURI);
-  return { txHash, paymentAuth };
-}
-
 export async function txReturnStake(signer: ethers.JsonRpcSigner, responseId: bigint): Promise<string> {
   const contract = getJobContract(signer);
   const tx = await contract.returnResponseStake(responseId);
@@ -2538,6 +2433,78 @@ export async function fetchTaskEconomy(
       poolRemaining: 0n
     };
   }
+}
+
+export async function fetchPendingReleases(
+  provider: ethers.BrowserProvider | ethers.JsonRpcProvider,
+  taskId: number,
+  walletAddress: string
+): Promise<PendingReleaseRecord[]> {
+  if (!walletAddress) return [];
+  const contract = getJobContract(provider);
+  const wallet = walletAddress.toLowerCase();
+  const pending: PendingReleaseRecord[] = [];
+
+  try {
+    const [jobRaw, finalistsRaw, economy] = await Promise.all([
+      contract.getJob(taskId).catch(() => null),
+      contract.getSelectedFinalists(taskId).catch(() => []),
+      fetchTaskEconomy(provider, taskId)
+    ]);
+    const finalists = Array.from(finalistsRaw as string[]);
+    const jobTuple = Array.isArray(jobRaw) ? jobRaw : [];
+    const jobObject = (jobRaw && typeof jobRaw === "object" ? jobRaw : {}) as Record<string, unknown>;
+    const deadline = Number(jobObject.deadline ?? jobTuple[4] ?? 0);
+    const canManuallyReturnStake = deadline > 0 && Math.floor(Date.now() / 1000) > deadline + 7 * 24 * 60 * 60;
+
+    for (const finalist of finalists) {
+      try {
+        const rawSubmission = await contract.getSubmission(taskId, finalist);
+        const submission = parseSubmission(rawSubmission);
+        const responseIds = Array.from((await contract.getSubmissionResponses(BigInt(submission.submissionId))) as Array<bigint | number>);
+
+        for (const responseIdLike of responseIds) {
+          try {
+            const raw = (await contract.getResponse(responseIdLike)) as Record<string, unknown> & unknown[];
+            const responder = toString(raw.responder ?? raw[3]).toLowerCase();
+            if (responder !== wallet) continue;
+
+            const responseId = toBigInt(raw.responseId ?? raw[0] ?? responseIdLike);
+            const stakeAmount = toBigInt(raw.stakedAmount ?? raw[6] ?? 0n);
+            const stakeSlashed = toBoolean(raw.stakeSlashed ?? raw[8] ?? false);
+            const stakeReturned = toBoolean(raw.stakeReturned ?? raw[9] ?? false);
+            const interactionRewardClaimed = toBoolean(raw.interactionRewardClaimed ?? raw[10] ?? false);
+
+            if (stakeSlashed) continue;
+            const canClaimReward =
+              !interactionRewardClaimed &&
+              economy.interactionPool > 0n &&
+              economy.interactionReward > 0n &&
+              economy.poolRemaining >= economy.interactionReward;
+            const canReturnStake = !stakeReturned && stakeAmount > 0n && (canClaimReward || canManuallyReturnStake);
+
+            if (canClaimReward || canReturnStake) {
+              pending.push({
+                responseId,
+                stakeAmount: canReturnStake ? stakeAmount : 0n,
+                rewardAmount: canClaimReward ? economy.interactionReward : 0n,
+                canReturnStake,
+                canClaimReward
+              });
+            }
+          } catch {
+            // Skip unreadable response rows.
+          }
+        }
+      } catch {
+        // Skip finalists with missing submission rows.
+      }
+    }
+  } catch (error) {
+    console.warn("[releases] pending release scan failed:", error);
+  }
+
+  return pending;
 }
 
 export async function txAwardCommunityActivity(

@@ -5,20 +5,6 @@ import {ICredentialHook} from "./interfaces/ICredentialHook.sol";
 import {ICredentialSource} from "./interfaces/ICredentialSource.sol";
 import {IERC20Minimal} from "./interfaces/IERC20Minimal.sol";
 
-interface IERC3009 {
-    function transferWithAuthorization(
-        address from,
-        address to,
-        uint256 value,
-        uint256 validAfter,
-        uint256 validBefore,
-        bytes32 nonce,
-        uint8 v,
-        bytes32 r,
-        bytes32 s
-    ) external;
-}
-
 contract ERC8183Job is ICredentialSource {
     enum JobStatus {
         Open,
@@ -196,12 +182,6 @@ contract ERC8183Job is ICredentialSource {
     );
     event StakeSlashed(uint256 indexed responseId, address indexed responder, uint256 amount);
     event StakeReturned(uint256 indexed responseId, address indexed responder, uint256 amount);
-    event InteractionAuthorizationUsed(
-        uint256 indexed responseId,
-        address indexed responder,
-        uint256 amount,
-        bytes32 nonce
-    );
     event FinalistsSelected(uint256 indexed jobId, address[] agents, uint256 revealEndsAt);
     event WinnersFinalized(
         uint256 indexed jobId,
@@ -791,31 +771,6 @@ contract ERC8183Job is ICredentialSource {
         require(usdc.transferFrom(msg.sender, address(this), stake), "stake transfer failed");
 
         return _createResponse(parentSubmissionId, responseType, contentURI, msg.sender, stake);
-    }
-
-    function respondWithAuthorization(
-        uint256 parentSubmissionId,
-        ResponseType responseType,
-        string memory contentURI,
-        address from,
-        address to,
-        uint256 value,
-        uint256 validAfter,
-        uint256 validBefore,
-        bytes32 nonce,
-        uint8 v,
-        bytes32 r,
-        bytes32 s
-    ) external nonReentrant returns (uint256 responseId) {
-        uint256 stake = _requiredInteractionStake(submissionIdToTaskId[parentSubmissionId]);
-        require(to == address(this), "wrong recipient");
-        require(value >= stake, "stake too small");
-
-        IERC3009(address(usdc)).transferWithAuthorization(from, to, value, validAfter, validBefore, nonce, v, r, s);
-
-        responseId = _createResponse(parentSubmissionId, responseType, contentURI, from, value);
-        emit InteractionAuthorizationUsed(responseId, from, value, nonce);
-        return responseId;
     }
 
     function _requiredInteractionStake(uint256 taskId) internal view returns (uint256) {

@@ -11,6 +11,7 @@ import {
   SubmissionRecord,
   ZERO_ADDRESS
 } from "@/lib/contracts";
+import { DecodedInteraction, decodeInteractionContent } from "@/lib/content-decoder";
 import { PersonSignal, TaskHeatmap } from "@/lib/signal-map";
 import { getProfile } from "@/lib/user-profiles";
 
@@ -31,10 +32,12 @@ type ParsedInteraction = {
   responder: string;
   responseType: "builds_on" | "critiques" | "alternative";
   contentURI: string;
-  parsedContent: Record<string, string>;
+  decoded: DecodedInteraction;
   stakedAmount: bigint;
   createdAt: number;
   stakeSlashed: boolean;
+  stakeReturned: boolean;
+  interactionRewardClaimed: boolean;
 };
 
 type SubmissionDetail = {
@@ -199,17 +202,6 @@ function MiniSignalBar({ buildsOn, critiques }: { buildsOn: number; critiques: n
   );
 }
 
-function decodeContentURI(uri: string): Record<string, string> {
-  if (!uri.startsWith("data:application/json;base64,")) return {};
-  try {
-    const decoded = atob(uri.split(",")[1] ?? "");
-    const parsed = JSON.parse(decoded) as Record<string, unknown>;
-    return Object.fromEntries(Object.entries(parsed).map(([key, value]) => [key, String(value)]));
-  } catch {
-    return {};
-  }
-}
-
 async function fetchSubmissionDetail(
   person: PersonSignal,
   taskId: number,
@@ -261,10 +253,12 @@ async function fetchSubmissionDetail(
           responder,
           responseType: rawType === 0 ? "builds_on" : rawType === 1 ? "critiques" : "alternative",
           contentURI,
-          parsedContent: decodeContentURI(contentURI),
+          decoded: decodeInteractionContent(contentURI, rawType),
           stakedAmount: BigInt(String(raw.stakedAmount ?? raw[6] ?? 0)),
           createdAt: Number(raw.createdAt ?? raw[7] ?? 0),
-          stakeSlashed: Boolean(raw.stakeSlashed ?? raw[8] ?? false)
+          stakeSlashed: Boolean(raw.stakeSlashed ?? raw[8] ?? false),
+          stakeReturned: Boolean(raw.stakeReturned ?? raw[9] ?? false),
+          interactionRewardClaimed: Boolean(raw.interactionRewardClaimed ?? raw[10] ?? false)
         });
       } catch {
         // Skip malformed response rows.
@@ -281,12 +275,14 @@ function PersonBox({
   item,
   isTop,
   isSelected,
-  onClick
+  onClick,
+  onDoubleClick
 }: {
   item: TreemapItem;
   isTop: boolean;
   isSelected: boolean;
   onClick: () => void;
+  onDoubleClick: () => void;
 }) {
   const { person, rect } = item;
   const profile = getProfile(person.address);
@@ -306,6 +302,7 @@ function PersonBox({
       animate={{ opacity: 1 }}
       transition={{ duration: 0.3 }}
       onClick={onClick}
+      onDoubleClick={onDoubleClick}
       className="absolute overflow-hidden text-left"
       style={{
         left: rect.x + 1,
@@ -462,16 +459,18 @@ function SubmissionDetailPanel({
       animate={{ width: 380, opacity: 1 }}
       exit={{ width: 0, opacity: 0 }}
       transition={{ duration: 0.2 }}
-      className="shrink-0 overflow-hidden"
+      className="tile-detail-panel shrink-0 overflow-hidden"
       style={{
         background: "var(--surface)",
         borderTop: "1px solid var(--border)",
         borderRight: "1px solid var(--border)",
         borderBottom: "1px solid var(--border)",
-        marginTop: 22
+        marginTop: 22,
+        maxHeight: "calc(100vh - 120px)",
+        overflowY: "auto"
       }}
     >
-      <div style={{ width: 380, maxHeight: "calc(100vh - 160px)", overflowY: "auto" }}>
+      <div style={{ width: 380, maxWidth: "100%", overflowY: "auto" }}>
         <div className="flex items-start justify-between border-b border-[var(--border)] px-5 py-4">
           <div>
             <div className="font-heading text-[15px] font-bold text-[var(--text-primary)]">Submission Detail</div>
@@ -527,7 +526,7 @@ function SubmissionDetailPanel({
           {loading ? <div className="text-xs text-[var(--text-muted)]">Loading interactions...</div> : null}
 
           {!loading && (!detail?.responses || detail.responses.length === 0) ? (
-            <div className="text-xs text-[var(--text-muted)]">No critiques or build-ons yet.</div>
+            <div className="text-xs text-[var(--text-muted)]">No critiques or build-ons yet. Reveal phase is open.</div>
           ) : null}
 
           {detail?.responses.map((response) => {
@@ -538,12 +537,19 @@ function SubmissionDetailPanel({
                 : response.responseType === "critiques"
                   ? "CRITIQUE"
                   : "ALTERNATIVE";
-            const evidence = response.parsedContent.evidence ?? response.parsedContent.extension ?? "";
+            const evidence = response.decoded.evidence ?? "";
+            const status = response.stakeSlashed
+              ? "Slashed"
+              : response.stakeReturned
+                ? "Stake Returned"
+                : response.interactionRewardClaimed
+                  ? "Reward Claimed"
+                  : "Active";
 
             return (
               <div
                 key={response.responseId.toString()}
-                className="mb-3 p-3"
+                className="mb-3 max-w-full break-words p-3"
                 style={{
                   border: `1px solid ${color}40`,
                   background: `${color}08`
@@ -562,9 +568,10 @@ function SubmissionDetailPanel({
 
                 <UserDisplay address={response.responder} showAvatar={true} avatarSize={16} />
 
-                {response.parsedContent.summary ? (
-                  <div className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">
-                    {response.parsedContent.summary}
+                <div className="mt-3 text-[10px] font-mono tracking-[0.08em] text-[var(--text-muted)]">CONTENT</div>
+                {response.decoded.content ? (
+                  <div className="mt-1 max-w-full break-words text-xs leading-5 text-[var(--text-secondary)]">
+                    {response.decoded.content}
                   </div>
                 ) : response.contentURI ? (
                   <a
@@ -595,8 +602,9 @@ function SubmissionDetailPanel({
                     <span>{new Date(response.createdAt * 1000).toLocaleDateString()}</span>
                   ) : null}
                 </div>
+                <div className="mt-1 font-mono text-[10px] text-[var(--text-muted)]">Status: {status}</div>
 
-                {isCreator && !response.stakeSlashed && onSlashResponse ? (
+                {isCreator && !response.stakeSlashed && !response.stakeReturned && onSlashResponse ? (
                   <button
                     type="button"
                     onClick={() => void onSlashResponse(response.responseId)}
@@ -693,7 +701,7 @@ export default function SignalMap({
   }
 
   return (
-    <div className="flex gap-0">
+    <div className="signal-map-wrapper flex gap-0 overflow-hidden" style={{ height: resolvedHeight }}>
       <div className="flex-1">
         <div
           className="mb-2 flex items-center gap-4 px-1"
@@ -722,6 +730,7 @@ export default function SignalMap({
           style={{
             width: mapWidth,
             height: resolvedHeight,
+            maxHeight: resolvedHeight,
             background: "var(--surface)",
             border: "1px solid var(--border)"
           }}
@@ -733,6 +742,7 @@ export default function SignalMap({
               isTop={item.person.address.toLowerCase() === topAddress}
               isSelected={selected?.address.toLowerCase() === item.person.address.toLowerCase()}
               onClick={() => setSelected(item.person)}
+              onDoubleClick={() => setSelected({ ...item.person })}
             />
           ))}
         </div>

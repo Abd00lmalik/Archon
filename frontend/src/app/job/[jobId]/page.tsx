@@ -7,6 +7,7 @@ import SignalMap from "@/components/signal-map";
 import { UserDisplay } from "@/components/ui/user-display";
 import { buildTaskHeatmap, TaskHeatmap } from "@/lib/signal-map";
 import {
+  approveUSDC,
   deriveDisplayStatus,
   expectedChainId,
   fetchApprovedAgentCount,
@@ -17,6 +18,7 @@ import {
   fetchJobsCreatedCount,
   fetchLastJobCredentialClaim,
   fetchMaxApprovalsForJob,
+  fetchPendingReleases,
   fetchRevealPhaseEnd,
   fetchSelectedFinalists,
   fetchSubmissionForAgent,
@@ -26,6 +28,7 @@ import {
   formatTaskTitle,
   formatTimestamp,
   formatUsdc,
+  getJobContractAddress,
   getJobContract,
   getJobReadContract,
   getReadProvider,
@@ -33,17 +36,20 @@ import {
   isValidSubmission,
   parseSubmission,
   JobRecord,
+  PendingReleaseRecord,
   RESPONSE_TYPE,
   SubmissionRecord,
   TaskEconomyRecord,
   txAcceptJob,
   txAutoStartReveal,
   txClaimJobCredential,
+  txClaimInteractionReward,
   txFinalizeWinners,
-  txRespondWithNanopayment,
+  txRespondToSubmission,
   txSelectFinalists,
   txSlashResponseStake,
   txSubmitDeliverable,
+  txReturnStake,
   ZERO_ADDRESS
 } from "@/lib/contracts";
 import {
@@ -325,7 +331,7 @@ function FinalistCard({
 
   return (
     <div
-      className={`p-4 border transition-all duration-200 ${
+      className={`flex flex-col gap-3 p-4 border transition-all duration-200 ${
         isWinner
           ? "border-[var(--gold)] bg-[var(--gold)]/5"
           : "border-[var(--border)] hover:border-[var(--border-bright)]"
@@ -588,6 +594,7 @@ export default function JobDetailsPage() {
 
   const [claimReadyAt, setClaimReadyAt] = useState<number | null>(null);
   const [claimCountdown, setClaimCountdown] = useState(0);
+  const [pendingReleases, setPendingReleases] = useState<PendingReleaseRecord[]>([]);
 
   const isConnected = Boolean(account);
   const isCreator = Boolean(account && job && account.toLowerCase() === job.client.toLowerCase());
@@ -854,6 +861,26 @@ export default function JobDetailsPage() {
     return () => window.clearInterval(timer);
   }, [claimReadyAt]);
 
+  const refreshPendingReleases = useCallback(async () => {
+    if (!account || isPastTask || !Number.isInteger(jobId) || jobId < 0) {
+      setPendingReleases([]);
+      return;
+    }
+
+    try {
+      const provider = browserProvider ?? getReadProvider();
+      const releases = await fetchPendingReleases(provider, jobId, account);
+      setPendingReleases(releases);
+    } catch (error) {
+      console.warn("[releases] load failed:", error);
+      setPendingReleases([]);
+    }
+  }, [account, browserProvider, isPastTask, jobId]);
+
+  useEffect(() => {
+    void refreshPendingReleases();
+  }, [refreshPendingReleases, job?.status, revealPhaseEnd, selectedFinalists.length]);
+
   useEffect(() => {
     if (!Number.isInteger(jobId) || jobId < 0 || forceLegacy) return () => undefined;
     const contract = getJobSignalsReadContract();
@@ -995,14 +1022,13 @@ export default function JobDetailsPage() {
 
       const responseStake = taskEconomy.interactionStake > 0n ? taskEconomy.interactionStake : 2_000_000n;
       const contentUri = contentToURI(responseContent.trim());
-      const { txHash, paymentAuth } = await txRespondWithNanopayment(
+      await approveUSDC(signer, getJobContractAddress(), responseStake);
+      const txHash = await txRespondToSubmission(
         signer,
         BigInt(selectedSubmission.submissionId),
         responseType,
-        contentUri,
-        responseStake
+        contentUri
       );
-      console.log("[respond] nanopayment authorization:", paymentAuth);
       setStatusMessage(`Response tx: ${txHash}`);
       setResponseContent("");
       setShowResponsePanel(false);
@@ -1133,6 +1159,30 @@ export default function JobDetailsPage() {
     }
   };
 
+  const handleClaimPendingReleases = async () => {
+    if (!signer || pendingReleases.length === 0) return;
+
+    try {
+      setBusyAction("release");
+      const hashes: string[] = [];
+      for (const release of pendingReleases) {
+        if (release.canClaimReward) {
+          hashes.push(await txClaimInteractionReward(signer, release.responseId));
+        } else if (release.canReturnStake) {
+          hashes.push(await txReturnStake(signer, release.responseId));
+        }
+      }
+      setStatusMessage(`Claimed pending reveal releases: ${hashes.join(", ")}`);
+      await refreshPendingReleases();
+      await loadTask();
+      await loadHeatmap();
+    } catch (error) {
+      setErrorMessage(errorText(error, "Failed to claim pending stake/reward"));
+    } finally {
+      setBusyAction("");
+    }
+  };
+
   const hasSubmitted = Boolean(mySubmission && mySubmission.status !== 0);
   const isApproved = mySubmission?.status === 2;
   const isClaimed = Boolean(mySubmission?.credentialClaimed);
@@ -1183,6 +1233,12 @@ export default function JobDetailsPage() {
       selectedSubmission &&
       isSelectedFinalist &&
       !isOwnSelectedSubmission
+  );
+  const postRevealComplete = Boolean(!isPastTask && job && (job.status === 5 || revealEnded));
+  const isParticipant = Boolean(hasSubmitted || pendingReleases.length > 0);
+  const totalPendingRelease = pendingReleases.reduce(
+    (sum, release) => sum + release.stakeAmount + release.rewardAmount,
+    0n
   );
   useEffect(() => {
     let active = true;
@@ -1286,7 +1342,7 @@ export default function JobDetailsPage() {
         </div>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[260px_minmax(0,1fr)_320px]">
+      <div className="task-detail-grid grid gap-4 xl:grid-cols-[260px_minmax(0,1fr)_320px]">
         <aside className="panel h-fit space-y-6">
           <div><div className="section-header">DESCRIPTION</div><p className="text-sm text-[var(--text-secondary)]">{formatTaskDescription(job.description)}</p></div>
           <div><div className="section-header">METADATA</div><div className="space-y-2 text-xs"><div className="flex justify-between"><span className="text-[var(--text-muted)]">Creator</span><UserDisplay address={job.client} showAvatar={true} avatarSize={22} /></div><div className="flex justify-between"><span className="text-[var(--text-muted)]">Tasks posted</span><span className="font-mono">{creatorPostedCount}</span></div><div className="flex justify-between"><span className="text-[var(--text-muted)]">Created</span><span className="font-mono">{formatTimestamp(job.createdAt)}</span></div></div></div>
@@ -1380,7 +1436,7 @@ export default function JobDetailsPage() {
               ) : null}
 
               {shouldShowSignalMap ? (
-                <div ref={mapContainerRef} className="w-full" style={{ minHeight: 380 }}>
+                <div ref={mapContainerRef} className="signal-map-wrapper w-full overflow-hidden" style={{ height: 380, minHeight: 380 }}>
                   <SignalMap
                     heatmap={heatmap}
                     loading={heatmapLoading}
@@ -1510,7 +1566,7 @@ export default function JobDetailsPage() {
           ) : null}
         </div>
 
-        <aside className="panel h-fit space-y-4">
+        <aside className="task-right-panel panel h-fit space-y-4">
           {!isConnected ? (
             <>
               <div className="section-header">CONNECT WALLET</div>
@@ -1614,6 +1670,47 @@ export default function JobDetailsPage() {
               ) : null}
               {claimCountdown > 0 ? (
                 <p className="text-xs text-[var(--warn)]">Claim in {Math.floor(claimCountdown / 60)}m</p>
+              ) : null}
+
+              {postRevealComplete && isParticipant ? (
+                <div
+                  style={{
+                    padding: "12px 16px",
+                    border: "1px solid var(--pulse)",
+                    background: "color-mix(in srgb, var(--pulse) 8%, transparent)"
+                  }}
+                >
+                  <div
+                    style={{
+                      fontFamily: "JetBrains Mono, monospace",
+                      fontSize: 10,
+                      color: "var(--pulse)",
+                      marginBottom: 8,
+                      letterSpacing: "0.1em"
+                    }}
+                  >
+                    REVEAL PHASE COMPLETE
+                  </div>
+                  {pendingReleases.length > 0 ? (
+                    <>
+                      <div className="mb-3 text-xs text-[var(--text-secondary)]">
+                        You have unclaimed stake and/or interaction rewards from this task.
+                      </div>
+                      <button
+                        type="button"
+                        className="btn-primary w-full"
+                        onClick={() => void handleClaimPendingReleases()}
+                        disabled={busyAction === "release" || !signer}
+                      >
+                        {busyAction === "release"
+                          ? "Claiming..."
+                          : `Claim ${formatUsdc(totalPendingRelease)} USDC`}
+                      </button>
+                    </>
+                  ) : (
+                    <div className="text-xs text-[var(--text-muted)]">No pending claims for your wallet.</div>
+                  )}
+                </div>
               ) : null}
 
               {job.status !== 4 ? (
