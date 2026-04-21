@@ -47,7 +47,7 @@ const FILTER_OPTIONS: { value: TaskFilter; label: string; color: string }[] = [
   { value: "closed", label: "CLOSED", color: "#7A9BB5" },
 ];
 
-type DisplayJobRecord = JobRecord & { isLegacy?: boolean };
+type DisplayJobRecord = JobRecord & { isPastTask?: boolean };
 
 export default function HomePage() {
   const { account } = useWallet();
@@ -107,11 +107,11 @@ export default function HomePage() {
   const allTasks = useMemo<DisplayJobRecord[]>(
     () =>
       [
-        ...jobs.map((job) => ({ ...job, isLegacy: false })),
-        ...legacyTasks
+        ...jobs.map((job) => ({ ...job, isPastTask: false })),
+        ...legacyTasks.map((task) => ({ ...task, isPastTask: true }))
       ].sort((a, b) => {
-        if (!a.isLegacy && b.isLegacy) return -1;
-        if (a.isLegacy && !b.isLegacy) return 1;
+        if (!a.isPastTask && b.isPastTask) return -1;
+        if (a.isPastTask && !b.isPastTask) return 1;
         return Number(b.jobId) - Number(a.jobId);
       }),
     [jobs, legacyTasks]
@@ -122,8 +122,8 @@ export default function HomePage() {
     const resolve = async () => {
       const map: Record<string, string> = {};
       for (const task of allTasks) {
-        const key = `${task.isLegacy ? "v1" : "v2"}-${task.jobId}`;
-        map[key] = await getDisplayId(task.jobId, task.isLegacy ?? false);
+        const key = `${task.isPastTask ? "archive" : "current"}-${task.jobId}`;
+        map[key] = await getDisplayId(task.jobId, task.isPastTask ?? false);
       }
       if (active) setDisplayIds(map);
     };
@@ -236,11 +236,11 @@ export default function HomePage() {
             <div className="grid gap-4 md:grid-cols-2">
               {visibleJobs.slice(0, visibleCount).map((task) => {
                 const displayStatus = deriveDisplayStatus(task.status, task.deadline, task.revealPhaseEnd ?? 0n);
-                const displayId = displayIds[`${task.isLegacy ? "v1" : "v2"}-${task.jobId}`] ?? `#${task.jobId}`;
+                const displayId = displayIds[`${task.isPastTask ? "archive" : "current"}-${task.jobId}`] ?? `#${task.jobId}`;
                 return (
                   <Link
-                    key={`${task.isLegacy ? "v1" : "v2"}-${task.jobId}`}
-                    href={makeTaskUrl(task.jobId, task.isLegacy ?? false)}
+                    key={`${task.isPastTask ? "archive" : "current"}-${task.jobId}`}
+                    href={makeTaskUrl(task.jobId, task.isPastTask ?? false)}
                     className="card-sharp cursor-pointer overflow-hidden p-0"
                     style={{ transition: "border-color 0.2s, box-shadow 0.2s" }}
                   >
@@ -256,20 +256,6 @@ export default function HomePage() {
                           }}
                         >
                           {displayId}
-                          {task.isLegacy ? (
-                            <span
-                              style={{
-                                fontSize: 9,
-                                fontFamily: "JetBrains Mono, monospace",
-                                color: "var(--text-muted)",
-                                border: "1px solid var(--border-bright)",
-                                padding: "1px 4px",
-                                marginLeft: 6
-                              }}
-                            >
-                              V1
-                            </span>
-                          ) : null}
                         </span>
                         <div className="flex items-center gap-2">
                           <span

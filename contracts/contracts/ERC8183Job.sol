@@ -5,6 +5,20 @@ import {ICredentialHook} from "./interfaces/ICredentialHook.sol";
 import {ICredentialSource} from "./interfaces/ICredentialSource.sol";
 import {IERC20Minimal} from "./interfaces/IERC20Minimal.sol";
 
+interface IERC3009 {
+    function transferWithAuthorization(
+        address from,
+        address to,
+        uint256 value,
+        uint256 validAfter,
+        uint256 validBefore,
+        bytes32 nonce,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external;
+}
+
 contract ERC8183Job is ICredentialSource {
     enum JobStatus {
         Open,
@@ -182,6 +196,12 @@ contract ERC8183Job is ICredentialSource {
     );
     event StakeSlashed(uint256 indexed responseId, address indexed responder, uint256 amount);
     event StakeReturned(uint256 indexed responseId, address indexed responder, uint256 amount);
+    event InteractionAuthorizationUsed(
+        uint256 indexed responseId,
+        address indexed responder,
+        uint256 amount,
+        bytes32 nonce
+    );
     event FinalistsSelected(uint256 indexed jobId, address[] agents, uint256 revealEndsAt);
     event WinnersFinalized(
         uint256 indexed jobId,
@@ -767,6 +787,51 @@ contract ERC8183Job is ICredentialSource {
         ResponseType responseType,
         string memory contentURI
     ) external nonReentrant returns (uint256 responseId) {
+        uint256 stake = _requiredInteractionStake(submissionIdToTaskId[parentSubmissionId]);
+        require(usdc.transferFrom(msg.sender, address(this), stake), "stake transfer failed");
+
+        return _createResponse(parentSubmissionId, responseType, contentURI, msg.sender, stake);
+    }
+
+    function respondWithAuthorization(
+        uint256 parentSubmissionId,
+        ResponseType responseType,
+        string memory contentURI,
+        address from,
+        address to,
+        uint256 value,
+        uint256 validAfter,
+        uint256 validBefore,
+        bytes32 nonce,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external nonReentrant returns (uint256 responseId) {
+        uint256 stake = _requiredInteractionStake(submissionIdToTaskId[parentSubmissionId]);
+        require(to == address(this), "wrong recipient");
+        require(value >= stake, "stake too small");
+
+        IERC3009(address(usdc)).transferWithAuthorization(from, to, value, validAfter, validBefore, nonce, v, r, s);
+
+        responseId = _createResponse(parentSubmissionId, responseType, contentURI, from, value);
+        emit InteractionAuthorizationUsed(responseId, from, value, nonce);
+        return responseId;
+    }
+
+    function _requiredInteractionStake(uint256 taskId) internal view returns (uint256) {
+        _getExistingJob(taskId);
+        return taskEconomy[taskId].interactionStake > 0
+            ? taskEconomy[taskId].interactionStake
+            : DEFAULT_INTERACTION_STAKE;
+    }
+
+    function _createResponse(
+        uint256 parentSubmissionId,
+        ResponseType responseType,
+        string memory contentURI,
+        address responder,
+        uint256 stake
+    ) internal returns (uint256 responseId) {
         uint256 taskId = submissionIdToTaskId[parentSubmissionId];
         address parentAgent = submissionIdToAgent[parentSubmissionId];
 
@@ -778,13 +843,9 @@ contract ERC8183Job is ICredentialSource {
         );
         require(isFinalist[taskId][parentAgent], "can only interact with finalist submissions");
         require(block.timestamp <= revealPhaseEnd[taskId], "reveal phase ended");
-        require(msg.sender != parentAgent, "cannot respond to own submission");
-        require(!hasResponded[parentSubmissionId][msg.sender], "already responded");
+        require(responder != parentAgent, "cannot respond to own submission");
+        require(!hasResponded[parentSubmissionId][responder], "already responded");
         require(bytes(contentURI).length > 0, "content required");
-        uint256 stake = taskEconomy[taskId].interactionStake > 0
-            ? taskEconomy[taskId].interactionStake
-            : DEFAULT_INTERACTION_STAKE;
-        require(usdc.transferFrom(msg.sender, address(this), stake), "stake transfer failed");
 
         responseId = nextResponseId;
         nextResponseId += 1;
@@ -792,7 +853,7 @@ contract ERC8183Job is ICredentialSource {
             responseId: responseId,
             parentSubmissionId: parentSubmissionId,
             taskId: taskId,
-            responder: msg.sender,
+            responder: responder,
             responseType: responseType,
             contentURI: contentURI,
             stakedAmount: stake,
@@ -804,11 +865,11 @@ contract ERC8183Job is ICredentialSource {
 
         submissionResponses[parentSubmissionId].push(responseId);
         submissionResponseCount[parentSubmissionId] += 1;
-        hasResponded[parentSubmissionId][msg.sender] = true;
+        hasResponded[parentSubmissionId][responder] = true;
 
         if (responseType == ResponseType.BuildsOn) {
             buildOnParent[responseId] = parentAgent;
-            buildOnParentByResponder[taskId][msg.sender] = parentAgent;
+            buildOnParentByResponder[taskId][responder] = parentAgent;
         }
 
         emit SubmissionResponseAdded(taskId, parentSubmissionId, responseId, responseType);

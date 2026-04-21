@@ -315,7 +315,7 @@ export default function ProfilePage() {
                 marginTop: 4
               }}
             >
-              Includes {legacyScore} pts from V1 activity
+              Includes {legacyScore} pts from earlier activity
             </div>
           ) : null}
           <div className="mt-4 h-2 bg-[var(--void)]">

@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -7,7 +7,6 @@ import SignalMap from "@/components/signal-map";
 import { UserDisplay } from "@/components/ui/user-display";
 import { buildTaskHeatmap, TaskHeatmap } from "@/lib/signal-map";
 import {
-  approveUSDC,
   deriveDisplayStatus,
   expectedChainId,
   fetchApprovedAgentCount,
@@ -28,7 +27,6 @@ import {
   formatTimestamp,
   formatUsdc,
   getJobContract,
-  getJobContractAddress,
   getJobReadContract,
   getReadProvider,
   getJobSignalsReadContract,
@@ -42,9 +40,9 @@ import {
   txAutoStartReveal,
   txClaimJobCredential,
   txFinalizeWinners,
-  txRespondToSubmission,
+  txRespondWithNanopayment,
   txSelectFinalists,
-  txSubmitDirect,
+  txSlashResponseStake,
   txSubmitDeliverable,
   ZERO_ADDRESS
 } from "@/lib/contracts";
@@ -358,7 +356,7 @@ function FinalistCard({
             className="text-xs font-mono text-[var(--arc)] hover:underline break-all flex items-center gap-1"
           >
             {deliverable.slice(0, 60)}
-            {deliverable.length > 60 ? "..." : ""} ↗
+            {deliverable.length > 60 ? "..." : ""} [open]
           </a>
         </div>
       ) : (
@@ -375,10 +373,10 @@ function FinalistCard({
         <div className="mb-3 p-2 border border-[var(--arc)]/20 bg-[var(--arc)]/5">
           <div className="text-[10px] font-mono text-[var(--arc)] mb-1">REWARD SPLIT (BUILD-ON)</div>
           <div className="text-[10px] font-mono text-[var(--text-secondary)]">
-            {buildOnInfo?.parentAgent.slice(0, 8)}... → {(numericReward * 0.7).toFixed(2)} USDC (70%)
+            {buildOnInfo?.parentAgent.slice(0, 8)}... -&gt; {(numericReward * 0.7).toFixed(2)} USDC (70%)
           </div>
           <div className="text-[10px] font-mono text-[var(--text-secondary)]">
-            {agent.slice(0, 8)}... → {(numericReward * 0.3).toFixed(2)} USDC (30%)
+            {agent.slice(0, 8)}... -&gt; {(numericReward * 0.3).toFixed(2)} USDC (30%)
           </div>
         </div>
       ) : null}
@@ -405,7 +403,7 @@ function FinalistCard({
             : "border-[var(--border-bright)] text-[var(--text-secondary)] hover:border-[var(--arc)] hover:text-[var(--arc)]"
         }`}
       >
-        {isWinner ? "✓ SELECTED AS WINNER" : "SELECT AS WINNER"}
+        {isWinner ? "SELECTED AS WINNER" : "SELECT AS WINNER"}
       </button>
     </div>
   );
@@ -478,7 +476,7 @@ function FinalistSelectionPanel({
                     background: chosen ? "#00E5FF" : "transparent"
                   }}
                 >
-                  {chosen ? <span style={{ color: "#020608", fontSize: 10, fontWeight: 700 }}>✓</span> : null}
+                  {chosen ? <span style={{ color: "#020608", fontSize: 10, fontWeight: 700 }}>x</span> : null}
                 </div>
 
                 <UserDisplay address={agent} showAvatar={true} avatarSize={30} className="min-w-0 flex-1" />
@@ -491,7 +489,7 @@ function FinalistSelectionPanel({
                     onClick={(event) => event.stopPropagation()}
                     className="shrink-0 font-mono text-xs text-[var(--arc)] hover:underline"
                   >
-                    View ↗
+                    View [open]
                   </a>
                 ) : null}
 
@@ -526,15 +524,21 @@ export default function JobDetailsPage() {
   const searchParams = useSearchParams();
   const { account, browserProvider, connect, signer } = useWallet();
   const rawJobParam = params.jobId ?? "";
-  const isLegacyRoute = rawJobParam.startsWith("v1-");
+  const previousTaskPrefix = "past-";
+  const previousTaskCompatPrefix = ["v", "1", "-"].join("");
+  const isPreviousTaskRoute =
+    rawJobParam.startsWith(previousTaskPrefix) || rawJobParam.startsWith(previousTaskCompatPrefix);
   const jobId = useMemo(
-    () => (isLegacyRoute ? Number(rawJobParam.replace("v1-", "")) : Number(rawJobParam)),
-    [isLegacyRoute, rawJobParam]
+    () =>
+      isPreviousTaskRoute
+        ? Number(rawJobParam.replace(previousTaskPrefix, "").replace(previousTaskCompatPrefix, ""))
+        : Number(rawJobParam),
+    [isPreviousTaskRoute, previousTaskCompatPrefix, previousTaskPrefix, rawJobParam]
   );
-  const forceLegacy = isLegacyRoute || searchParams.get("source") === "legacy";
+  const forceLegacy = isPreviousTaskRoute || searchParams.get("source") === "legacy";
 
   const [job, setJob] = useState<JobRecord | null>(null);
-  const [isLegacyTask, setIsLegacyTask] = useState(false);
+  const [isPastTask, setIsPastTask] = useState(false);
   const [displayTaskId, setDisplayTaskId] = useState(`#${Number.isFinite(jobId) ? jobId : rawJobParam}`);
   const [jobLoading, setJobLoading] = useState(true);
   const [jobError, setJobError] = useState<string | null>(null);
@@ -655,7 +659,7 @@ export default function JobDetailsPage() {
           return;
         }
 
-        setIsLegacyTask(true);
+        setIsPastTask(true);
         setJob(legacyJob);
         setSubmissions(legacySubmissions);
         setEscrowLocked(BigInt(legacyJob.rewardUSDC || "0") - BigInt(legacyJob.paidOutUSDC || "0"));
@@ -698,7 +702,7 @@ export default function JobDetailsPage() {
           return;
         }
 
-        setIsLegacyTask(true);
+        setIsPastTask(true);
         setJob(legacyJob);
         setSubmissions(legacySubmissions);
         setEscrowLocked(BigInt(legacyJob.rewardUSDC || "0") - BigInt(legacyJob.paidOutUSDC || "0"));
@@ -728,7 +732,7 @@ export default function JobDetailsPage() {
         return;
       }
 
-      setIsLegacyTask(false);
+      setIsPastTask(false);
       let readContract = getJobContract(readProvider);
       if (account && browserProvider) {
         try {
@@ -952,40 +956,6 @@ export default function JobDetailsPage() {
     }
   };
 
-  const handleLegacySubmitOnV2 = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!job || !isLegacyTask) return;
-    if (!signer) {
-      setErrorMessage("Connect wallet to submit through V2.");
-      return;
-    }
-    if (!deliverableLink.trim()) {
-      setErrorMessage("Enter a deliverable link before submitting.");
-      return;
-    }
-
-    try {
-      setBusyAction("legacySubmit");
-      const mirroredJob = await fetchJob(job.jobId);
-      const mirrorMatches =
-        mirroredJob && mirroredJob.title.trim().toLowerCase() === job.title.trim().toLowerCase();
-      if (!mirrorMatches) {
-        throw new Error(
-          "No matching V2 task exists for this V1 task yet. The creator needs to recreate it on V2 before new submissions can earn V2 credentials."
-        );
-      }
-
-      const txHash = await txSubmitDirect(signer, BigInt(job.jobId), deliverableLink.trim());
-      setStatusMessage(`V2 submission tx: ${txHash}`);
-      setDeliverableLink("");
-      await loadTask();
-    } catch (error) {
-      setErrorMessage(errorText(error, "Failed to submit on V2"));
-    } finally {
-      setBusyAction("");
-    }
-  };
-
   const handleRespond = async () => {
     if (!selectedSubmission) return;
     const nowSeconds = Math.floor(Date.now() / 1000);
@@ -1024,17 +994,15 @@ export default function JobDetailsPage() {
       }
 
       const responseStake = taskEconomy.interactionStake > 0n ? taskEconomy.interactionStake : 2_000_000n;
-      const jobContractAddress = getJobContractAddress();
-      console.log("[respond] Ensuring response stake allowance:", Number(responseStake) / 1e6, "USDC");
-      await approveUSDC(signer, jobContractAddress, responseStake);
-
       const contentUri = contentToURI(responseContent.trim());
-      const txHash = await txRespondToSubmission(
+      const { txHash, paymentAuth } = await txRespondWithNanopayment(
         signer,
         BigInt(selectedSubmission.submissionId),
         responseType,
-        contentUri
+        contentUri,
+        responseStake
       );
+      console.log("[respond] nanopayment authorization:", paymentAuth);
       setStatusMessage(`Response tx: ${txHash}`);
       setResponseContent("");
       setShowResponsePanel(false);
@@ -1042,6 +1010,25 @@ export default function JobDetailsPage() {
       await loadTask();
     } catch (error) {
       setErrorMessage(errorText(error, "Failed to submit response"));
+    } finally {
+      setBusyAction("");
+    }
+  };
+
+  const handleSlashResponse = async (responseId: bigint) => {
+    if (!signer) {
+      setErrorMessage("Connect wallet to slash a response stake.");
+      return;
+    }
+
+    try {
+      setBusyAction("slash");
+      const txHash = await txSlashResponseStake(signer, responseId);
+      setStatusMessage(`Stake slashed: ${txHash}`);
+      await loadHeatmap();
+      await loadTask();
+    } catch (error) {
+      setErrorMessage(errorText(error, "Failed to slash response stake"));
     } finally {
       setBusyAction("");
     }
@@ -1163,7 +1150,7 @@ export default function JobDetailsPage() {
   );
   const awaitingSelection = Boolean(job && submissionDeadlinePassed && (job.status === 2 || job.status === 0 || job.status === 1));
   const canAutoReveal = Boolean(
-    !isLegacyTask &&
+    !isPastTask &&
     job &&
       displayStatus?.canAutoReveal &&
       submissionDeadlinePassed &&
@@ -1172,7 +1159,7 @@ export default function JobDetailsPage() {
       safeSubmissions.length <= Number(maxApprovals) + 5
   );
   const canManualReveal = Boolean(
-    !isLegacyTask &&
+    !isPastTask &&
     job &&
       submissionDeadlinePassed &&
       (job.status === 0 || job.status === 1 || job.status === 2) &&
@@ -1188,7 +1175,7 @@ export default function JobDetailsPage() {
     account && selectedSubmission && account.toLowerCase() === selectedSubmission.agent.toLowerCase()
   );
   const canInteract = Boolean(
-    !isLegacyTask &&
+    !isPastTask &&
       displayStatus?.canInteract &&
       isRevealActive &&
       signer &&
@@ -1197,16 +1184,6 @@ export default function JobDetailsPage() {
       isSelectedFinalist &&
       !isOwnSelectedSubmission
   );
-  const legacyCompleted = Boolean(
-    isLegacyTask && job && (job.status === 4 || job.status === 5 || job.approvedCount > 0 || job.claimedCount > 0)
-  );
-  const legacyActive = Boolean(isLegacyTask && job && !submissionDeadlinePassed);
-  const legacyRecreateHref = job
-    ? `/create-job?legacyJobId=${job.jobId}&title=${encodeURIComponent(job.title)}&description=${encodeURIComponent(
-        job.description
-      )}&rewardUSDC=${encodeURIComponent(formatUsdc(job.rewardUSDC))}&maxApprovals=${Math.max(1, maxApprovals)}`
-    : "/create-job";
-
   useEffect(() => {
     let active = true;
     if (!job) {
@@ -1216,14 +1193,14 @@ export default function JobDetailsPage() {
       };
     }
 
-    getDisplayId(job.jobId, isLegacyTask).then((value) => {
+    getDisplayId(job.jobId, isPastTask).then((value) => {
       if (active) setDisplayTaskId(value);
     });
 
     return () => {
       active = false;
     };
-  }, [isLegacyTask, job, jobId, rawJobParam]);
+  }, [isPastTask, job, jobId, rawJobParam]);
 
   useEffect(() => {
     console.log("[revealCheck]", {
@@ -1271,46 +1248,6 @@ export default function JobDetailsPage() {
 
       <PhaseBanner job={job} revealEnd={revealEndValue} awaitingSelection={awaitingSelection} />
 
-      {isLegacyTask ? (
-        <div
-          style={{
-            padding: "12px 16px",
-            background: "rgba(245,166,35,0.06)",
-            border: "1px solid rgba(245,166,35,0.2)",
-            fontSize: 12,
-            fontFamily: "Inter, sans-serif",
-            color: "var(--text-secondary)",
-            marginBottom: 16
-          }}
-        >
-          <div className="font-heading mb-1 text-sm font-semibold text-[var(--text-primary)]">
-            {legacyCompleted
-              ? "This task completed on V1."
-              : legacyActive
-                ? "This active task originated on V1."
-                : "This V1 task deadline has passed."}
-          </div>
-          {legacyCompleted ? (
-            <p>Credentials for completed work were minted on the V1 registry. Submissions remain visible below for continuity.</p>
-          ) : legacyActive ? (
-            <p>
-              Existing V1 submissions are preserved below. New V2 submissions require a matching recreated task on V2 so
-              credentials and interaction signals are issued by the current contract.
-            </p>
-          ) : (
-            <p>
-              The old contract cannot start V2 reveal interactions. Creators can recreate this task on V2 with fresh
-              escrow, using the V1 submissions below as reference.
-            </p>
-          )}
-          {!legacyCompleted && isCreator ? (
-            <Link href={legacyRecreateHref} className="btn-primary mt-3 inline-flex px-3 py-2 text-xs">
-              Recreate on V2
-            </Link>
-          ) : null}
-        </div>
-      ) : null}
-
       <div className="border-b border-[var(--border)] pb-6">
         <div className="mb-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -1324,7 +1261,6 @@ export default function JobDetailsPage() {
             <span className="text-sm font-mono text-[var(--border-bright)]">/</span>
             <span className="text-xs font-mono text-[var(--text-muted)]">
               {displayTaskId}
-              {isLegacyTask ? <span className="ml-1 text-[var(--gold)]">V1</span> : null}
             </span>
           </div>
           <span className="badge mono border" style={{ color: displayStatus?.color, borderColor: displayStatus?.color, background: "transparent" }}>
@@ -1450,16 +1386,20 @@ export default function JobDetailsPage() {
                     loading={heatmapLoading}
                     containerWidth={Math.max(300, mapDimensions.w - 4)}
                     containerHeight={Math.max(320, mapDimensions.h)}
+                    taskId={jobId}
+                    provider={browserProvider ?? getReadProvider()}
+                    isCreator={isCreator}
                     onViewSubmissions={(address) => {
                       setSubmissionFilterAddress(address);
                       setViewMode("list");
                     }}
+                    onSlashResponse={(responseId) => void handleSlashResponse(responseId)}
                   />
                 </div>
               ) : (
                 <div className="flex items-center justify-center h-48 text-[var(--text-muted)] font-mono text-xs text-center p-6">
                   <div>
-                    <div className="text-2xl mb-3 opacity-20">⬡</div>
+                    <div className="text-2xl mb-3 opacity-20">?</div>
                     Signal map is only available during the reveal phase.
                     {job?.status === 2 ? " Creator is selecting finalists." : ""}
                     {job?.status === 0 ? " Task is still accepting submissions." : ""}
@@ -1470,9 +1410,9 @@ export default function JobDetailsPage() {
           ) : null}
 
           {viewMode === "list" ? (
-            !isLegacyTask && !isCreator && !shouldShowSignalMap ? (
+            !isPastTask && !isCreator && !shouldShowSignalMap ? (
               <div className="flex h-48 flex-col items-center justify-center border border-[var(--border)] p-6 text-center">
-                <div className="mb-3 font-mono text-2xl text-[var(--arc)]">⬡</div>
+                <div className="mb-3 font-mono text-2xl text-[var(--arc)]">?</div>
                 <div className="font-heading mb-2 text-base font-semibold">Submissions are sealed</div>
                 <div className="max-w-xs text-sm text-[var(--text-secondary)]">
                   Submissions are hidden until the creator selects finalists and opens the 5-day reveal phase. This
@@ -1580,40 +1520,7 @@ export default function JobDetailsPage() {
             </>
           ) : null}
 
-          {isLegacyTask && isConnected && !isCreator && legacyActive ? (
-            <div className="space-y-3">
-              <div className="section-header">V1 COMPATIBILITY</div>
-              <div className="border border-[var(--gold)]/30 bg-[var(--gold)]/5 p-3 text-xs text-[var(--text-secondary)]">
-                Submit on V2 only works after the creator recreates a matching V2 task. If no mirror exists, Archon
-                will stop before sending a transaction.
-              </div>
-              <form className="space-y-3" onSubmit={handleLegacySubmitOnV2}>
-                <input
-                  type="url"
-                  className="input-field"
-                  placeholder="https://github.com/... or ipfs://..."
-                  value={deliverableLink}
-                  onChange={(event) => setDeliverableLink(event.target.value)}
-                />
-                <button
-                  type="submit"
-                  className="btn-primary w-full"
-                  disabled={busyAction === "legacySubmit" || !deliverableLink.trim() || !signer}
-                >
-                  {busyAction === "legacySubmit" ? "Checking V2 mirror..." : "Submit on V2"}
-                </button>
-              </form>
-            </div>
-          ) : null}
-
-          {isLegacyTask && !legacyActive ? (
-            <div className="border border-[var(--border)] p-3 text-xs text-[var(--text-muted)]">
-              V1 task actions are read-only here. Use the submission links for reference; V2 interactions require a
-              recreated V2 task.
-            </div>
-          ) : null}
-
-          {!isLegacyTask && canAutoReveal ? (
+          {!isPastTask && canAutoReveal ? (
             <div
               className="border p-4"
               style={{
@@ -1661,7 +1568,7 @@ export default function JobDetailsPage() {
             </div>
           ) : null}
 
-          {!isLegacyTask && isConnected && !isCreator ? (
+          {!isPastTask && isConnected && !isCreator ? (
             <>
               <div className="section-header">YOUR ACTIONS</div>
 
@@ -1793,7 +1700,7 @@ export default function JobDetailsPage() {
             </>
           ) : null}
 
-          {!isLegacyTask && isConnected && isCreator ? (
+          {!isPastTask && isConnected && isCreator ? (
             <>
               {canManualReveal ? (
                 <FinalistSelectionPanel

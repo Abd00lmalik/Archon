@@ -162,7 +162,7 @@ export default function VerifyWalletPage() {
             marginBottom: 16
           }}
         >
-          Includes {legacyCredentials.length} credential{legacyCredentials.length > 1 ? "s" : ""} from V1 deployment ({legacyScore} pts)
+          Includes {legacyCredentials.length} credential{legacyCredentials.length > 1 ? "s" : ""} from earlier activity ({legacyScore} pts)
         </div>
       ) : null}
 

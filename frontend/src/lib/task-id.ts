@@ -30,7 +30,7 @@ export async function getLegacyTaskCount(): Promise<number> {
 }
 
 export function makeTaskUrl(jobId: number, isLegacy: boolean): string {
-  return isLegacy ? `/job/v1-${jobId}` : `/job/${jobId}`;
+  return isLegacy ? `/job/past-${jobId}` : `/job/${jobId}`;
 }
 
 export async function getDisplayId(jobId: number, isLegacy: boolean): Promise<string> {

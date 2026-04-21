@@ -64,7 +64,7 @@ function parseLegacyJob(raw: unknown, fallbackId: number): LegacyTaskRecord | nu
   return {
     jobId: toNumber(item.jobId ?? tuple[0], fallbackId),
     client,
-    title: toString(item.title ?? tuple[2], `Legacy Task #${fallbackId}`),
+    title: toString(item.title ?? tuple[2], `Task #${fallbackId}`),
     description: toString(item.description ?? tuple[3]),
     deadline,
     rewardUSDC: toString(item.rewardUSDC ?? tuple[5] ?? "0"),
@@ -199,9 +199,7 @@ function parseLegacyCredential(raw: unknown, fallbackId: number, fallbackAgent: 
     valid: Boolean(candidate.valid ?? tuple[5] ?? true),
     sourceType: toString(candidate.sourceType ?? tuple[6], "job"),
     weight: toNumber(candidate.weight ?? tuple[7], 100),
-    metadata: {
-      deployment: "V1"
-    }
+    metadata: {}
   };
 }
 
@@ -258,7 +256,6 @@ export async function fetchLegacyCredentials(
           sourceType: "job",
           weight: Number(score),
           metadata: {
-            deployment: "V1",
             synthetic: 1
           }
         });

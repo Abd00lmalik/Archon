@@ -30,8 +30,8 @@ function submissionActionLabel(submission: SubmissionRecord | null) {
   return "Open Job";
 }
 
-function taskDisplayKey(job: JobRecord & { isLegacy?: boolean }) {
-  return `${job.isLegacy ? "v1" : "v2"}-${job.jobId}`;
+function taskDisplayKey(job: JobRecord) {
+  return `task-${job.jobId}`;
 }
 
 export default function MyWorkPage() {
@@ -45,8 +45,8 @@ export default function MyWorkPage() {
 
   const allTasks = useMemo(
     () => [
-      ...jobsPosted.map((job) => ({ ...job, isLegacy: false })),
-      ...jobsWorking.map(({ job }) => ({ ...job, isLegacy: false }))
+      ...jobsPosted,
+      ...jobsWorking.map(({ job }) => job)
     ],
     [jobsPosted, jobsWorking]
   );
@@ -101,7 +101,7 @@ export default function MyWorkPage() {
     const resolve = async () => {
       const map: Record<string, string> = {};
       for (const task of allTasks) {
-        map[taskDisplayKey(task)] = await getDisplayId(task.jobId, task.isLegacy ?? false);
+        map[taskDisplayKey(task)] = await getDisplayId(task.jobId, false);
       }
       if (active) setDisplayIds(map);
     };

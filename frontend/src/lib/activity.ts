@@ -289,7 +289,7 @@ async function _loadRecentHistory(jobContract: Contract, identityContract: Contr
           type: "task_created",
           actor: "",
           isAgent: false,
-          description: `${legacyCount} tasks from V1 deployment - legacy history is still visible in the task feed`,
+          description: `${legacyCount} earlier tasks are still visible in the task feed`,
           timestamp: Date.now() - 86_400_000,
           timeAgo: "1d ago"
         });

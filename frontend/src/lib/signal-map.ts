@@ -14,6 +14,9 @@ export interface PersonSignal {
   avatarUrl: string | null;
   blockieUrl: string;
   role: "submitter" | "responder" | "both";
+  submissionId?: number;
+  deliverableLink?: string;
+  submittedAt?: number;
   submissionCount: number;
   buildsOnGiven: number;
   buildsOnReceived: number;
@@ -102,6 +105,11 @@ export async function buildTaskHeatmap(
 
     const submitter = getOrCreate(agent);
     submitter.submissionCount += 1;
+    if (submitter.submissionId === undefined) {
+      submitter.submissionId = parsedSubmission.submissionId;
+      submitter.deliverableLink = parsedSubmission.deliverableLink;
+      submitter.submittedAt = parsedSubmission.submittedAt;
+    }
 
     try {
       const profile = await fetchUserProfile(readProvider, agent);

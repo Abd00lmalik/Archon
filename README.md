@@ -160,6 +160,13 @@ PLATFORM_TREASURY=0x...
 SEED_OPERATOR=true
 ```
 
+Optional frontend/server env vars:
+```
+PLATFORM_TREASURY_ADDRESS=0x...
+CIRCLE_API_KEY=...            # Enables Circle Gateway x402 settlement for /api/task-context/[jobId]
+CIRCLE_GATEWAY_ENV=testnet    # Use mainnet only for production Gateway settlement
+```
+
 ---
 
 ## Admin CLI (No Admin UI)

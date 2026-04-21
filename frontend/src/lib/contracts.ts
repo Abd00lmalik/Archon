@@ -2366,6 +2366,119 @@ export async function txRespondToSubmission(
   return tx.hash;
 }
 
+export type Eip3009PaymentAuthorization = {
+  scheme: "eip3009-transfer-with-authorization";
+  network: "eip155:5042002";
+  from: string;
+  to: string;
+  value: string;
+  validAfter: number;
+  validBefore: number;
+  nonce: string;
+  v: number;
+  r: string;
+  s: string;
+  domain: {
+    name: string;
+    version: string;
+    chainId: number;
+    verifyingContract: string;
+  };
+};
+
+function contractHasFunction(contract: ethers.Contract, name: string): boolean {
+  try {
+    contract.interface.getFunction(name);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function txRespondWithNanopayment(
+  signer: ethers.JsonRpcSigner,
+  parentSubmissionId: bigint,
+  responseType: number,
+  contentURI: string,
+  stakeAmount = 2_000_000n
+): Promise<{ txHash: string; paymentAuth: Eip3009PaymentAuthorization }> {
+  const address = await signer.getAddress();
+  const jobContractAddress = getJobContractAddress();
+  const now = Math.floor(Date.now() / 1000);
+  const validAfter = now - 60;
+  const validBefore = now + 4 * 24 * 60 * 60;
+  const nonce = ethers.hexlify(ethers.randomBytes(32));
+  const domain = {
+    name: "USDC",
+    version: "2",
+    chainId: expectedChainId,
+    verifyingContract: contractAddresses.usdc || "0x3600000000000000000000000000000000000000"
+  };
+  const types = {
+    TransferWithAuthorization: [
+      { name: "from", type: "address" },
+      { name: "to", type: "address" },
+      { name: "value", type: "uint256" },
+      { name: "validAfter", type: "uint256" },
+      { name: "validBefore", type: "uint256" },
+      { name: "nonce", type: "bytes32" }
+    ]
+  };
+  const message = {
+    from: address,
+    to: jobContractAddress,
+    value: stakeAmount,
+    validAfter: BigInt(validAfter),
+    validBefore: BigInt(validBefore),
+    nonce
+  };
+
+  const signature = await signer.signTypedData(domain, types, message);
+  const { v, r, s } = ethers.Signature.from(signature);
+  const paymentAuth: Eip3009PaymentAuthorization = {
+    scheme: "eip3009-transfer-with-authorization",
+    network: "eip155:5042002",
+    from: address,
+    to: jobContractAddress,
+    value: stakeAmount.toString(),
+    validAfter,
+    validBefore,
+    nonce,
+    v,
+    r,
+    s,
+    domain
+  };
+
+  const contract = getJobContract(signer);
+  if (contractHasFunction(contract, "respondWithAuthorization")) {
+    try {
+      const tx = await contract.respondWithAuthorization(
+        parentSubmissionId,
+        responseType,
+        contentURI,
+        message.from,
+        message.to,
+        message.value,
+        message.validAfter,
+        message.validBefore,
+        message.nonce,
+        v,
+        r,
+        s
+      );
+      await tx.wait();
+      return { txHash: tx.hash, paymentAuth };
+    } catch (error) {
+      console.warn("[nanopayment] respondWithAuthorization failed; falling back to approve+respond", error);
+    }
+  }
+
+  await approveUSDC(signer, jobContractAddress, stakeAmount);
+  const txHash = await txRespondToSubmission(signer, parentSubmissionId, responseType, contentURI);
+  return { txHash, paymentAuth };
+}
+
 export async function txReturnStake(signer: ethers.JsonRpcSigner, responseId: bigint): Promise<string> {
   const contract = getJobContract(signer);
   const tx = await contract.returnResponseStake(responseId);

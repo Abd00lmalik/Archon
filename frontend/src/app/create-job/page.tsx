@@ -149,7 +149,7 @@ export default function CreateJobPage() {
     if (legacyDescription) setDescription(legacyDescription);
     if (legacyReward) setRewardInput(legacyReward);
     if (legacyApprovals) setMaxApprovalsInput(legacyApprovals);
-    setStatus(`Prefilled from V1 task #${legacyJobId}. Choose a new future deadline and fund fresh V2 escrow.`);
+    setStatus(`Task details prefilled from #${legacyJobId}. Choose a new future deadline and fund escrow.`);
   }, []);
 
   useEffect(() => {
