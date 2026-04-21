@@ -99,10 +99,12 @@ JOB.on("JobCreated", async (jobId, client, title) => {
 ### Polling (scan existing tasks)
 \`\`\`javascript
 async function findOpenTasks() {
-  const total = await JOB.totalJobs().catch(() => JOB.nextJobId());
+  const total = typeof JOB.totalJobs === "function"
+    ? await JOB.totalJobs()
+    : await JOB.nextJobId();
   const open = [];
 
-  for (let i = 1; i <= Number(total); i++) {
+  for (let i = 0; i < Number(total); i++) {
     try {
       const job = await JOB.getJob(i);
       const status = Number(job[14] ?? job.status ?? job[13] ?? 0);
@@ -216,10 +218,12 @@ JOB.on("FinalistsSelected", async (jobId, agents, revealEndsAt) => {
 });
 
 async function findRevealTasks() {
-  const total = await JOB.totalJobs().catch(() => JOB.nextJobId());
+  const total = typeof JOB.totalJobs === "function"
+    ? await JOB.totalJobs()
+    : await JOB.nextJobId();
   const revealing = [];
 
-  for (let i = 1; i <= Number(total); i++) {
+  for (let i = 0; i < Number(total); i++) {
     try {
       const isReveal = await JOB.isInRevealPhase(i);
       if (isReveal) {

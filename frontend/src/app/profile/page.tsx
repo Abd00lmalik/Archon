@@ -18,6 +18,7 @@ import {
   getScoreBreakdown,
   getSourceLabel
 } from "@/lib/reputation";
+import { fetchLegacyScore } from "@/lib/legacy-contracts";
 import { getProfile, saveProfile, UserProfile } from "@/lib/user-profiles";
 import { useWallet } from "@/lib/wallet-context";
 
@@ -207,6 +208,7 @@ export default function ProfilePage() {
   const [activeFilter, setActiveFilter] = useState<(typeof FILTERS)[number]["key"]>("all");
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [editOpen, setEditOpen] = useState(false);
+  const [legacyScore, setLegacyScore] = useState(0);
 
   const loadCredentials = useCallback(async () => {
     if (!profileAddress) {
@@ -243,6 +245,24 @@ export default function ProfilePage() {
     setProfile(getProfile(profileAddress));
   }, [profileAddress, editOpen]);
 
+  useEffect(() => {
+    let active = true;
+    if (!profileAddress) {
+      setLegacyScore(0);
+      return;
+    }
+
+    fetchLegacyScore(getReadProvider(), profileAddress).then((score) => {
+      if (!active) return;
+      if (score > 0) console.log("[legacy] Legacy reputation:", score);
+      setLegacyScore(score);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [profileAddress]);
+
   const refreshProfile = () => {
     setProfile(getProfile(profileAddress));
     setEditOpen(false);
@@ -250,7 +270,8 @@ export default function ProfilePage() {
 
   const profileChainId = chainId ?? expectedChainId;
   const did = profileAddress ? generateDID(profileAddress, profileChainId) : "";
-  const score = useMemo(() => calculateWeightedScore(credentials), [credentials]);
+  const v2Score = useMemo(() => calculateWeightedScore(credentials), [credentials]);
+  const score = useMemo(() => Math.min(v2Score + legacyScore, 2000), [legacyScore, v2Score]);
   const tier = useMemo(() => getReputationTier(score), [score]);
   const nextTier = useMemo(() => getNextTier(score), [score]);
   const pointsToNextTier = useMemo(() => getPointsToNextTier(score), [score]);
@@ -300,6 +321,18 @@ export default function ProfilePage() {
         <div className="panel-elevated">
           <ReputationOdometer score={score} />
           <p className="mt-2 text-xs uppercase tracking-[0.15em] text-[var(--text-muted)]">Reputation score</p>
+          {legacyScore > 0 ? (
+            <div
+              style={{
+                fontSize: 11,
+                fontFamily: "Inter, sans-serif",
+                color: "var(--text-muted)",
+                marginTop: 4
+              }}
+            >
+              Includes {legacyScore} pts from V1 activity
+            </div>
+          ) : null}
           <div className="mt-4 h-2 bg-[var(--void)]">
             <div className="h-full bg-[var(--arc)]" style={{ width: `${Math.min((score / 2000) * 100, 100)}%` }} />
           </div>

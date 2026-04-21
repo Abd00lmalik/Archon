@@ -4,6 +4,7 @@ import { ethers } from "ethers";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
+  approveUSDC,
   contractAddresses,
   expectedChainId,
   fetchUsdcAllowance,
@@ -12,8 +13,7 @@ import {
   formatUsdc,
   getJobReadContract,
   getJobWriteContract,
-  parseUSDC,
-  txApproveUsdc
+  parseUSDC
 } from "@/lib/contracts";
 import { useWallet } from "@/lib/wallet-context";
 import { ARC_TOKEN_CONFIG } from "../../../config";
@@ -379,6 +379,10 @@ export default function CreateJobPage() {
       setWalletUsdcBalance(freshBalance);
       setCurrentUsdcAllowance(freshAllowance);
       const totalRequired = totalRequiredUnits ?? rewardUnitsValue;
+      console.log("[createJob] reward units:", rewardUnitsValue.toString());
+      console.log("[createJob] interaction pool bps:", interactionPoolBps);
+      console.log("[createJob] interaction pool units:", (interactionPoolUnits ?? 0n).toString());
+      console.log("[createJob] total USDC required:", totalRequired.toString());
       if (freshBalance < totalRequired) {
         throw new Error(
           `Insufficient USDC balance. You have ${formatUsdcTwoDecimals(freshBalance)} USDC, this task requires ${formatUsdcTwoDecimals(totalRequired)} USDC.`
@@ -391,6 +395,14 @@ export default function CreateJobPage() {
       const taskContract = await getJobWriteContract(provider);
       const predictedJobId = Number(await taskContract.nextJobId());
 
+      console.log("[createJob] createJob args:", {
+        title: trimmedTitle,
+        deadline,
+        rewardUSDC: rewardUnitsValue.toString(),
+        maxApprovals,
+        interactionStakeOverride: (interactionStakeUnits ?? 0n).toString(),
+        interactionPoolPercent: interactionPoolBps
+      });
       const tx = (await taskContract["createJob(string,string,uint256,uint256,uint256,uint256,uint256)"](
         trimmedTitle,
         trimmedDescription,
@@ -461,11 +473,14 @@ export default function CreateJobPage() {
         throw new Error(`Switch wallet network to chain ID ${expectedChainId}.`);
       }
 
-      const tx = await txApproveUsdc(provider, contractAddresses.job, totalRequiredUnits);
-      setStatus(`USDC approve transaction submitted: ${tx.hash}`);
-      await tx.wait();
-
       const signer = await provider.getSigner();
+      console.log("[createJob] approval reward units:", (rewardUnits ?? 0n).toString());
+      console.log("[createJob] approval interaction pool bps:", interactionPoolBps);
+      console.log("[createJob] approval interaction pool units:", (interactionPoolUnits ?? 0n).toString());
+      console.log("[createJob] approval total USDC:", totalRequiredUnits.toString());
+      setStatus(`Approving ${formatUsdcTwoDecimals(totalRequiredUnits)} USDC for escrow...`);
+      await approveUSDC(signer, contractAddresses.job, totalRequiredUnits);
+
       const signerAddress = await signer.getAddress();
       try {
         const [balance, allowance] = await Promise.all([

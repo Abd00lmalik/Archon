@@ -2,6 +2,7 @@
 
 import { Contract, EventLog, Log } from "ethers";
 import { formatTaskTitle, getReadProvider } from "./contracts";
+import { fetchLegacyTaskCount } from "./legacy-contracts";
 import contractsJson from "./generated/contracts.json";
 
 export interface ActivityEvent {
@@ -267,6 +268,21 @@ async function _loadRecentHistory(jobContract: Contract, identityContract: Contr
         event.timeAgo = _timeAgo(event.timestamp);
         _addEvent(event);
       });
+
+    if (_events.length < 3) {
+      const legacyCount = await fetchLegacyTaskCount(provider);
+      if (legacyCount > 0) {
+        _addEvent({
+          id: "legacy-history-note",
+          type: "task_created",
+          actor: "",
+          isAgent: false,
+          description: `${legacyCount} tasks from V1 deployment - legacy history is still visible in the task feed`,
+          timestamp: Date.now() - 86_400_000,
+          timeAgo: "1d ago"
+        });
+      }
+    }
 
     _historyLoaded = true;
     console.log("[activity] History loaded:", _events.length, "events");

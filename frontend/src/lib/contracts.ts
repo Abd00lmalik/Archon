@@ -423,6 +423,34 @@ export function getUSDCContract(providerOrSigner: ethers.Provider | ethers.Signe
   return new ethers.Contract(contractAddresses.usdc, ERC20_MIN_ABI, providerOrSigner);
 }
 
+export async function approveUSDC(
+  signer: ethers.JsonRpcSigner,
+  spenderAddress: string,
+  amount: bigint
+): Promise<void> {
+  const usdcContract = new ethers.Contract(
+    "0x3600000000000000000000000000000000000000",
+    [
+      "function approve(address spender, uint256 amount) returns (bool)",
+      "function allowance(address owner, address spender) view returns (uint256)"
+    ],
+    signer
+  );
+
+  const owner = await signer.getAddress();
+  const current = (await usdcContract.allowance(owner, spenderAddress)) as bigint;
+
+  if (current >= amount) {
+    console.log("[approveUSDC] Already approved:", Number(current) / 1e6, "USDC");
+    return;
+  }
+
+  console.log("[approveUSDC] Approving:", Number(amount) / 1e6, "USDC for", spenderAddress);
+  const tx = (await usdcContract.approve(spenderAddress, amount)) as ethers.TransactionResponse;
+  await tx.wait();
+  console.log("[approveUSDC] Approved");
+}
+
 let readProvider: ethers.JsonRpcProvider | null = null;
 
 export function getDeploymentConfig() {
@@ -729,19 +757,21 @@ export function isValidSubmission(rawSubmission: unknown): boolean {
       : ({} as Record<string, unknown> & unknown[]);
 
   const tuple = Array.isArray(rawSubmission) ? rawSubmission : [];
-  const agent = toString(submission.agent ?? submission.submitter ?? tuple[1] ?? tuple[0] ?? "")
-    .toLowerCase()
-    .trim();
-  const submittedAt = toNumber(
-    submission.submittedAt ?? submission.createdAt ?? tuple[4] ?? tuple[5] ?? tuple[6] ?? -1
-  );
+  const candidates = [
+    submission.agent,
+    submission.submitter,
+    tuple[1],
+    tuple[0]
+  ]
+    .map((value) => toString(value).toLowerCase().trim())
+    .filter(Boolean);
+  const agent =
+    candidates.find((value) => /^0x[a-f0-9]{40}$/.test(value)) ??
+    candidates.find((value) => value.startsWith("0x")) ??
+    "";
 
-  if (!agent || agent === ZERO_ADDRESS.toLowerCase() || agent === "0x") {
+  if (!agent || agent === ZERO_ADDRESS.toLowerCase() || agent.length < 10) {
     console.log("[filter] Skipping zero-address submission");
-    return false;
-  }
-  if (submittedAt > 0 && submittedAt < 1_577_836_800) {
-    console.log("[filter] Skipping pre-2020 timestamp submission:", submittedAt);
     return false;
   }
 
@@ -2500,36 +2530,29 @@ export async function txApproveUsdcIfNeeded(
   browserProvider: ethers.BrowserProvider,
   spender: string,
   amount: bigint
-) {
+): Promise<ethers.TransactionResponse | null> {
   if (!resolvedUsdcAddress || resolvedUsdcAddress === ZERO_ADDRESS) {
     return null;
   }
   const signer = await browserProvider.getSigner();
-  const usdc = deployment.contracts.usdc
-    ? getContractFromConfig(deployment.contracts.usdc, signer)
-    : new ethers.Contract(resolvedUsdcAddress, ERC20_MIN_ABI, signer);
+  const usdc = new ethers.Contract(resolvedUsdcAddress, ERC20_MIN_ABI, signer);
   const ownerAddress = await signer.getAddress();
   const allowance = (await usdc.allowance(ownerAddress, spender)) as bigint;
-  if (allowance >= amount) {
-    return null;
-  }
-  const tx = (await usdc.approve(spender, amount)) as ethers.TransactionResponse;
-  return tx;
+  if (allowance >= amount) return null;
+  await approveUSDC(signer, spender, amount);
+  return null;
 }
 
 export async function txApproveUsdc(
   browserProvider: ethers.BrowserProvider,
   spender: string,
   amount: bigint
-) {
+): Promise<void> {
   if (!resolvedUsdcAddress || resolvedUsdcAddress === ZERO_ADDRESS) {
     throw new Error("USDC contract is not configured.");
   }
   const signer = await browserProvider.getSigner();
-  const usdc = deployment.contracts.usdc
-    ? getContractFromConfig(deployment.contracts.usdc, signer)
-    : new ethers.Contract(resolvedUsdcAddress, ERC20_MIN_ABI, signer);
-  return (await usdc.approve(spender, amount)) as ethers.TransactionResponse;
+  await approveUSDC(signer, spender, amount);
 }
 
 export async function txProposeMilestoneProject(

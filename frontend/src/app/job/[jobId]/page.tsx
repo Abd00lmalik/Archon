@@ -7,6 +7,7 @@ import SignalMap from "@/components/signal-map";
 import { UserDisplay } from "@/components/ui/user-display";
 import { buildTaskHeatmap, TaskHeatmap } from "@/lib/signal-map";
 import {
+  approveUSDC,
   deriveDisplayStatus,
   expectedChainId,
   fetchApprovedAgentCount,
@@ -31,7 +32,6 @@ import {
   getJobReadContract,
   getReadProvider,
   getJobSignalsReadContract,
-  getUSDCContract,
   isValidSubmission,
   parseSubmission,
   JobRecord,
@@ -834,17 +834,10 @@ export default function JobDetailsPage() {
         return;
       }
 
-      const usdcContract = getUSDCContract(signer);
       const responseStake = taskEconomy.interactionStake > 0n ? taskEconomy.interactionStake : 2_000_000n;
-      const signerAddress = await signer.getAddress();
       const jobContractAddress = getJobContractAddress();
-      const allowance = (await usdcContract.allowance(signerAddress, jobContractAddress)) as bigint;
-      if (allowance < responseStake) {
-        console.log("[respond] Approving USDC...");
-        const approveTx = await usdcContract.approve(jobContractAddress, responseStake);
-        await approveTx.wait();
-        console.log("[respond] USDC approved");
-      }
+      console.log("[respond] Ensuring response stake allowance:", Number(responseStake) / 1e6, "USDC");
+      await approveUSDC(signer, jobContractAddress, responseStake);
 
       const contentUri = contentToURI(responseContent.trim());
       const txHash = await txRespondToSubmission(
@@ -981,8 +974,13 @@ export default function JobDetailsPage() {
       submissionDeadlinePassed &&
       (job.status === 0 || job.status === 1 || job.status === 2) &&
       safeSubmissions.length > 0 &&
-      safeSubmissions.length <= maxApprovals + 5 &&
-      selectedFinalists.length === 0
+      safeSubmissions.length <= Number(maxApprovals) + 5
+  );
+  const canManualReveal = Boolean(
+    job &&
+      submissionDeadlinePassed &&
+      (job.status === 0 || job.status === 1 || job.status === 2) &&
+      safeSubmissions.length > Number(maxApprovals) + 5
   );
   const nowSeconds = Math.floor(Date.now() / 1000);
   const isRevealActive = Boolean(job?.status === 4 && revealEndValue > 0 && nowSeconds <= revealEndValue);
@@ -1474,7 +1472,7 @@ export default function JobDetailsPage() {
 
           {isConnected && isCreator ? (
             <>
-              {job.status === 2 || awaitingSelection ? (
+              {canManualReveal ? (
                 <FinalistSelectionPanel
                   submissions={pendingSubmissions}
                   maxApprovals={maxApprovals}

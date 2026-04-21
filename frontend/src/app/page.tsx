@@ -16,8 +16,10 @@ import {
   formatTaskDescription,
   formatTaskTitle,
   formatUsdc,
-  JobRecord,
+  getReadProvider,
+  JobRecord
 } from "@/lib/contracts";
+import { fetchLegacyTasks, LegacyTaskRecord } from "@/lib/legacy-contracts";
 import { calculateWeightedScore, getReputationTier } from "@/lib/reputation";
 import { useWallet } from "@/lib/wallet-context";
 
@@ -45,11 +47,14 @@ const FILTER_OPTIONS: { value: TaskFilter; label: string; color: string }[] = [
   { value: "closed", label: "CLOSED", color: "#7A9BB5" },
 ];
 
+type DisplayJobRecord = JobRecord & { isLegacy?: boolean };
+
 export default function HomePage() {
   const { account } = useWallet();
   const [hydrated, setHydrated] = useState(false);
   const [restoreGraceElapsed, setRestoreGraceElapsed] = useState(false);
   const [jobs, setJobs] = useState<JobRecord[]>([]);
+  const [legacyTasks, setLegacyTasks] = useState<LegacyTaskRecord[]>([]);
   const [myCredentials, setMyCredentials] = useState<CredentialRecord[]>([]);
   const [selectedFilter, setSelectedFilter] = useState<TaskFilter>("all");
   const [visibleCount, setVisibleCount] = useState(5);
@@ -79,16 +84,39 @@ export default function HomePage() {
   }, [loadFeed]);
 
   useEffect(() => {
+    let active = true;
+    fetchLegacyTasks(getReadProvider()).then((tasks) => {
+      if (!active) return;
+      console.log("[legacy] Loaded", tasks.length, "legacy tasks");
+      setLegacyTasks(tasks);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
     const unsubscribe = subscribeToActivity(setActivityEvents);
     return unsubscribe;
   }, []);
 
   const myScore = useMemo(() => calculateWeightedScore(myCredentials), [myCredentials]);
   const myTier = useMemo(() => getReputationTier(myScore), [myScore]);
+  const allTasks = useMemo<DisplayJobRecord[]>(
+    () =>
+      [
+        ...jobs.map((job) => ({ ...job, isLegacy: false })),
+        ...legacyTasks
+      ].sort((a, b) => {
+        if (!a.isLegacy && b.isLegacy) return -1;
+        if (a.isLegacy && !b.isLegacy) return 1;
+        return Number(b.jobId) - Number(a.jobId);
+      }),
+    [jobs, legacyTasks]
+  );
 
   const visibleJobs = useMemo(() => {
-    const sorted = [...jobs].sort((a, b) => Number(b.jobId) - Number(a.jobId));
-    return sorted.filter((job) => {
+    return allTasks.filter((job) => {
       if (selectedFilter === "all") return true;
       if (selectedFilter === "open") {
         return (job.status === 0 || job.status === 1) && !isDeadlinePassed(job.deadline);
@@ -104,7 +132,7 @@ export default function HomePage() {
       }
       return true;
     });
-  }, [jobs, selectedFilter]);
+  }, [allTasks, selectedFilter]);
   const hasMore = visibleJobs.length > visibleCount;
 
   const hasStoredWallet =
@@ -141,7 +169,7 @@ export default function HomePage() {
         <div className="space-y-2 border-t border-[var(--border)] pt-4">
           <div className="mono text-xs text-[var(--text-secondary)]">Credentials: {myCredentials.length}</div>
           <div className="mono text-xs text-[var(--text-secondary)]">
-            Tasks Open: {jobs.filter((job) => (job.status === 0 || job.status === 1) && !isDeadlinePassed(job.deadline)).length}
+            Tasks Open: {allTasks.filter((job) => (job.status === 0 || job.status === 1) && !isDeadlinePassed(job.deadline)).length}
           </div>
         </div>
       </aside>
@@ -188,8 +216,8 @@ export default function HomePage() {
                 const displayStatus = deriveDisplayStatus(task.status, task.deadline, task.revealPhaseEnd ?? 0n);
                 return (
                   <Link
-                    key={task.jobId}
-                    href={`/job/${task.jobId}`}
+                    key={`${task.isLegacy ? "v1" : "v2"}-${task.jobId}`}
+                    href={task.isLegacy ? `/verify/${task.client}` : `/job/${task.jobId}`}
                     className="card-sharp cursor-pointer overflow-hidden p-0"
                     style={{ transition: "border-color 0.2s, box-shadow 0.2s" }}
                   >
@@ -205,6 +233,20 @@ export default function HomePage() {
                           }}
                         >
                           #{task.jobId}
+                          {task.isLegacy ? (
+                            <span
+                              style={{
+                                fontSize: 9,
+                                fontFamily: "JetBrains Mono, monospace",
+                                color: "var(--text-muted)",
+                                border: "1px solid var(--border-bright)",
+                                padding: "1px 4px",
+                                marginLeft: 6
+                              }}
+                            >
+                              V1
+                            </span>
+                          ) : null}
                         </span>
                         <div className="flex items-center gap-2">
                           <span

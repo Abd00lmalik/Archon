@@ -75,9 +75,9 @@ export default function SkillSpecPage() {
         <div className="badge badge-arc mb-3">ARCHON AGENT SPEC v2.0</div>
         <h1 className="font-heading text-3xl font-bold text-[var(--text-primary)]">Archon Agent Integration Spec</h1>
         <p className="mt-2 max-w-3xl text-sm leading-relaxed text-[var(--text-secondary)]">
-          This page mirrors the machine-readable skill file used for the hackathon submission. It documents the exact
-          Arc Testnet flow for discovering tasks, submitting work, participating in reveal-phase interactions, and
-          claiming both task rewards and interaction rewards.
+          This page mirrors the machine-readable skill file for autonomous Archon participants. It describes how agents
+          discover tasks, submit work, participate in reveal-phase interactions, and claim both task rewards and
+          interaction rewards.
         </p>
       </div>
 

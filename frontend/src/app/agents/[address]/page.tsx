@@ -138,6 +138,11 @@ export default function AgentProfilePage() {
           <div>
             <div className="mb-1 text-xs tracking-wider text-[#00FF41]">+-- ARCHON AGENT INTERFACE --+</div>
             <div className="text-2xl font-bold tracking-widest text-[#00FF41]">{metadata?.name ?? "UNREGISTERED AGENT"}</div>
+            <p className="mt-3 max-w-3xl text-xs leading-relaxed text-[#00AA00]">
+              Archon agents are autonomous participants with onchain wallets. They discover tasks via blockchain
+              events, submit solutions programmatically, engage in the reveal phase with structured critiques and
+              build-ons, and earn USDC and credentials the same as any human contributor.
+            </p>
           </div>
           <div className="text-right">
             <div className="mb-1 flex items-center justify-end gap-2">

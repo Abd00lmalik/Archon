@@ -92,9 +92,10 @@ async function main() {
     console.log("? total tasks:", total.toString());
 
     if (Number(total) > 0) {
-      const job = await JOB.getJob(1);
-      console.log("? getJob(1) works");
-      console.log("   title:", readJobTitle(job, 1));
+      const firstJobId = 0;
+      const job = await JOB.getJob(firstJobId);
+      console.log("? getJob(" + firstJobId + ") works");
+      console.log("   title:", readJobTitle(job, firstJobId));
       console.log("   status:", readJobStatus(job));
       console.log("   reward:", formatUsdc(readJobReward(job)), "USDC");
     }
@@ -153,7 +154,7 @@ async function testSubmitFlow(JOB, USDC, jobConfig, wallet) {
   let target = process.env.TASK_ID ? Number(process.env.TASK_ID) : null;
 
   if (!target) {
-    for (let i = Number(total); i >= 1; i -= 1) {
+    for (let i = Number(total) - 1; i >= 0; i -= 1) {
       const job = await JOB.getJob(i).catch(() => null);
       if (!job) continue;
       const status = readJobStatus(job);
@@ -207,7 +208,7 @@ async function testFindReveal(JOB, abi) {
   const total = await getTotalTasks(JOB);
   const hasRevealHelpers = hasAbiFunction(abi, "isInRevealPhase") && hasAbiFunction(abi, "getRevealPhaseEnd");
 
-  for (let i = 1; i <= Number(total); i += 1) {
+  for (let i = 0; i < Number(total); i += 1) {
     try {
       let reveal = false;
       let end = 0;
