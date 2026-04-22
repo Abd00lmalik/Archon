@@ -153,7 +153,7 @@ async function testSubmitFlow(JOB, USDC, jobConfig, wallet) {
   const now = Math.floor(Date.now() / 1000);
   let target = process.env.TASK_ID ? Number(process.env.TASK_ID) : null;
 
-  if (!target) {
+  if (target === null) {
     for (let i = Number(total) - 1; i >= 0; i -= 1) {
       const job = await JOB.getJob(i).catch(() => null);
       if (!job) continue;
@@ -168,7 +168,7 @@ async function testSubmitFlow(JOB, USDC, jobConfig, wallet) {
     }
   }
 
-  if (!target) {
+  if (target === null) {
     console.log("No open tasks. Create one at archon-dapp.vercel.app");
     return;
   }

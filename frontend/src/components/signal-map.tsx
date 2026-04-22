@@ -282,14 +282,14 @@ function ResponseThread({
 }) {
   if (responses.length === 0) {
     return (
-      <div className="px-4 py-6 text-center text-[13px] text-[var(--text-muted)]">
-        No interactions yet on this submission.
+      <div className="border-t border-[var(--border)] px-4 py-5 text-center text-[13px] text-[var(--text-muted)]">
+        No interactions yet.
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col gap-px">
+    <div className="border-t border-[var(--border)]">
       {responses.map((response, index) => {
         const isBuild = response.responseType === "builds_on";
         const accent =
@@ -308,16 +308,16 @@ function ResponseThread({
           <div
             key={response.responseId?.toString() ?? index}
             style={{
-              padding: "12px 16px",
-              background: "var(--surface)",
-              borderLeft: `3px solid ${response.stakeSlashed ? "#FF336640" : accent}`,
+              padding: "10px 14px",
+              background: index % 2 === 0 ? "transparent" : "rgba(255,255,255,0.012)",
+              borderLeft: `2px solid ${response.stakeSlashed ? "#3D5A73" : accent}`,
               borderBottom: "1px solid var(--border)",
               opacity: response.stakeSlashed ? 0.58 : 1,
               maxWidth: "100%",
               overflow: "hidden"
             }}
           >
-            <div className="mb-2 flex items-center gap-2">
+            <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
               <span
                 style={{
                   fontFamily: "JetBrains Mono, monospace",
@@ -332,11 +332,13 @@ function ResponseThread({
                 {response.stakeSlashed ? "SLASHED" : label}
               </span>
               <UserDisplay address={response.responder} showAvatar={true} avatarSize={16} className="min-w-0" />
-              <span className="ml-auto font-mono text-[10px] text-[var(--text-muted)]">
+              <span className="ml-auto shrink-0 font-mono text-[10px] text-[var(--text-muted)]">
                 {response.createdAt > 0
                   ? new Date(response.createdAt * 1000).toLocaleDateString(undefined, {
                       month: "short",
-                      day: "numeric"
+                      day: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit"
                     })
                   : ""}
               </span>
@@ -348,7 +350,7 @@ function ResponseThread({
                 fontSize: 13,
                 color: "var(--text-secondary)",
                 lineHeight: 1.5,
-                margin: "0 0 6px",
+                margin: "0 0 5px",
                 wordBreak: "break-word"
               }}
             >
@@ -366,7 +368,7 @@ function ResponseThread({
               </a>
             ) : null}
 
-            <div className="flex items-center gap-2 font-mono text-[10px] text-[var(--text-muted)]">
+            <div className="flex flex-wrap items-center gap-2 font-mono text-[10px] text-[var(--text-muted)]">
               <span>{(Number(response.stakedAmount) / 1e6).toFixed(3)} USDC staked</span>
               <span>{"\u00b7"}</span>
               <span>{status}</span>
@@ -587,7 +589,7 @@ function SubmissionDetailPanel({
         right: 0,
         top: 80,
         bottom: 0,
-        width: 340,
+        width: 360,
         maxWidth: "100vw",
         background: "var(--surface)",
         borderLeft: "1px solid var(--border)",
@@ -597,7 +599,7 @@ function SubmissionDetailPanel({
         zIndex: 60
       }}
     >
-      <div style={{ width: 340, maxWidth: "100%", overflowY: "auto" }}>
+      <div style={{ width: 360, maxWidth: "100%", overflowY: "auto" }}>
         <div className="flex items-start justify-between border-b border-[var(--border)] px-4 py-4">
           <div>
             <div className="font-heading text-[15px] font-bold text-[var(--text-primary)]">Submission Detail</div>

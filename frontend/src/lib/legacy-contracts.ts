@@ -1,4 +1,6 @@
-import { Contract, JsonRpcProvider } from "ethers";
+import { Contract, JsonRpcProvider, type InterfaceAbi } from "ethers";
+import deploymentRaw from "@/lib/generated/contracts.json";
+import { parseSubmission } from "@/lib/contracts";
 import type { CredentialRecord, JobRecord, SubmissionRecord } from "@/lib/contracts";
 
 export const LEGACY_ADDRESSES = {
@@ -8,8 +10,13 @@ export const LEGACY_ADDRESSES = {
   credentialHook: "0x0939493F3ba9B96c381110c29fCe85788B8da28a"
 } as const;
 
-export type LegacyTaskRecord = JobRecord & { isLegacy: true };
-export type LegacySubmissionRecord = SubmissionRecord & { isLegacy: true };
+export type LegacyTaskRecord = JobRecord & {
+  isLegacy: true;
+  archiveKey: string;
+  archiveAddress: string;
+  archiveOrder: number;
+};
+export type LegacySubmissionRecord = SubmissionRecord & { isLegacy: true; archiveKey: string };
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
@@ -20,6 +27,28 @@ const LEGACY_JOB_ABI = [
   "function getJob(uint256 jobId) view returns (tuple(uint256 jobId,address client,string title,string description,uint256 deadline,uint256 rewardUSDC,uint256 createdAt,uint256 acceptedCount,uint256 submissionCount,uint256 approvedCount,uint256 claimedCount,uint256 paidOutUSDC,bool refunded))",
   "function getSubmissions(uint256 jobId) view returns (tuple(address agent,string deliverableLink,uint8 status,uint256 submittedAt,string reviewerNote,bool credentialClaimed,uint256 allocatedReward)[])"
 ] as const;
+
+const currentJobAbi = ((deploymentRaw as { contracts?: { jobContract?: { abi?: unknown[] } } }).contracts?.jobContract?.abi ??
+  []) as InterfaceAbi;
+
+export const ARCHIVED_JOB_DEPLOYMENTS = [
+  {
+    key: "v1",
+    address: LEGACY_ADDRESSES.job,
+    abi: LEGACY_JOB_ABI,
+    order: 0,
+    shape: "legacy"
+  },
+  {
+    key: "prev-v2",
+    address: "0xB099Ad4Bd472a0Ee17cDbe3C29a10E1A84d52363",
+    abi: currentJobAbi,
+    order: 1,
+    shape: "v2"
+  }
+] as const;
+
+type ArchivedJobDeployment = (typeof ARCHIVED_JOB_DEPLOYMENTS)[number];
 
 const LEGACY_REGISTRY_ABI = [
   "function getWeightedScore(address) view returns (uint256)",
@@ -52,14 +81,26 @@ function deriveLegacyStatus(deadline: number, refunded: boolean): number {
   return 0;
 }
 
-function parseLegacyJob(raw: unknown, fallbackId: number): LegacyTaskRecord | null {
+export function getArchivedJobDeployment(sourceKey = "v1"): ArchivedJobDeployment {
+  return ARCHIVED_JOB_DEPLOYMENTS.find((source) => source.key === sourceKey) ?? ARCHIVED_JOB_DEPLOYMENTS[0];
+}
+
+function parseArchivedJob(
+  raw: unknown,
+  fallbackId: number,
+  source: ArchivedJobDeployment
+): LegacyTaskRecord | null {
   const tuple = Array.isArray(raw) ? raw : [];
   const item = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const client = toString(item.client ?? tuple[1]).trim();
   if (!client || client.toLowerCase() === ZERO_ADDRESS) return null;
 
   const deadline = toNumber(item.deadline ?? tuple[4]);
-  const refunded = Boolean(item.refunded ?? tuple[12] ?? false);
+  const isV2Shape = source.shape === "v2";
+  const refunded = Boolean(item.refunded ?? tuple[isV2Shape ? 13 : 12] ?? false);
+  const status = isV2Shape
+    ? toNumber(item.status ?? tuple[14], deriveLegacyStatus(deadline, refunded))
+    : deriveLegacyStatus(deadline, refunded);
 
   return {
     jobId: toNumber(item.jobId ?? tuple[0], fallbackId),
@@ -68,22 +109,26 @@ function parseLegacyJob(raw: unknown, fallbackId: number): LegacyTaskRecord | nu
     description: toString(item.description ?? tuple[3]),
     deadline,
     rewardUSDC: toString(item.rewardUSDC ?? tuple[5] ?? "0"),
-    maxApprovals: 0,
-    createdAt: toNumber(item.createdAt ?? tuple[6]),
-    acceptedCount: toNumber(item.acceptedCount ?? tuple[7]),
-    submissionCount: toNumber(item.submissionCount ?? tuple[8]),
-    approvedCount: toNumber(item.approvedCount ?? tuple[9]),
-    claimedCount: toNumber(item.claimedCount ?? tuple[10]),
-    paidOutUSDC: toString(item.paidOutUSDC ?? tuple[11] ?? "0"),
+    maxApprovals: isV2Shape ? toNumber(item.maxApprovals ?? tuple[6], 1) : 0,
+    createdAt: toNumber(item.createdAt ?? tuple[isV2Shape ? 7 : 6]),
+    acceptedCount: toNumber(item.acceptedCount ?? tuple[isV2Shape ? 8 : 7]),
+    submissionCount: toNumber(item.submissionCount ?? tuple[isV2Shape ? 9 : 8]),
+    approvedCount: toNumber(item.approvedCount ?? tuple[isV2Shape ? 10 : 9]),
+    claimedCount: toNumber(item.claimedCount ?? tuple[isV2Shape ? 11 : 10]),
+    paidOutUSDC: toString(item.paidOutUSDC ?? tuple[isV2Shape ? 12 : 11] ?? "0"),
     refunded,
-    status: deriveLegacyStatus(deadline, refunded),
+    status,
     revealPhaseEnd: 0n,
-    isLegacy: true
+    isLegacy: true,
+    archiveKey: source.key,
+    archiveAddress: source.address,
+    archiveOrder: source.order
   };
 }
 
-export function getLegacyJobContract(provider: JsonRpcProvider) {
-  return new Contract(LEGACY_ADDRESSES.job, LEGACY_JOB_ABI, provider);
+export function getLegacyJobContract(provider: JsonRpcProvider, sourceKey = "v1") {
+  const source = getArchivedJobDeployment(sourceKey);
+  return new Contract(source.address, source.abi as InterfaceAbi, provider);
 }
 
 export function getLegacyRegistryContract(provider: JsonRpcProvider) {
@@ -91,67 +136,144 @@ export function getLegacyRegistryContract(provider: JsonRpcProvider) {
 }
 
 export async function fetchLegacyTasks(provider: JsonRpcProvider): Promise<LegacyTaskRecord[]> {
-  const contract = getLegacyJobContract(provider);
   const tasks: LegacyTaskRecord[] = [];
 
-  try {
-    const all = await contract.getAllJobs().catch(() => null);
-    if (Array.isArray(all) && all.length > 0) {
-      all.forEach((raw, index) => {
-        const parsed = parseLegacyJob(raw, index);
-        if (parsed) tasks.push(parsed);
-      });
-      return tasks;
-    }
+  for (const source of ARCHIVED_JOB_DEPLOYMENTS) {
+    const contract = getLegacyJobContract(provider, source.key);
 
-    const totalRaw = await contract.totalJobs().catch(() => contract.nextJobId().catch(() => 0n));
-    const count = Number(totalRaw);
-
-    for (let i = 0; i < count; i += 1) {
-      try {
-        const parsed = parseLegacyJob(await contract.getJob(i), i);
-        if (parsed) tasks.push(parsed);
-      } catch {
-        // Skip holes in the legacy id range.
+    try {
+      const all = await contract.getAllJobs().catch(() => null);
+      if (Array.isArray(all) && all.length > 0) {
+        all.forEach((raw, index) => {
+          const parsed = parseArchivedJob(raw, index, source);
+          if (parsed) tasks.push(parsed);
+        });
+        continue;
       }
+
+      const nextJobId = await contract.nextJobId().catch(() => null);
+      const totalRaw = nextJobId ?? (await contract.totalJobs().catch(() => 0n));
+      const count = Number(totalRaw);
+      const seen = new Set<number>();
+
+      for (let i = 0; i < count; i += 1) {
+        try {
+          const parsed = parseArchivedJob(await contract.getJob(i), i, source);
+          if (parsed) {
+            tasks.push(parsed);
+            seen.add(parsed.jobId);
+          }
+        } catch {
+          // Skip holes in the archived id range.
+        }
+      }
+
+      if (nextJobId === null) {
+        for (let i = 1; i <= count; i += 1) {
+          if (seen.has(i)) continue;
+          try {
+            const parsed = parseArchivedJob(await contract.getJob(i), i, source);
+            if (parsed) tasks.push(parsed);
+          } catch {
+            // Some archived deployments are zero-based.
+          }
+        }
+      }
+    } catch (error) {
+      console.warn(`[legacy] Could not read archived tasks from ${source.key}:`, error);
     }
-  } catch (error) {
-    console.warn("[legacy] Could not read legacy tasks:", error);
   }
 
   return tasks;
 }
 
-export async function fetchLegacyJob(provider: JsonRpcProvider, jobId: number): Promise<LegacyTaskRecord | null> {
-  try {
-    const contract = getLegacyJobContract(provider);
-    return parseLegacyJob(await contract.getJob(jobId), jobId);
-  } catch (error) {
-    console.warn(`[legacy] Could not read legacy task ${jobId}:`, error);
-    return null;
+export async function fetchLegacyJob(
+  provider: JsonRpcProvider,
+  jobId: number,
+  sourceKey?: string
+): Promise<LegacyTaskRecord | null> {
+  const sources = sourceKey
+    ? [getArchivedJobDeployment(sourceKey)]
+    : [...ARCHIVED_JOB_DEPLOYMENTS].sort((a, b) => b.order - a.order);
+
+  for (const source of sources) {
+    try {
+      const contract = getLegacyJobContract(provider, source.key);
+      const parsed = parseArchivedJob(await contract.getJob(jobId), jobId, source);
+      if (parsed) return parsed;
+    } catch {
+      // Try the next archived source.
+    }
   }
+  console.warn(`[legacy] Could not read archived task ${sourceKey ? `${sourceKey}:` : ""}${jobId}`);
+  return null;
 }
 
 export async function fetchLegacyTaskCount(provider: JsonRpcProvider): Promise<number> {
-  try {
-    const contract = getLegacyJobContract(provider);
-    const all = await contract.getAllJobs().catch(() => null);
-    if (Array.isArray(all)) return all.length;
-    const total = await contract.totalJobs().catch(() => contract.nextJobId().catch(() => 0n));
-    return Number(total);
-  } catch {
-    return 0;
+  let totalCount = 0;
+  for (const source of ARCHIVED_JOB_DEPLOYMENTS) {
+    try {
+      const contract = getLegacyJobContract(provider, source.key);
+      const all = await contract.getAllJobs().catch(() => null);
+      if (Array.isArray(all)) {
+        totalCount += all.filter((raw, index) => parseArchivedJob(raw, index, source)).length;
+        continue;
+      }
+      const total = await contract.nextJobId().catch(() => contract.totalJobs().catch(() => 0n));
+      totalCount += Number(total);
+    } catch {
+      // Ignore unreadable archives.
+    }
   }
+  return totalCount;
 }
 
 export const getLegacyTaskCount = fetchLegacyTaskCount;
 
-export async function fetchLegacySubmissions(provider: JsonRpcProvider, jobId: number): Promise<LegacySubmissionRecord[]> {
+export async function fetchArchivedTaskOffset(provider: JsonRpcProvider, sourceKey: string): Promise<number> {
+  let offset = 0;
+  for (const source of ARCHIVED_JOB_DEPLOYMENTS) {
+    if (source.key === sourceKey) return offset;
+    try {
+      const contract = getLegacyJobContract(provider, source.key);
+      const all = await contract.getAllJobs().catch(() => null);
+      if (Array.isArray(all)) {
+        offset += all.filter((raw, index) => parseArchivedJob(raw, index, source)).length;
+      } else {
+        const total = await contract.nextJobId().catch(() => contract.totalJobs().catch(() => 0n));
+        offset += Number(total);
+      }
+    } catch {
+      // Missing archived source contributes no offset.
+    }
+  }
+  return offset;
+}
+
+export async function fetchLegacySubmissions(
+  provider: JsonRpcProvider,
+  jobId: number,
+  sourceKey?: string
+): Promise<LegacySubmissionRecord[]> {
+  const source = getArchivedJobDeployment(sourceKey);
   try {
-    const contract = getLegacyJobContract(provider);
+    const contract = getLegacyJobContract(provider, source.key);
     const raw = (await contract.getSubmissions(jobId).catch(() => [])) as unknown[];
     return Array.from(raw ?? [])
       .map((item, index): LegacySubmissionRecord | null => {
+        if (source.shape === "v2") {
+          try {
+            const parsed = parseSubmission(item);
+            if (!parsed.agent || parsed.agent.toLowerCase() === ZERO_ADDRESS) return null;
+            return {
+              ...parsed,
+              isLegacy: true,
+              archiveKey: source.key
+            };
+          } catch {
+            return null;
+          }
+        }
         const tuple = Array.isArray(item) ? item : [];
         const candidate = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
         const agent = toString(candidate.agent ?? tuple[0]).trim();
@@ -167,12 +289,13 @@ export async function fetchLegacySubmissions(provider: JsonRpcProvider, jobId: n
           allocatedReward: toString(candidate.allocatedReward ?? tuple[6] ?? "0"),
           buildOnBonus: "0",
           isBuildOnWinner: false,
-          isLegacy: true
+          isLegacy: true,
+          archiveKey: source.key
         };
       })
       .filter((submission): submission is LegacySubmissionRecord => Boolean(submission));
   } catch (error) {
-    console.warn(`[legacy] Could not read legacy submissions for ${jobId}:`, error);
+    console.warn(`[legacy] Could not read archived submissions for ${source.key}:${jobId}:`, error);
     return [];
   }
 }

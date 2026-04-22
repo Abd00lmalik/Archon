@@ -498,11 +498,11 @@ function ensureContractsConfigured() {
   }
 }
 
-function toNumber(input: unknown) {
+function toNumber(input: unknown, fallback = 0) {
   if (typeof input === "bigint") return Number(input);
   if (typeof input === "number") return input;
   const parsed = Number(input);
-  return Number.isNaN(parsed) ? 0 : parsed;
+  return Number.isNaN(parsed) ? fallback : parsed;
 }
 
 function toString(input: unknown) {
@@ -644,41 +644,32 @@ export function deriveDisplayStatus(
   let label: string;
   let color: string;
 
-  if (contractStatus === 0 || contractStatus === 1) {
-    if (deadlinePassed) {
-      label = "Closed";
-      color = "#7A9BB5";
-    } else {
-      label = "Open";
-      color = "#00FFA3";
-    }
-  } else if (contractStatus === 2 || contractStatus === 3) {
-    if (deadlinePassed) {
-      label = isCreator ? "Awaiting Your Selection" : "Under Review";
-      color = "#F5A623";
-    } else {
-      label = "Open";
-      color = "#00FFA3";
-    }
+  if (contractStatus === 4 && revealEnded) {
+    label = "Reveal Ended";
+    color = "#FF6B35";
   } else if (contractStatus === 4) {
-    if (revealActive) {
-      label = "Reveal Phase";
-      color = "#00E5FF";
-    } else if (revealEnded) {
-      label = isCreator ? "Ready to Finalize" : "Reveal Ended";
-      color = "#FF6B35";
-    } else {
-      label = "Reveal Phase";
-      color = "#00E5FF";
-    }
+    label = "Reveal Phase";
+    color = "#00E5FF";
   } else if (contractStatus === 5) {
-    label = viewerSubmitted ? "Approved - Claim" : "Completed";
+    label = "Completed";
     color = "#F5A623";
   } else if (contractStatus === 6) {
     label = "Rejected";
     color = "#FF3366";
+  } else if (contractStatus === 3) {
+    label = "Under Review";
+    color = "#F5A623";
+  } else if (contractStatus === 2) {
+    label = deadlinePassed ? "Awaiting Selection" : "Submitted";
+    color = "#F5A623";
+  } else if ((contractStatus === 0 || contractStatus === 1) && deadlinePassed) {
+    label = "Closed";
+    color = "#7A9BB5";
+  } else if (contractStatus === 0 || contractStatus === 1) {
+    label = "Open";
+    color = "#00FFA3";
   } else {
-    label = "Unknown";
+    label = `Status ${contractStatus}`;
     color = "#7A9BB5";
   }
 
@@ -734,16 +725,8 @@ export function parseJob(rawJob: unknown): JobRecord {
   const candidate = rawJob as Partial<RawJobRecord> & unknown[];
   const deadline = toNumber(candidate.deadline ?? candidate[4]);
   const maxApprovals = toNumber(candidate.maxApprovals ?? candidate[6]);
-  const statusCandidates = [
-    candidate.status,
-    candidate[14],
-    candidate[13],
-    candidate[6],
-    candidate[7]
-  ]
-    .map((value) => toNumber(value))
-    .filter((value, index, list) => !Number.isNaN(value) && list.indexOf(value) === index);
-  const onChainStatus = statusCandidates.find((value) => value >= 0 && value <= 6) ?? -1;
+  const rawStatus = candidate.status ?? candidate[14];
+  const onChainStatus = rawStatus === undefined || rawStatus === null ? -1 : toNumber(rawStatus, -1);
   return {
     jobId: toNumber(candidate.jobId ?? candidate[0]),
     client: toString(candidate.client ?? candidate[1]),
@@ -2383,10 +2366,8 @@ export async function txRespondToSubmission(
   responseType: number,
   contentURI: string
 ): Promise<string> {
-  const contract = getJobContract(signer);
-  const tx = await contract.respondToSubmission(parentSubmissionId, responseType, contentURI);
-  await tx.wait();
-  return tx.hash;
+  const { txHash } = await txRespondWithNanopaymentIntent(signer, parentSubmissionId, responseType, contentURI);
+  return txHash;
 }
 
 export async function txRespondWithNanopaymentIntent(

@@ -6,20 +6,24 @@ import {
   fetchAgentTasksByAddress,
   fetchJobsByAgent,
   fetchJobsByClient,
+  getReadProvider,
   fetchSubmissionForAgent,
   formatTaskTitle,
   JobRecord,
   statusLabel,
   SubmissionRecord
 } from "@/lib/contracts";
+import { fetchLegacySubmissions, fetchLegacyTasks } from "@/lib/legacy-contracts";
 import { UserDisplay } from "@/components/ui/user-display";
 import { getDisplayId, makeTaskUrl } from "@/lib/task-id";
 import { useWallet } from "@/lib/wallet-context";
 
 type JobWithSubmission = {
-  job: JobRecord;
+  job: DisplayWorkJob;
   submission: SubmissionRecord | null;
 };
+
+type DisplayWorkJob = JobRecord & { isPastTask?: boolean; archiveKey?: string };
 
 function submissionActionLabel(submission: SubmissionRecord | null) {
   if (!submission) return "Submit Work";
@@ -30,13 +34,13 @@ function submissionActionLabel(submission: SubmissionRecord | null) {
   return "Open Job";
 }
 
-function taskDisplayKey(job: JobRecord) {
-  return `task-${job.jobId}`;
+function taskDisplayKey(job: DisplayWorkJob) {
+  return `task-${job.isPastTask ? job.archiveKey ?? "v1" : "current"}-${job.jobId}`;
 }
 
 export default function MyWorkPage() {
   const { account } = useWallet();
-  const [jobsPosted, setJobsPosted] = useState<JobRecord[]>([]);
+  const [jobsPosted, setJobsPosted] = useState<DisplayWorkJob[]>([]);
   const [jobsWorking, setJobsWorking] = useState<JobWithSubmission[]>([]);
   const [agentTasks, setAgentTasks] = useState<Awaited<ReturnType<typeof fetchAgentTasksByAddress>>>([]);
   const [displayIds, setDisplayIds] = useState<Record<string, string>>({});
@@ -65,22 +69,36 @@ export default function MyWorkPage() {
       setLoading(true);
       setError("");
       try {
-        const [posted, working, tasks] = await Promise.all([
+        const [posted, working, tasks, legacyTasks] = await Promise.all([
           fetchJobsByClient(account),
           fetchJobsByAgent(account),
-          fetchAgentTasksByAddress(account)
+          fetchAgentTasksByAddress(account),
+          fetchLegacyTasks(getReadProvider())
         ]);
 
         const workingWithSubmission = await Promise.all(
-          working.map(async (job) => ({
+          working.map(async (job): Promise<JobWithSubmission> => ({
             job,
             submission: await fetchSubmissionForAgent(job.jobId, account)
           }))
         );
+        const archivedPosted = legacyTasks.filter(
+          (job) => job.client.toLowerCase() === account.toLowerCase()
+        );
+        const archivedWorking = (
+          await Promise.all(
+            legacyTasks.map(async (job): Promise<JobWithSubmission | null> => {
+              const submissions = await fetchLegacySubmissions(getReadProvider(), job.jobId, job.archiveKey);
+              const submission =
+                submissions.find((entry) => entry.agent.toLowerCase() === account.toLowerCase()) ?? null;
+              return submission ? { job, submission } : null;
+            })
+          )
+        ).filter((entry): entry is JobWithSubmission => Boolean(entry));
 
         if (!active) return;
-        setJobsPosted(posted);
-        setJobsWorking(workingWithSubmission);
+        setJobsPosted([...posted, ...archivedPosted]);
+        setJobsWorking([...workingWithSubmission, ...archivedWorking]);
         setAgentTasks(tasks);
       } catch (loadError) {
         if (!active) return;
@@ -101,7 +119,7 @@ export default function MyWorkPage() {
     const resolve = async () => {
       const map: Record<string, string> = {};
       for (const task of allTasks) {
-        map[taskDisplayKey(task)] = await getDisplayId(task.jobId, false);
+        map[taskDisplayKey(task)] = await getDisplayId(task.jobId, task.isPastTask ?? false, task.archiveKey);
       }
       if (active) setDisplayIds(map);
     };
@@ -155,7 +173,7 @@ export default function MyWorkPage() {
                     <div className="mt-2">
                       <UserDisplay address={job.client} showAvatar={true} avatarSize={22} />
                     </div>
-                    <Link href={makeTaskUrl(job.jobId, false)} className="archon-button-secondary mt-3 inline-flex px-3 py-2 text-xs">
+                    <Link href={makeTaskUrl(job.jobId, job.isPastTask ?? false, job.archiveKey)} className="archon-button-secondary mt-3 inline-flex px-3 py-2 text-xs">
                       Review Submissions
                     </Link>
                   </article>
@@ -180,7 +198,7 @@ export default function MyWorkPage() {
                       <UserDisplay address={job.client} showAvatar={true} avatarSize={22} />
                     </div>
                     {submission?.reviewerNote ? <p className="mt-1 text-xs">Reviewer note: {submission.reviewerNote}</p> : null}
-                    <Link href={makeTaskUrl(job.jobId, false)} className="archon-button-secondary mt-3 inline-flex px-3 py-2 text-xs">
+                    <Link href={makeTaskUrl(job.jobId, job.isPastTask ?? false, job.archiveKey)} className="archon-button-secondary mt-3 inline-flex px-3 py-2 text-xs">
                       {submissionActionLabel(submission)}
                     </Link>
                   </article>

@@ -33,10 +33,6 @@ function formatDeadline(deadline: number) {
   return `${hours}h ${mins}m left`;
 }
 
-function isDeadlinePassed(deadline: number) {
-  return deadline > 0 && Math.floor(Date.now() / 1000) > deadline;
-}
-
 type TaskFilter = "all" | "open" | "submitted" | "reveal" | "closed";
 
 const FILTER_OPTIONS: { value: TaskFilter; label: string; color: string }[] = [
@@ -47,7 +43,32 @@ const FILTER_OPTIONS: { value: TaskFilter; label: string; color: string }[] = [
   { value: "closed", label: "CLOSED", color: "#7A9BB5" },
 ];
 
-type DisplayJobRecord = JobRecord & { isPastTask?: boolean };
+type DisplayJobRecord = JobRecord & { isPastTask?: boolean; archiveKey?: string; archiveOrder?: number };
+
+function taskDisplayKey(task: DisplayJobRecord) {
+  return `${task.isPastTask ? `archive-${task.archiveKey ?? "v1"}` : "current"}-${task.jobId}`;
+}
+
+function matchesFilter(task: DisplayJobRecord, filter: TaskFilter): boolean {
+  if (filter === "all") return true;
+
+  const deadlinePassed = Number(task.deadline) > 0 && Math.floor(Date.now() / 1000) > Number(task.deadline);
+  const status = Number(task.status);
+
+  if (filter === "open") {
+    return (status === 0 || status === 1) && !deadlinePassed;
+  }
+  if (filter === "submitted") {
+    return status === 2 || status === 3;
+  }
+  if (filter === "reveal") {
+    return status === 4;
+  }
+  if (filter === "closed") {
+    return status === 5 || status === 6 || ((status === 0 || status === 1) && deadlinePassed);
+  }
+  return true;
+}
 
 export default function HomePage() {
   const { account } = useWallet();
@@ -90,7 +111,7 @@ export default function HomePage() {
     let active = true;
     fetchLegacyTasks(getReadProvider()).then((tasks) => {
       if (!active) return;
-      console.log("[legacy] Loaded", tasks.length, "legacy tasks");
+      console.log("[legacy] Loaded", tasks.length, "archived tasks");
       setLegacyTasks(tasks);
     });
     return () => {
@@ -105,15 +126,20 @@ export default function HomePage() {
 
   const myTier = useMemo(() => getReputationTier(myScore), [myScore]);
   const allTasks = useMemo<DisplayJobRecord[]>(
-    () =>
-      [
+    () => {
+      const combined: DisplayJobRecord[] = [
         ...jobs.map((job) => ({ ...job, isPastTask: false })),
         ...legacyTasks.map((task) => ({ ...task, isPastTask: true }))
-      ].sort((a, b) => {
+      ];
+      return combined.sort((a, b) => {
         if (!a.isPastTask && b.isPastTask) return -1;
         if (a.isPastTask && !b.isPastTask) return 1;
+        if (a.isPastTask && b.isPastTask && (a.archiveOrder ?? 0) !== (b.archiveOrder ?? 0)) {
+          return (b.archiveOrder ?? 0) - (a.archiveOrder ?? 0);
+        }
         return Number(b.jobId) - Number(a.jobId);
-      }),
+      });
+    },
     [jobs, legacyTasks]
   );
 
@@ -122,8 +148,7 @@ export default function HomePage() {
     const resolve = async () => {
       const map: Record<string, string> = {};
       for (const task of allTasks) {
-        const key = `${task.isPastTask ? "archive" : "current"}-${task.jobId}`;
-        map[key] = await getDisplayId(task.jobId, task.isPastTask ?? false);
+        map[taskDisplayKey(task)] = await getDisplayId(task.jobId, task.isPastTask ?? false, task.archiveKey);
       }
       if (active) setDisplayIds(map);
     };
@@ -137,25 +162,21 @@ export default function HomePage() {
     };
   }, [allTasks]);
 
-  const visibleJobs = useMemo(() => {
-    return allTasks.filter((job) => {
-      if (selectedFilter === "all") return true;
-      if (selectedFilter === "open") {
-        return (job.status === 0 || job.status === 1) && !isDeadlinePassed(job.deadline);
-      }
-      if (selectedFilter === "submitted") {
-        return job.status === 2 || job.status === 3;
-      }
-      if (selectedFilter === "reveal") {
-        return job.status === 4;
-      }
-      if (selectedFilter === "closed") {
-        return job.status === 5 || job.status === 6 || isDeadlinePassed(job.deadline);
-      }
-      return true;
-    });
-  }, [allTasks, selectedFilter]);
-  const hasMore = visibleJobs.length > visibleCount;
+  const filteredJobs = useMemo(
+    () => allTasks.filter((job) => matchesFilter(job, selectedFilter)),
+    [allTasks, selectedFilter]
+  );
+  const displayedJobs = selectedFilter === "all" ? allTasks : filteredJobs.slice(0, visibleCount);
+  const hasMore = selectedFilter !== "all" && filteredJobs.length > visibleCount;
+
+  useEffect(() => {
+    console.log("[taskFeed] V2 total:", jobs.length);
+    console.log("[taskFeed] V1 total:", legacyTasks.filter((task) => task.archiveKey === "v1").length);
+    console.log("[taskFeed] Archived total:", legacyTasks.length);
+    console.log("[taskFeed] Combined:", allTasks.length);
+    console.log("[taskFeed] After filter:", displayedJobs.length);
+    console.log("[taskFeed] Task IDs:", displayedJobs.map((task) => taskDisplayKey(task)));
+  }, [allTasks.length, displayedJobs, jobs.length, legacyTasks]);
 
   const hasStoredWallet =
     hydrated && typeof window !== "undefined" && Boolean(window.localStorage.getItem("archon_last_wallet"));
@@ -191,7 +212,7 @@ export default function HomePage() {
         <div className="space-y-2 border-t border-[var(--border)] pt-4">
           <div className="mono text-xs text-[var(--text-secondary)]">Credentials: {myCredentials.length}</div>
           <div className="mono text-xs text-[var(--text-secondary)]">
-            Tasks Open: {allTasks.filter((job) => (job.status === 0 || job.status === 1) && !isDeadlinePassed(job.deadline)).length}
+            Tasks Open: {allTasks.filter((job) => matchesFilter(job, "open")).length}
           </div>
         </div>
       </aside>
@@ -229,18 +250,18 @@ export default function HomePage() {
 
         {loading ? (
           <div className="panel text-sm text-[var(--text-secondary)]">Loading feed...</div>
-        ) : visibleJobs.length === 0 ? (
+        ) : displayedJobs.length === 0 ? (
           <div className="panel text-sm text-[var(--text-secondary)]">No tasks match this filter yet.</div>
         ) : (
           <>
             <div className="grid gap-4 md:grid-cols-2">
-              {visibleJobs.slice(0, visibleCount).map((task) => {
+              {displayedJobs.map((task) => {
                 const displayStatus = deriveDisplayStatus(task.status, task.deadline, task.revealPhaseEnd ?? 0n);
-                const displayId = displayIds[`${task.isPastTask ? "archive" : "current"}-${task.jobId}`] ?? `#${task.jobId}`;
+                const displayId = displayIds[taskDisplayKey(task)] ?? `#${task.jobId}`;
                 return (
                   <Link
-                    key={`${task.isPastTask ? "archive" : "current"}-${task.jobId}`}
-                    href={makeTaskUrl(task.jobId, task.isPastTask ?? false)}
+                    key={taskDisplayKey(task)}
+                    href={makeTaskUrl(task.jobId, task.isPastTask ?? false, task.archiveKey)}
                     className="card-sharp cursor-pointer overflow-hidden p-0"
                     style={{ transition: "border-color 0.2s, box-shadow 0.2s" }}
                   >
@@ -354,7 +375,7 @@ export default function HomePage() {
                   className="btn-ghost"
                   style={{ minWidth: 200 }}
                 >
-                  Show More Tasks ({visibleJobs.length - visibleCount} remaining)
+                  Show More Tasks ({filteredJobs.length - visibleCount} remaining)
                 </button>
               </div>
             ) : null}

@@ -95,7 +95,7 @@ const TERMINAL_LINES = [
   { delay: 6400, type: "success", text: "> 3 credentials minted - Score: 310 - ARCHITECT" }
 ];
 
-const MOCK_HEATMAP = {
+const SAMPLE_HEATMAP = {
   people: [
     {
       address: "0x7e0A1234567890AbCdEf1234567890AbCdEe3E",
@@ -728,7 +728,7 @@ export default function LandingPage() {
 
       <section className="page-container pb-24">
         <div className="panel signal-map-container">
-          <SignalMap heatmap={MOCK_HEATMAP} loading={false} />
+          <SignalMap heatmap={SAMPLE_HEATMAP} loading={false} />
         </div>
       </section>
 

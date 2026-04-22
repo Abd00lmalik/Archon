@@ -55,7 +55,7 @@ import {
   fetchLegacyJob,
   fetchLegacySubmissions
 } from "@/lib/legacy-contracts";
-import { getDisplayId } from "@/lib/task-id";
+import { getDisplayId, parseTaskRouteParam } from "@/lib/task-id";
 import { useWallet } from "@/lib/wallet-context";
 
 type ViewMode = "signal" | "list" | "timeline";
@@ -94,6 +94,17 @@ function contentToURI(content: string): string {
     type: "archon-response"
   });
   return `data:application/json;base64,${btoa(unescape(encodeURIComponent(json)))}`;
+}
+
+async function retryRead<T>(read: () => Promise<T | null>, retries = 3): Promise<T | null> {
+  for (let attempt = 0; attempt < retries; attempt += 1) {
+    const result = await read().catch(() => null);
+    if (result) return result;
+    if (attempt < retries - 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
+    }
+  }
+  return null;
 }
 
 async function loadSubmissionsFromContract(
@@ -507,18 +518,10 @@ export default function JobDetailsPage() {
   const searchParams = useSearchParams();
   const { account, browserProvider, connect, signer } = useWallet();
   const rawJobParam = params.jobId ?? "";
-  const previousTaskPrefix = "past-";
-  const previousTaskCompatPrefix = ["v", "1", "-"].join("");
-  const isPreviousTaskRoute =
-    rawJobParam.startsWith(previousTaskPrefix) || rawJobParam.startsWith(previousTaskCompatPrefix);
-  const jobId = useMemo(
-    () =>
-      isPreviousTaskRoute
-        ? Number(rawJobParam.replace(previousTaskPrefix, "").replace(previousTaskCompatPrefix, ""))
-        : Number(rawJobParam),
-    [isPreviousTaskRoute, previousTaskCompatPrefix, previousTaskPrefix, rawJobParam]
-  );
-  const forceLegacy = isPreviousTaskRoute || searchParams.get("source") === "legacy";
+  const routeInfo = useMemo(() => parseTaskRouteParam(rawJobParam), [rawJobParam]);
+  const jobId = routeInfo.jobId;
+  const forceLegacy = routeInfo.isArchived || searchParams.get("source") === "legacy";
+  const archiveKey = routeInfo.archiveKey;
 
   const [job, setJob] = useState<JobRecord | null>(null);
   const [isPastTask, setIsPastTask] = useState(false);
@@ -632,16 +635,14 @@ export default function JobDetailsPage() {
     try {
       const readProvider = browserProvider ?? getReadProvider();
       if (forceLegacy) {
-        const [legacyJob, legacySubmissions] = await Promise.all([
-          fetchLegacyJob(getReadProvider(), jobId),
-          fetchLegacySubmissions(getReadProvider(), jobId)
-        ]);
+        const legacyJob = await retryRead(() => fetchLegacyJob(getReadProvider(), jobId, archiveKey));
 
         if (!legacyJob) {
-          setJobError(`Legacy task #${jobId} not found`);
+          setJobError(`Archived task #${jobId} not found`);
           setJob(null);
           return;
         }
+        const legacySubmissions = await fetchLegacySubmissions(getReadProvider(), jobId, legacyJob.archiveKey);
 
         setIsPastTask(true);
         setJob(legacyJob);
@@ -673,18 +674,16 @@ export default function JobDetailsPage() {
         return;
       }
 
-      const jobData = await fetchJob(jobId);
+      const jobData = await retryRead(() => fetchJob(jobId));
       if (!jobData) {
-        const [legacyJob, legacySubmissions] = await Promise.all([
-          fetchLegacyJob(getReadProvider(), jobId),
-          fetchLegacySubmissions(getReadProvider(), jobId)
-        ]);
+        const legacyJob = await retryRead(() => fetchLegacyJob(getReadProvider(), jobId));
 
         if (!legacyJob) {
           setJobError(`Task #${jobId} not found`);
           setJob(null);
           return;
         }
+        const legacySubmissions = await fetchLegacySubmissions(getReadProvider(), jobId, legacyJob.archiveKey);
 
         setIsPastTask(true);
         setJob(legacyJob);
@@ -789,7 +788,7 @@ export default function JobDetailsPage() {
     } finally {
       setJobLoading(false);
     }
-  }, [account, browserProvider, forceLegacy, jobId, rawJobParam]);
+  }, [account, archiveKey, browserProvider, forceLegacy, jobId, rawJobParam]);
 
   const loadHeatmap = useCallback(async () => {
     if (!Number.isInteger(jobId) || jobId < 0 || forceLegacy) {
@@ -1253,14 +1252,14 @@ export default function JobDetailsPage() {
       };
     }
 
-    getDisplayId(job.jobId, isPastTask).then((value) => {
+    getDisplayId(job.jobId, isPastTask, (job as JobRecord & { archiveKey?: string }).archiveKey ?? archiveKey).then((value) => {
       if (active) setDisplayTaskId(value);
     });
 
     return () => {
       active = false;
     };
-  }, [isPastTask, job, jobId, rawJobParam]);
+  }, [archiveKey, isPastTask, job, jobId, rawJobParam]);
 
   useEffect(() => {
     console.log("[revealCheck]", {
