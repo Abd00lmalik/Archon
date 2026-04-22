@@ -1,6 +1,6 @@
 import { Contract } from "ethers";
 import { getReadProvider } from "./contracts";
-import { getLegacyJobContract, getLegacyRegistryContract } from "./legacy-contracts";
+import { fetchLegacyTasks, getLegacyRegistryContract } from "./legacy-contracts";
 import contractsJson from "./generated/contracts.json";
 
 export interface PlatformStats {
@@ -71,7 +71,6 @@ function getJobConfig(addresses: AddressBook): DeploymentContract | undefined {
 }
 
 async function fetchLegacyStats(provider: ReturnType<typeof getReadProvider>) {
-  const job = getLegacyJobContract(provider);
   const registry = getLegacyRegistryContract(provider);
   const creatorSet = new Set<string>();
   let tasks = 0;
@@ -80,26 +79,20 @@ async function fetchLegacyStats(provider: ReturnType<typeof getReadProvider>) {
   let credentials = 0;
 
   try {
-    const total = Number(await job.totalJobs().catch(() => job.nextJobId().catch(() => 0n)));
-    tasks = total;
+    const rows = await fetchLegacyTasks(provider);
+    tasks = rows.length;
 
-    for (let jobId = 0; jobId < Math.min(total, 50); jobId += 1) {
-      try {
-        const row = await job.getJob(jobId);
-        const client = String(row.client ?? row[1] ?? "");
-        const reward = readBigint(row.rewardUSDC ?? row[5] ?? 0n);
-        const paidOut = readBigint(row.paidOutUSDC ?? row[11] ?? 0n);
-        const refunded = Boolean(row.refunded ?? row[12] ?? false);
-        const submissionCount = readNumber(row.submissionCount ?? row[8] ?? 0, 0);
-        if (client && client !== ZERO_ADDRESS) {
-          creatorSet.add(client.toLowerCase());
-        }
-        submissions += submissionCount;
-        if (!refunded) {
-          escrow += clampPositive(reward - paidOut);
-        }
-      } catch {
-        // Skip sparse legacy IDs.
+    for (const row of rows.slice(0, 100)) {
+      const client = String(row.client ?? "");
+      const reward = readBigint(row.rewardUSDC ?? 0n);
+      const paidOut = readBigint(row.paidOutUSDC ?? 0n);
+      const refunded = Boolean(row.refunded ?? false);
+      if (client && client !== ZERO_ADDRESS) {
+        creatorSet.add(client.toLowerCase());
+      }
+      submissions += readNumber(row.submissionCount, 0);
+      if (!refunded) {
+        escrow += clampPositive(reward - paidOut);
       }
     }
   } catch (error) {

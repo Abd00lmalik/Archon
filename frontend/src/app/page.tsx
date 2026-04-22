@@ -10,6 +10,7 @@ import { StatBlock } from "@/components/ui/stat";
 import { ActivityEvent, subscribeToActivity } from "@/lib/activity";
 import {
   CredentialRecord,
+  contractAddresses,
   deriveDisplayStatus,
   fetchAllJobs,
   formatTaskDescription,
@@ -18,7 +19,14 @@ import {
   getReadProvider,
   JobRecord
 } from "@/lib/contracts";
-import { fetchLegacyTasks, LegacyTaskRecord } from "@/lib/legacy-contracts";
+import {
+  fetchLegacyTasks,
+  fetchPrevV2Tasks,
+  LEGACY_ADDRESSES,
+  LegacyTaskRecord,
+  PREV_V2_ADDRESS,
+  PrevV2TaskRecord
+} from "@/lib/legacy-contracts";
 import { fetchUnifiedScore, getReputationTier } from "@/lib/reputation";
 import { getDisplayId, makeTaskUrl } from "@/lib/task-id";
 import { useWallet } from "@/lib/wallet-context";
@@ -43,7 +51,14 @@ const FILTER_OPTIONS: { value: TaskFilter; label: string; color: string }[] = [
   { value: "closed", label: "CLOSED", color: "#7A9BB5" },
 ];
 
-type DisplayJobRecord = JobRecord & { isPastTask?: boolean; archiveKey?: string; archiveOrder?: number };
+type DisplayJobRecord = JobRecord & {
+  isPastTask?: boolean;
+  isPrevV2?: boolean;
+  archiveKey?: string;
+  archiveOrder?: number;
+  contractAddress?: string;
+  isInRevealPhase?: boolean;
+};
 
 function taskDisplayKey(task: DisplayJobRecord) {
   return `${task.isPastTask ? `archive-${task.archiveKey ?? "v1"}` : "current"}-${task.jobId}`;
@@ -76,7 +91,9 @@ export default function HomePage() {
   const [restoreGraceElapsed, setRestoreGraceElapsed] = useState(false);
   const [jobs, setJobs] = useState<JobRecord[]>([]);
   const [legacyTasks, setLegacyTasks] = useState<LegacyTaskRecord[]>([]);
+  const [prevV2Tasks, setPrevV2Tasks] = useState<PrevV2TaskRecord[]>([]);
   const [displayIds, setDisplayIds] = useState<Record<string, string>>({});
+  const [showTaskSources, setShowTaskSources] = useState(true);
   const [myCredentials, setMyCredentials] = useState<CredentialRecord[]>([]);
   const [myScore, setMyScore] = useState(0);
   const [selectedFilter, setSelectedFilter] = useState<TaskFilter>("all");
@@ -111,8 +128,21 @@ export default function HomePage() {
     let active = true;
     fetchLegacyTasks(getReadProvider()).then((tasks) => {
       if (!active) return;
-      console.log("[legacy] Loaded", tasks.length, "archived tasks");
-      setLegacyTasks(tasks);
+      const v1Tasks = tasks.filter((task) => task.archiveKey === "v1");
+      console.log("[legacy] Loaded", v1Tasks.length, "V1 tasks");
+      setLegacyTasks(v1Tasks);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    fetchPrevV2Tasks(getReadProvider()).then((tasks) => {
+      if (!active) return;
+      console.log("[prevV2] Loaded", tasks.length, "tasks");
+      setPrevV2Tasks(tasks);
     });
     return () => {
       active = false;
@@ -129,6 +159,13 @@ export default function HomePage() {
     () => {
       const combined: DisplayJobRecord[] = [
         ...jobs.map((job) => ({ ...job, isPastTask: false })),
+        ...prevV2Tasks.map((task) => ({
+          ...task,
+          isPastTask: true,
+          isPrevV2: true,
+          archiveKey: "prev-v2",
+          contractAddress: PREV_V2_ADDRESS
+        })),
         ...legacyTasks.map((task) => ({ ...task, isPastTask: true }))
       ];
       return combined.sort((a, b) => {
@@ -140,7 +177,7 @@ export default function HomePage() {
         return Number(b.jobId) - Number(a.jobId);
       });
     },
-    [jobs, legacyTasks]
+    [jobs, legacyTasks, prevV2Tasks]
   );
 
   useEffect(() => {
@@ -171,12 +208,13 @@ export default function HomePage() {
 
   useEffect(() => {
     console.log("[taskFeed] V2 total:", jobs.length);
-    console.log("[taskFeed] V1 total:", legacyTasks.filter((task) => task.archiveKey === "v1").length);
-    console.log("[taskFeed] Archived total:", legacyTasks.length);
+    console.log("[taskFeed] PrevV2 total:", prevV2Tasks.length);
+    console.log("[taskFeed] V1 total:", legacyTasks.length);
+    console.log("[taskFeed] Archived total:", legacyTasks.length + prevV2Tasks.length);
     console.log("[taskFeed] Combined:", allTasks.length);
     console.log("[taskFeed] After filter:", displayedJobs.length);
     console.log("[taskFeed] Task IDs:", displayedJobs.map((task) => taskDisplayKey(task)));
-  }, [allTasks.length, displayedJobs, jobs.length, legacyTasks]);
+  }, [allTasks.length, displayedJobs, jobs.length, legacyTasks.length, prevV2Tasks.length]);
 
   const hasStoredWallet =
     hydrated && typeof window !== "undefined" && Boolean(window.localStorage.getItem("archon_last_wallet"));
@@ -247,6 +285,49 @@ export default function HomePage() {
             </button>
           ))}
         </div>
+
+        {showTaskSources ? (
+          <div className="panel-elevated text-xs">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="font-mono font-bold tracking-[0.14em] text-[var(--text-secondary)]">
+                TASK SOURCES
+              </div>
+              <button
+                type="button"
+                className="font-mono text-[10px] text-[var(--text-muted)] hover:text-[var(--arc)]"
+                onClick={() => setShowTaskSources(false)}
+              >
+                hide
+              </button>
+            </div>
+            <div className="space-y-1 font-mono text-[10px] text-[var(--text-muted)]">
+              <div className="flex justify-between gap-3">
+                <span>V1 ({LEGACY_ADDRESSES.job.slice(0, 6)}...{LEGACY_ADDRESSES.job.slice(-4)})</span>
+                <span>{legacyTasks.length} tasks</span>
+              </div>
+              <div className="flex justify-between gap-3">
+                <span>PrevV2 ({PREV_V2_ADDRESS.slice(0, 6)}...{PREV_V2_ADDRESS.slice(-4)})</span>
+                <span>{prevV2Tasks.length} tasks</span>
+              </div>
+              <div className="flex justify-between gap-3">
+                <span>V2 ({contractAddresses.job.slice(0, 6)}...{contractAddresses.job.slice(-4)})</span>
+                <span>{jobs.length} tasks</span>
+              </div>
+              <div className="mt-2 border-t border-[var(--border)] pt-2 flex justify-between gap-3 text-[var(--text-secondary)]">
+                <span>Total in feed</span>
+                <span>{allTasks.length} tasks</span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <button
+            type="button"
+            className="btn-ghost text-xs"
+            onClick={() => setShowTaskSources(true)}
+          >
+            Show Task Sources
+          </button>
+        )}
 
         {loading ? (
           <div className="panel text-sm text-[var(--text-secondary)]">Loading feed...</div>

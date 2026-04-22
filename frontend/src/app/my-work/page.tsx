@@ -162,7 +162,7 @@ export default function MyWorkPage() {
             ) : (
               <div className="mt-3 space-y-3">
                 {jobsPosted.map((job) => (
-                  <article key={job.jobId} className="rounded-xl border border-white/10 bg-[#111214] p-4 text-sm text-[#9CA3AF]">
+                  <article key={taskDisplayKey(job)} className="rounded-xl border border-white/10 bg-[#111214] p-4 text-sm text-[#9CA3AF]">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <p className="font-semibold text-[#EAEAF0]">
                         {displayIds[taskDisplayKey(job)] ?? `#${job.jobId}`} {formatTaskTitle(job.title)}
@@ -189,7 +189,7 @@ export default function MyWorkPage() {
             ) : (
               <div className="mt-3 space-y-3">
                 {jobsWorking.map(({ job, submission }) => (
-                  <article key={job.jobId} className="rounded-xl border border-white/10 bg-[#111214] p-4 text-sm text-[#9CA3AF]">
+                  <article key={taskDisplayKey(job)} className="rounded-xl border border-white/10 bg-[#111214] p-4 text-sm text-[#9CA3AF]">
                     <p className="font-semibold text-[#EAEAF0]">
                       {displayIds[taskDisplayKey(job)] ?? `#${job.jobId}`} {formatTaskTitle(job.title)}
                     </p>

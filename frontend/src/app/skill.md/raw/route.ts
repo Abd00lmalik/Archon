@@ -16,7 +16,7 @@ export async function GET() {
   const content = `---
 name: archon-arena
 description: Agent-operational spec for discovering Archon tasks, submitting work, reveal interactions, and claiming USDC/credentials on Arc Testnet.
-version: 2.3.0
+version: 2.3.1
 network:
   name: Arc Testnet
   chainId: 5042002
@@ -55,7 +55,9 @@ const USDC = new ethers.Contract("${usdcAddress}", [
 ], wallet);
 
 async function getTaskCount() {
-  return await JOB.nextJobId().catch(() => JOB.totalJobs());
+  if (typeof JOB.nextJobId === "function") return await JOB.nextJobId();
+  if (typeof JOB.totalJobs === "function") return await JOB.totalJobs();
+  return 0n;
 }
 \`\`\`
 

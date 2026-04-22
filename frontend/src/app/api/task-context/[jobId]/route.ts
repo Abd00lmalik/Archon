@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ethers } from "ethers";
 import contractsJson from "@/lib/generated/contracts.json";
-import { LEGACY_ADDRESSES } from "@/lib/legacy-contracts";
+import { LEGACY_ADDRESSES, PREV_V2_ADDRESS } from "@/lib/legacy-contracts";
 
 const PAYMENT_ADDRESS = process.env.PLATFORM_TREASURY_ADDRESS ?? "0x25265b9dBEb6c653b0CA281110Bb0697a9685107";
 const PAYMENT_AMOUNT = "10"; // 0.00001 USDC in 6-decimal units.
@@ -178,31 +178,63 @@ async function verifyPayment(parsed: unknown, requirement: PaymentRequirement): 
   return verifyEip3009Authorization(parsed, requirement);
 }
 
-async function readTask(jobId: number) {
+function parseTaskParam(raw: string): { jobId: number; source: "auto" | "v1" | "prev-v2" } {
+  if (raw.startsWith("v1-")) return { jobId: Number(raw.replace("v1-", "")), source: "v1" };
+  if (raw.startsWith("pv2-")) return { jobId: Number(raw.replace("pv2-", "")), source: "prev-v2" };
+  return { jobId: Number(raw), source: "auto" };
+}
+
+async function readTask(rawJobId: string) {
+  const { jobId, source } = parseTaskParam(rawJobId);
+  if (!Number.isFinite(jobId)) throw new Error("Invalid task id");
+
   const provider = new ethers.JsonRpcProvider(RPC_URL);
   const contracts = (contractsJson as { contracts?: Record<string, { address?: string; abi?: ethers.InterfaceAbi }> }).contracts ?? {};
   const jobConfig = contracts.jobContract ?? contracts.job;
+  const readCurrentShape = (job: Record<string, unknown> & unknown[], source: string) => ({
+    jobId,
+    source,
+    title: String(job.title ?? job[2] ?? ""),
+    description: String(job.description ?? job[3] ?? ""),
+    acceptanceCriteria: String(job.description ?? job[3] ?? ""),
+    rewardUSDC: Number(job.rewardUSDC ?? job[5] ?? 0n) / 1e6,
+    deadline: Number(job.deadline ?? job[4] ?? 0),
+    maxApprovals: Number(job.maxApprovals ?? job[6] ?? 0),
+    submissionCount: Number(job.submissionCount ?? job[9] ?? 0)
+  });
 
-  if (jobConfig?.address && jobConfig.abi) {
+  if (jobConfig?.address && jobConfig.abi && source === "auto") {
     try {
       const jobContract = new ethers.Contract(jobConfig.address, jobConfig.abi, provider);
       const job = await jobContract.getJob(jobId);
       const client = String(job.client ?? job[1] ?? "");
       if (client && client !== ethers.ZeroAddress) {
-        return {
-          jobId,
-          title: String(job.title ?? job[2] ?? ""),
-          description: String(job.description ?? job[3] ?? ""),
-          acceptanceCriteria: String(job.description ?? job[3] ?? ""),
-          rewardUSDC: Number(job.rewardUSDC ?? job[5] ?? 0n) / 1e6,
-          deadline: Number(job.deadline ?? job[4] ?? 0),
-          maxApprovals: Number(job.maxApprovals ?? job[6] ?? 0),
-          submissionCount: Number(job.submissionCount ?? job[9] ?? 0)
-        };
+        return readCurrentShape(job as Record<string, unknown> & unknown[], "current-v2");
       }
     } catch {
-      // Older tasks are still readable from the previous contract for continuity.
+      // Archived contracts below preserve testnet continuity.
     }
+
+    try {
+      const previousV2 = new ethers.Contract(PREV_V2_ADDRESS, jobConfig.abi, provider);
+      const job = await previousV2.getJob(jobId);
+      const client = String(job.client ?? job[1] ?? "");
+      if (client && client !== ethers.ZeroAddress) {
+        return readCurrentShape(job as Record<string, unknown> & unknown[], "prev-v2");
+      }
+    } catch {
+      // Fall through to the original V1 contract.
+    }
+  }
+
+  if (jobConfig?.abi && source === "prev-v2") {
+    const previousV2 = new ethers.Contract(PREV_V2_ADDRESS, jobConfig.abi, provider);
+    const job = await previousV2.getJob(jobId);
+    const client = String(job.client ?? job[1] ?? "");
+    if (client && client !== ethers.ZeroAddress) {
+      return readCurrentShape(job as Record<string, unknown> & unknown[], "prev-v2");
+    }
+    throw new Error("Task not found");
   }
 
   const previousContract = new ethers.Contract(LEGACY_ADDRESSES.job, LEGACY_JOB_ABI, provider);
@@ -214,6 +246,7 @@ async function readTask(jobId: number) {
 
   return {
     jobId,
+    source: "v1",
     title: String(job.title ?? job[2] ?? ""),
     description: String(job.description ?? job[3] ?? ""),
     acceptanceCriteria: String(job.description ?? job[3] ?? ""),
@@ -267,7 +300,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ job
   }
 
   try {
-    const task = await readTask(Number(jobId));
+    const task = await readTask(jobId);
     return NextResponse.json(
       {
         ...task,

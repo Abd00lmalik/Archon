@@ -22,9 +22,11 @@ export type ParsedTaskRoute = {
   archiveKey?: string;
 };
 
-export function makeTaskUrl(jobId: number, isLegacy: boolean, archiveKey?: string): string {
+export function makeTaskUrl(jobId: number, isLegacy: boolean, archiveKeyOrIsPrevV2?: string | boolean): string {
   if (!isLegacy) return `/job/${jobId}`;
-  return archiveKey ? `/job/past-${archiveKey}-${jobId}` : `/job/past-${jobId}`;
+  if (archiveKeyOrIsPrevV2 === true || archiveKeyOrIsPrevV2 === "prev-v2") return `/job/pv2-${jobId}`;
+  if (archiveKeyOrIsPrevV2 === "v1" || archiveKeyOrIsPrevV2 === undefined) return `/job/v1-${jobId}`;
+  return `/job/past-${archiveKeyOrIsPrevV2}-${jobId}`;
 }
 
 export function parseTaskRouteParam(rawParam: string): ParsedTaskRoute {
@@ -33,6 +35,14 @@ export function parseTaskRouteParam(rawParam: string): ParsedTaskRoute {
       jobId: Number(rawParam.replace("v1-", "")),
       isArchived: true,
       archiveKey: "v1"
+    };
+  }
+
+  if (rawParam.startsWith("pv2-")) {
+    return {
+      jobId: Number(rawParam.replace("pv2-", "")),
+      isArchived: true,
+      archiveKey: "prev-v2"
     };
   }
 

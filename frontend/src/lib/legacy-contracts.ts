@@ -10,12 +10,18 @@ export const LEGACY_ADDRESSES = {
   credentialHook: "0x0939493F3ba9B96c381110c29fCe85788B8da28a"
 } as const;
 
+export const PREV_V2_ADDRESS = "0xB099Ad4Bd472a0Ee17cDbe3C29a10E1A84d52363";
+
 export type LegacyTaskRecord = JobRecord & {
   isLegacy: true;
+  isPrevV2?: boolean;
   archiveKey: string;
   archiveAddress: string;
+  contractAddress?: string;
   archiveOrder: number;
+  isInRevealPhase?: boolean;
 };
+export type PrevV2TaskRecord = LegacyTaskRecord & { isPrevV2: true; contractAddress: string };
 export type LegacySubmissionRecord = SubmissionRecord & { isLegacy: true; archiveKey: string };
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
@@ -41,7 +47,7 @@ export const ARCHIVED_JOB_DEPLOYMENTS = [
   },
   {
     key: "prev-v2",
-    address: "0xB099Ad4Bd472a0Ee17cDbe3C29a10E1A84d52363",
+    address: PREV_V2_ADDRESS,
     abi: currentJobAbi,
     order: 1,
     shape: "v2"
@@ -120,15 +126,40 @@ function parseArchivedJob(
     status,
     revealPhaseEnd: 0n,
     isLegacy: true,
+    isPrevV2: source.key === "prev-v2",
     archiveKey: source.key,
     archiveAddress: source.address,
+    contractAddress: source.address,
     archiveOrder: source.order
+  };
+}
+
+async function hydrateArchivedRevealFields(
+  contract: Contract,
+  task: LegacyTaskRecord,
+  source: ArchivedJobDeployment
+): Promise<LegacyTaskRecord> {
+  if (source.shape !== "v2") return task;
+
+  const [isInRevealPhase, revealEnd] = await Promise.all([
+    contract.isInRevealPhase(task.jobId).catch(() => false),
+    contract.getRevealPhaseEnd(task.jobId).catch(() => 0n)
+  ]);
+
+  return {
+    ...task,
+    isInRevealPhase: Boolean(isInRevealPhase),
+    revealPhaseEnd: BigInt(revealEnd ?? 0n)
   };
 }
 
 export function getLegacyJobContract(provider: JsonRpcProvider, sourceKey = "v1") {
   const source = getArchivedJobDeployment(sourceKey);
   return new Contract(source.address, source.abi as InterfaceAbi, provider);
+}
+
+export function getPrevV2JobContract(provider: JsonRpcProvider) {
+  return getLegacyJobContract(provider, "prev-v2");
 }
 
 export function getLegacyRegistryContract(provider: JsonRpcProvider) {
@@ -142,17 +173,27 @@ export async function fetchLegacyTasks(provider: JsonRpcProvider): Promise<Legac
     const contract = getLegacyJobContract(provider, source.key);
 
     try {
-      const all = await contract.getAllJobs().catch(() => null);
+      const all =
+        typeof contract.getAllJobs === "function"
+          ? await contract.getAllJobs().catch(() => null)
+          : null;
       if (Array.isArray(all) && all.length > 0) {
-        all.forEach((raw, index) => {
+        for (const [index, raw] of Array.from(all).entries()) {
           const parsed = parseArchivedJob(raw, index, source);
-          if (parsed) tasks.push(parsed);
-        });
+          if (parsed) tasks.push(await hydrateArchivedRevealFields(contract, parsed, source));
+        }
         continue;
       }
 
-      const nextJobId = await contract.nextJobId().catch(() => null);
-      const totalRaw = nextJobId ?? (await contract.totalJobs().catch(() => 0n));
+      const nextJobId =
+        typeof contract.nextJobId === "function"
+          ? await contract.nextJobId().catch(() => null)
+          : null;
+      const totalRaw =
+        nextJobId ??
+        (typeof contract.totalJobs === "function"
+          ? await contract.totalJobs().catch(() => 0n)
+          : 0n);
       const count = Number(totalRaw);
       const seen = new Set<number>();
 
@@ -160,7 +201,7 @@ export async function fetchLegacyTasks(provider: JsonRpcProvider): Promise<Legac
         try {
           const parsed = parseArchivedJob(await contract.getJob(i), i, source);
           if (parsed) {
-            tasks.push(parsed);
+            tasks.push(await hydrateArchivedRevealFields(contract, parsed, source));
             seen.add(parsed.jobId);
           }
         } catch {
@@ -173,7 +214,7 @@ export async function fetchLegacyTasks(provider: JsonRpcProvider): Promise<Legac
           if (seen.has(i)) continue;
           try {
             const parsed = parseArchivedJob(await contract.getJob(i), i, source);
-            if (parsed) tasks.push(parsed);
+            if (parsed) tasks.push(await hydrateArchivedRevealFields(contract, parsed, source));
           } catch {
             // Some archived deployments are zero-based.
           }
@@ -182,6 +223,40 @@ export async function fetchLegacyTasks(provider: JsonRpcProvider): Promise<Legac
     } catch (error) {
       console.warn(`[legacy] Could not read archived tasks from ${source.key}:`, error);
     }
+  }
+
+  return tasks;
+}
+
+export async function fetchPrevV2Tasks(provider: JsonRpcProvider): Promise<PrevV2TaskRecord[]> {
+  const contract = getPrevV2JobContract(provider);
+  const source = getArchivedJobDeployment("prev-v2");
+  const tasks: PrevV2TaskRecord[] = [];
+
+  try {
+    const total =
+      typeof contract.totalJobs === "function"
+        ? await contract.totalJobs().catch(() =>
+            typeof contract.nextJobId === "function" ? contract.nextJobId().catch(() => 0n) : 0n
+          )
+        : typeof contract.nextJobId === "function"
+          ? await contract.nextJobId().catch(() => 0n)
+          : 0n;
+
+    for (let i = 0; i <= Number(total); i += 1) {
+      const raw = await contract.getJob(i).catch(() => null);
+      if (!raw) continue;
+      const parsed = parseArchivedJob(raw, i, source);
+      if (!parsed) continue;
+      const hydrated = await hydrateArchivedRevealFields(contract, parsed, source);
+      tasks.push({
+        ...hydrated,
+        isPrevV2: true,
+        contractAddress: PREV_V2_ADDRESS
+      });
+    }
+  } catch (error) {
+    console.warn("[prevV2] fetchPrevV2Tasks failed:", error);
   }
 
   return tasks;
@@ -200,7 +275,7 @@ export async function fetchLegacyJob(
     try {
       const contract = getLegacyJobContract(provider, source.key);
       const parsed = parseArchivedJob(await contract.getJob(jobId), jobId, source);
-      if (parsed) return parsed;
+      if (parsed) return await hydrateArchivedRevealFields(contract, parsed, source);
     } catch {
       // Try the next archived source.
     }
@@ -214,12 +289,22 @@ export async function fetchLegacyTaskCount(provider: JsonRpcProvider): Promise<n
   for (const source of ARCHIVED_JOB_DEPLOYMENTS) {
     try {
       const contract = getLegacyJobContract(provider, source.key);
-      const all = await contract.getAllJobs().catch(() => null);
+      const all =
+        typeof contract.getAllJobs === "function"
+          ? await contract.getAllJobs().catch(() => null)
+          : null;
       if (Array.isArray(all)) {
         totalCount += all.filter((raw, index) => parseArchivedJob(raw, index, source)).length;
         continue;
       }
-      const total = await contract.nextJobId().catch(() => contract.totalJobs().catch(() => 0n));
+      const total =
+        typeof contract.nextJobId === "function"
+          ? await contract.nextJobId().catch(() =>
+              typeof contract.totalJobs === "function" ? contract.totalJobs().catch(() => 0n) : 0n
+            )
+          : typeof contract.totalJobs === "function"
+            ? await contract.totalJobs().catch(() => 0n)
+            : 0n;
       totalCount += Number(total);
     } catch {
       // Ignore unreadable archives.
@@ -236,11 +321,21 @@ export async function fetchArchivedTaskOffset(provider: JsonRpcProvider, sourceK
     if (source.key === sourceKey) return offset;
     try {
       const contract = getLegacyJobContract(provider, source.key);
-      const all = await contract.getAllJobs().catch(() => null);
+      const all =
+        typeof contract.getAllJobs === "function"
+          ? await contract.getAllJobs().catch(() => null)
+          : null;
       if (Array.isArray(all)) {
         offset += all.filter((raw, index) => parseArchivedJob(raw, index, source)).length;
       } else {
-        const total = await contract.nextJobId().catch(() => contract.totalJobs().catch(() => 0n));
+        const total =
+          typeof contract.nextJobId === "function"
+            ? await contract.nextJobId().catch(() =>
+                typeof contract.totalJobs === "function" ? contract.totalJobs().catch(() => 0n) : 0n
+              )
+            : typeof contract.totalJobs === "function"
+              ? await contract.totalJobs().catch(() => 0n)
+              : 0n;
         offset += Number(total);
       }
     } catch {
