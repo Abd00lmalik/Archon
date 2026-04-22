@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import SignalMap from "@/components/signal-map";
 import { UserDisplay } from "@/components/ui/user-display";
 import { buildTaskHeatmap, TaskHeatmap } from "@/lib/signal-map";
@@ -29,8 +29,8 @@ import {
   txReturnStake,
   ZERO_ADDRESS
 } from "@/lib/contracts";
-import { fetchAllTasks, fetchTaskById, getContractForSource, loadTaskSubmissions, unifiedTaskToJobRecord, UnifiedTask } from "@/lib/task-adapter";
-import { parseTaskRouteParam } from "@/lib/task-id";
+import { fetchAllTasks, getContractForSource, loadTaskSubmissions, unifiedTaskToJobRecord, UnifiedTask } from "@/lib/task-adapter";
+import { formatDisplayId, parseTaskUrl } from "@/lib/task-id";
 import { useWallet } from "@/lib/wallet-context";
 
 type ViewMode = "signal" | "list" | "timeline";
@@ -411,18 +411,16 @@ function FinalistSelectionPanel({
 export default function JobDetailsPage() {
   const params = useParams<{ jobId: string }>();
   const router = useRouter();
-  const searchParams = useSearchParams();
   const { account, browserProvider, connect, signer } = useWallet();
   const rawJobParam = params.jobId ?? "";
-  const routeInfo = useMemo(() => parseTaskRouteParam(rawJobParam), [rawJobParam]);
-  const routeJobId = routeInfo.jobId;
-  const forceLegacy = routeInfo.isArchived || searchParams.get("source") === "legacy";
-  const archiveKey = routeInfo.archiveKey;
+  const parsedRoute = useMemo(() => parseTaskUrl(rawJobParam), [rawJobParam]);
 
   const [task, setTask] = useState<UnifiedTask | null>(null);
   const [job, setJob] = useState<JobRecord | null>(null);
-  const jobId = task?.jobId ?? routeJobId;
-  const [displayTaskId, setDisplayTaskId] = useState(`#${Number.isFinite(routeJobId) ? routeJobId : rawJobParam}`);
+  const jobId = parsedRoute?.contractJobId ?? -1;
+  const [displayTaskId, setDisplayTaskId] = useState(
+    parsedRoute ? formatDisplayId(parsedRoute.source, parsedRoute.contractJobId) : `#${rawJobParam}`
+  );
   const [jobLoading, setJobLoading] = useState(true);
   const [jobError, setJobError] = useState<string | null>(null);
   const [submissions, setSubmissions] = useState<SubmissionRecord[]>([]);
@@ -525,32 +523,25 @@ export default function JobDetailsPage() {
   };
 
   const loadTask = useCallback(async () => {
-    if (!Number.isInteger(routeJobId) || routeJobId < 0) {
+    if (!parsedRoute) {
       setJobLoading(false);
       setJobError(`Invalid task ID: ${rawJobParam}`);
       setJob(null);
+      setTask(null);
       return;
     }
 
     setJobLoading(true);
     setJobError(null);
+    setJob(null);
+    setTask(null);
 
     try {
       const readProvider = browserProvider ?? getReadProvider();
-      const allTasksPromise = fetchAllTasks(getReadProvider());
-      const displayId = Number(rawJobParam);
-      let unifiedTask =
-        !forceLegacy && Number.isInteger(displayId) && displayId > 0
-          ? await fetchTaskById(displayId, getReadProvider())
-          : null;
-
-      if (!unifiedTask) {
-        const allTasks = await allTasksPromise;
-        const sourceId = archiveKey === "prev-v2" ? "prev" : archiveKey === "v1" ? "archive" : "current";
-        unifiedTask = forceLegacy
-          ? allTasks.find((candidate) => candidate.sourceId === sourceId && candidate.jobId === routeJobId) ?? null
-          : allTasks.find((candidate) => candidate.sourceId === "current" && candidate.jobId === routeJobId) ?? null;
-      }
+      const allTasks = await fetchAllTasks(getReadProvider());
+      const unifiedTask = allTasks.find(
+        (candidate) => candidate.source === parsedRoute.source && candidate.jobId === parsedRoute.contractJobId
+      ) ?? null;
 
       if (!unifiedTask) {
         setJobError(`Task #${rawJobParam} not found`);
@@ -619,7 +610,7 @@ export default function JobDetailsPage() {
       setRevealPhaseEnd(revealEnd);
       setIsRevealPhase(revealOpen);
       setTaskEconomy(economy);
-      setCreatorPostedCount((await allTasksPromise).filter((candidate) => candidate.client.toLowerCase() === jobData.client.toLowerCase()).length);
+      setCreatorPostedCount(allTasks.filter((candidate) => candidate.client.toLowerCase() === jobData.client.toLowerCase()).length);
       setBuildOnParents(
         parentEntries.reduce<Record<string, string>>((acc, [key, value]) => {
           acc[key] = value;
@@ -649,7 +640,7 @@ export default function JobDetailsPage() {
     } finally {
       setJobLoading(false);
     }
-  }, [account, archiveKey, browserProvider, forceLegacy, rawJobParam, routeJobId]);
+  }, [account, browserProvider, parsedRoute, rawJobParam]);
 
   const loadHeatmap = useCallback(async () => {
     if (!task?.caps.hasSignalMap || !Number.isInteger(task.jobId) || task.jobId < 0) {
@@ -672,8 +663,11 @@ export default function JobDetailsPage() {
 
   useEffect(() => {
     void loadTask();
+  }, [loadTask]);
+
+  useEffect(() => {
     void loadHeatmap();
-  }, [loadTask, loadHeatmap]);
+  }, [loadHeatmap]);
 
   useEffect(() => {
     if (task && !task.caps.hasSignalMap && viewMode === "signal") {
@@ -1131,7 +1125,7 @@ export default function JobDetailsPage() {
   useEffect(() => {
     let active = true;
     if (!job || !task) {
-      setDisplayTaskId(`#${Number.isFinite(routeJobId) ? routeJobId : rawJobParam}`);
+      setDisplayTaskId(parsedRoute ? formatDisplayId(parsedRoute.source, parsedRoute.contractJobId) : `#${rawJobParam}`);
       return () => {
         active = false;
       };
@@ -1142,7 +1136,7 @@ export default function JobDetailsPage() {
     return () => {
       active = false;
     };
-  }, [job, rawJobParam, routeJobId, task]);
+  }, [job, parsedRoute, rawJobParam, task]);
 
   useEffect(() => {
     console.log("[revealCheck]", {

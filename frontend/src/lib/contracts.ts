@@ -638,7 +638,7 @@ export function deriveDisplayStatus(
   const deadlineSec = Number(deadline ?? 0);
   const revealEndSec = Number(revealPhaseEnd ?? 0);
   const deadlinePassed = deadlineSec > 0 && nowSec > deadlineSec;
-  const revealActive = contractStatus === 4 && revealEndSec > 0 && nowSec <= revealEndSec;
+  const revealActive = contractStatus === 4 && (revealEndSec === 0 || nowSec <= revealEndSec);
   const revealEnded = contractStatus === 4 && revealEndSec > 0 && nowSec > revealEndSec;
 
   let label: string;
@@ -656,11 +656,8 @@ export function deriveDisplayStatus(
   } else if (contractStatus === 6) {
     label = "Rejected";
     color = "#FF3366";
-  } else if (contractStatus === 3) {
-    label = "Under Review";
-    color = "#F5A623";
-  } else if (contractStatus === 2) {
-    label = deadlinePassed ? "Awaiting Selection" : "Submitted";
+  } else if (contractStatus === 2 || contractStatus === 3) {
+    label = viewerSubmitted === true && !isCreator ? "Submitted" : "Under Review";
     color = "#F5A623";
   } else if ((contractStatus === 0 || contractStatus === 1) && deadlinePassed) {
     label = "Closed";
@@ -691,7 +688,7 @@ export function deriveDisplayStatus(
     canAutoReveal:
       deadlinePassed &&
       (contractStatus === 0 || contractStatus === 1 || contractStatus === 2),
-    canFinalize: isCreator === true && revealEnded,
+    canFinalize: isCreator === true && contractStatus === 4 && revealEnded,
     canInteract: revealActive && !isCreator,
     canClaim: contractStatus === 5 && viewerSubmitted === true
   };

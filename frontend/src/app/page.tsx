@@ -30,7 +30,7 @@ function formatDeadline(deadline: bigint | number) {
   return `${hours}h ${mins}m left`;
 }
 
-type TaskFilter = "all" | "open" | "submitted" | "reveal" | "closed";
+type TaskFilter = "all" | "open" | "submitted" | "reveal" | "closed" | "completed";
 
 const FILTER_OPTIONS: { value: TaskFilter; label: string; color: string }[] = [
   { value: "all", label: "ALL", color: "#E8F4FD" },
@@ -38,25 +38,31 @@ const FILTER_OPTIONS: { value: TaskFilter; label: string; color: string }[] = [
   { value: "submitted", label: "SUBMITTED", color: "#F5A623" },
   { value: "reveal", label: "REVEAL PHASE", color: "#00E5FF" },
   { value: "closed", label: "CLOSED", color: "#7A9BB5" },
+  { value: "completed", label: "COMPLETED", color: "#F5A623" },
 ];
 
 function matchesFilter(task: UnifiedTask, filter: TaskFilter): boolean {
   if (filter === "all") return true;
 
-  const deadlinePassed = Number(task.deadline) > 0 && Math.floor(Date.now() / 1000) > Number(task.deadline);
   const status = Number(task.status);
+  const deadline = Number(task.deadline);
+  const isReveal = status === 4 || Boolean(task.isInRevealPhase);
+  const isOpen = (status === 0 || status === 1) && deadline > Math.floor(Date.now() / 1000);
 
   if (filter === "open") {
-    return (status === 0 || status === 1) && !deadlinePassed;
+    return isOpen;
   }
   if (filter === "submitted") {
     return status === 2 || status === 3;
   }
   if (filter === "reveal") {
-    return status === 4 || task.isInRevealPhase;
+    return isReveal;
   }
   if (filter === "closed") {
-    return status === 5 || status === 6 || ((status === 0 || status === 1) && deadlinePassed);
+    return !isOpen && !isReveal && status < 5;
+  }
+  if (filter === "completed") {
+    return status === 5 || status === 6;
   }
   return true;
 }

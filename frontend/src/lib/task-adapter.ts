@@ -10,6 +10,7 @@ import {
   SubmissionRecord,
   ZERO_ADDRESS
 } from "./contracts";
+import { getDisplayId, makeTaskUrl, TaskSource } from "./task-id";
 
 const V1_JOB_ADDRESS = "0xEEF4C172ea2A8AB184CA5d121D142789F78BFb16";
 
@@ -25,6 +26,7 @@ const V1_JOB_ABI = [
 
 type RawSource = {
   id: string;
+  source: TaskSource;
   address: string;
   abi: unknown[];
   version: "current" | "previous" | "archive";
@@ -56,6 +58,7 @@ type ContractsJsonShape = {
 export interface UnifiedTask {
   jobId: number;
   displayId: number;
+  source: TaskSource;
   sourceId: string;
   sourceAddress: string;
   client: string;
@@ -139,6 +142,7 @@ function deploymentSources(): RawSource[] {
   const prev = contracts.prevJobContract?.address
     ? [{
         id: "prev",
+        source: "PrevV2" as const,
         address: contracts.prevJobContract.address as string,
         abi: (contracts.prevJobContract.abi ?? currentAbi) as unknown[],
         version: "previous" as const,
@@ -159,6 +163,7 @@ function deploymentSources(): RawSource[] {
   return [
     {
       id: "archive",
+      source: "V1" as const,
       address: V1_JOB_ADDRESS,
       abi: V1_JOB_ABI,
       version: "archive",
@@ -177,6 +182,7 @@ function deploymentSources(): RawSource[] {
     ...prev,
     {
       id: "current",
+      source: "CurrV2" as const,
       address: contracts.jobContract.address as string,
       abi: currentAbi,
       version: "current",
@@ -212,7 +218,7 @@ export function getTaskSource(sourceId: string) {
   return source;
 }
 
-function normalizeArchiveJob(raw: unknown): Omit<UnifiedTask, "displayId" | "sourceId" | "sourceAddress" | "caps"> {
+function normalizeArchiveJob(raw: unknown): Omit<UnifiedTask, "displayId" | "source" | "sourceId" | "sourceAddress" | "caps"> {
   const row = raw as Record<string, unknown> & unknown[];
   const deadline = toBigInt(row.deadline ?? row[4]);
   const refunded = toBool(row.refunded ?? row[12]);
@@ -247,7 +253,7 @@ async function normalizeModernJob(
   source: RawSource,
   contract: Contract,
   raw: unknown
-): Promise<Omit<UnifiedTask, "displayId" | "sourceId" | "sourceAddress" | "caps">> {
+): Promise<Omit<UnifiedTask, "displayId" | "source" | "sourceId" | "sourceAddress" | "caps">> {
   const parsed = parseJob(raw);
   const revealPhaseEnd = source.caps.signalMap
     ? toBigInt(await contract.getRevealPhaseEnd(parsed.jobId).catch(() => 0n))
@@ -279,7 +285,7 @@ async function normalizeModernJob(
 
 function withCapabilities(
   source: RawSource,
-  task: Omit<UnifiedTask, "displayId" | "sourceId" | "sourceAddress" | "caps">,
+  task: Omit<UnifiedTask, "displayId" | "source" | "sourceId" | "sourceAddress" | "caps">,
   displayId: number
 ): UnifiedTask {
   const now = BigInt(Math.floor(Date.now() / 1000));
@@ -289,6 +295,7 @@ function withCapabilities(
   return {
     ...task,
     displayId,
+    source: source.source,
     sourceId: source.id,
     sourceAddress: source.address,
     caps: {
@@ -305,7 +312,7 @@ function withCapabilities(
   };
 }
 
-async function readSourceTasks(source: RawSource, provider: BrowserProvider | JsonRpcProvider): Promise<Array<Omit<UnifiedTask, "displayId" | "sourceId" | "sourceAddress" | "caps">>> {
+async function readSourceTasks(source: RawSource, provider: BrowserProvider | JsonRpcProvider): Promise<Array<Omit<UnifiedTask, "displayId" | "source" | "sourceId" | "sourceAddress" | "caps">>> {
   const contract = new Contract(source.address, source.abi as InterfaceAbi, provider);
 
   if (source.version === "archive") {
@@ -325,7 +332,7 @@ async function readSourceTasks(source: RawSource, provider: BrowserProvider | Js
     }
   }
 
-  const tasks: Array<Omit<UnifiedTask, "displayId" | "sourceId" | "sourceAddress" | "caps">> = [];
+  const tasks: Array<Omit<UnifiedTask, "displayId" | "source" | "sourceId" | "sourceAddress" | "caps">> = [];
   const count = Number(total);
   const start = source.version === "archive" ? 0 : 0;
   const endExclusive = source.version === "archive" ? count + 1 : count;
@@ -347,7 +354,6 @@ async function readSourceTasks(source: RawSource, provider: BrowserProvider | Js
 
 export async function fetchAllTasks(provider: JsonRpcProvider | BrowserProvider): Promise<UnifiedTask[]> {
   const chronological: UnifiedTask[] = [];
-  let displayId = 0;
 
   for (const source of TASK_SOURCES) {
     const sourceTasks = await readSourceTasks(source, provider).catch((error) => {
@@ -356,7 +362,7 @@ export async function fetchAllTasks(provider: JsonRpcProvider | BrowserProvider)
     });
     console.log(`[adapter] source ${source.id} has ${sourceTasks.length} task(s)`);
     for (const sourceTask of sourceTasks.sort((a, b) => a.jobId - b.jobId)) {
-      displayId += 1;
+      const displayId = getDisplayId(source.source, sourceTask.jobId);
       chronological.push(withCapabilities(source, sourceTask, displayId));
     }
   }
@@ -374,7 +380,7 @@ export async function fetchTaskById(
 }
 
 export function getTaskUrl(task: UnifiedTask): string {
-  return `/job/${task.displayId}`;
+  return makeTaskUrl(task.source, task.jobId);
 }
 
 export function unifiedTaskToJobRecord(task: UnifiedTask): JobRecord {

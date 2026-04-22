@@ -1,83 +1,54 @@
-import { getReadProvider } from "./contracts";
-import { fetchArchivedTaskOffset, fetchLegacyTaskCount } from "./legacy-contracts";
+// Canonical task identity across all known testnet job deployments.
+// Display IDs are human-facing only; URLs carry the source prefix so reads
+// always land on the exact contract that owns the task.
 
-let _legacyTaskCount: number | null = null;
+export type TaskSource = "V1" | "PrevV2" | "CurrV2";
 
-export async function getLegacyTaskCount(): Promise<number> {
-  if (_legacyTaskCount !== null) return _legacyTaskCount;
-
-  try {
-    const provider = getReadProvider();
-    _legacyTaskCount = await fetchLegacyTaskCount(provider);
-  } catch {
-    _legacyTaskCount = 0;
-  }
-
-  return _legacyTaskCount;
-}
-
-export type ParsedTaskRoute = {
-  jobId: number;
-  isArchived: boolean;
-  archiveKey?: string;
+export const SOURCE_OFFSETS: Record<TaskSource, number> = {
+  V1: 0,
+  PrevV2: 11,
+  CurrV2: 12
 };
 
-export function makeTaskUrl(jobId: number, isLegacy: boolean, archiveKeyOrIsPrevV2?: string | boolean): string {
-  if (!isLegacy) return `/job/${jobId}`;
-  if (archiveKeyOrIsPrevV2 === true || archiveKeyOrIsPrevV2 === "prev-v2") return `/job/pv2-${jobId}`;
-  if (archiveKeyOrIsPrevV2 === "v1" || archiveKeyOrIsPrevV2 === undefined) return `/job/v1-${jobId}`;
-  return `/job/past-${archiveKeyOrIsPrevV2}-${jobId}`;
+const SOURCE_PREFIX: Record<TaskSource, string> = {
+  V1: "v1",
+  PrevV2: "pv2",
+  CurrV2: "v2"
+};
+
+export function getDisplayId(source: TaskSource, contractJobId: number): number {
+  const offset = SOURCE_OFFSETS[source] ?? 0;
+  return offset + contractJobId + 1;
 }
 
-export function parseTaskRouteParam(rawParam: string): ParsedTaskRoute {
-  if (rawParam.startsWith("v1-")) {
-    return {
-      jobId: Number(rawParam.replace("v1-", "")),
-      isArchived: true,
-      archiveKey: "v1"
-    };
-  }
-
-  if (rawParam.startsWith("pv2-")) {
-    return {
-      jobId: Number(rawParam.replace("pv2-", "")),
-      isArchived: true,
-      archiveKey: "prev-v2"
-    };
-  }
-
-  if (!rawParam.startsWith("past-")) {
-    return {
-      jobId: Number(rawParam),
-      isArchived: false
-    };
-  }
-
-  const remainder = rawParam.replace("past-", "");
-  const parts = remainder.split("-");
-  const maybeId = Number(parts[parts.length - 1]);
-  if (parts.length > 1 && Number.isInteger(maybeId)) {
-    return {
-      jobId: maybeId,
-      isArchived: true,
-      archiveKey: parts.slice(0, -1).join("-")
-    };
-  }
-
-  return {
-    jobId: Number(remainder),
-    isArchived: true,
-    archiveKey: "v1"
-  };
+export function formatDisplayId(source: TaskSource, contractJobId: number): string {
+  return `#${getDisplayId(source, contractJobId)}`;
 }
 
-export async function getDisplayId(jobId: number, isLegacy: boolean, archiveKey?: string): Promise<string> {
-  if (isLegacy) {
-    const sourceKey = archiveKey ?? "v1";
-    if (sourceKey === "v1") return `#${jobId}`;
-    const offset = await fetchArchivedTaskOffset(getReadProvider(), sourceKey);
-    return `#${offset + jobId + 1}`;
+export function makeTaskUrl(source: TaskSource, contractJobId: number): string {
+  return `/job/${SOURCE_PREFIX[source]}-${contractJobId}`;
+}
+
+export function parseTaskUrl(param: string): { source: TaskSource; contractJobId: number } | null {
+  const raw = String(param ?? "").trim();
+  if (!raw) return null;
+
+  if (raw.startsWith("v1-")) {
+    const id = Number(raw.replace("v1-", ""));
+    return Number.isInteger(id) && id >= 0 ? { source: "V1", contractJobId: id } : null;
   }
-  const offset = await getLegacyTaskCount();
-  return `#${offset + jobId + 1}`;
+
+  if (raw.startsWith("pv2-")) {
+    const id = Number(raw.replace("pv2-", ""));
+    return Number.isInteger(id) && id >= 0 ? { source: "PrevV2", contractJobId: id } : null;
+  }
+
+  if (raw.startsWith("v2-")) {
+    const id = Number(raw.replace("v2-", ""));
+    return Number.isInteger(id) && id >= 0 ? { source: "CurrV2", contractJobId: id } : null;
+  }
+
+  // Backward-compatible route shape: plain numeric IDs are current V2 raw IDs.
+  const id = Number(raw);
+  return Number.isInteger(id) && id >= 0 ? { source: "CurrV2", contractJobId: id } : null;
 }

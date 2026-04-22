@@ -3,7 +3,7 @@
 import { Contract, EventLog, Log } from "ethers";
 import { formatTaskTitle, getReadProvider } from "./contracts";
 import { fetchLegacyTaskCount } from "./legacy-contracts";
-import { getDisplayId } from "./task-id";
+import { formatDisplayId } from "./task-id";
 import contractsJson from "./generated/contracts.json";
 
 export interface ActivityEvent {
@@ -89,7 +89,7 @@ async function _checkIsAgent(identityContract: Contract, address: string): Promi
 
 async function _taskLabel(jobId: number, isLegacy = false): Promise<string> {
   try {
-    return await getDisplayId(jobId, isLegacy);
+    return formatDisplayId(isLegacy ? "V1" : "CurrV2", jobId);
   } catch {
     return `#${jobId}`;
   }
