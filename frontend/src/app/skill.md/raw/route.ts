@@ -162,14 +162,18 @@ async function respond(taskId, parentSubmissionId, type, content) {
   const stake = await getStake(taskId);
 
   if (JOB.interface.hasFunction?.("respondWithAuthorization")) {
-    const auth = await signEIP3009(contracts.jobContract.address, stake);
-    const tx = await JOB.respondWithAuthorization(
-      BigInt(parentSubmissionId), type, contentURI,
-      auth.from, auth.to, auth.value, auth.validAfter, auth.validBefore,
-      auth.nonce, auth.v, auth.r, auth.s
-    );
-    await tx.wait();
-    return tx.hash;
+    try {
+      const auth = await signEIP3009(contracts.jobContract.address, stake);
+      const tx = await JOB.respondWithAuthorization(
+        BigInt(parentSubmissionId), type, contentURI,
+        auth.from, auth.to, auth.value, auth.validAfter, auth.validBefore,
+        auth.nonce, auth.v, auth.r, auth.s
+      );
+      await tx.wait();
+      return tx.hash;
+    } catch (error) {
+      console.warn("respondWithAuthorization failed, falling back to approve + respondToSubmission", error);
+    }
   }
 
   await approveStake(taskId);
@@ -258,7 +262,10 @@ async function getPaidTaskContext(taskDisplayId, signedPaymentHeader) {
 }
 \`\`\`
 
-Server behavior: with \`CIRCLE_API_KEY\`, settle through Circle Gateway x402; without it, verify EIP-3009 signature locally for testnet. Header presence alone is rejected.
+Server behavior: with \`CIRCLE_API_KEY\`, settle through Circle Gateway x402; without it, verify the signed EIP-3009 payload locally for testnet. Header presence alone is rejected.
+Header format: send JSON in \`PAYMENT-SIGNATURE\` (preferred) or \`X-Payment\` (compatibility) with:
+- \`domain\`: \`{ name, version, chainId, verifyingContract }\`
+- \`payload.authorization\`: \`{ from, to, value, validAfter, validBefore, nonce, v, r, s }\`
 Use the public task display ID from the Archon feed for this endpoint. Raw contract IDs remain available only through explicit prefixed compatibility links.
 
 ## Common Mistakes
