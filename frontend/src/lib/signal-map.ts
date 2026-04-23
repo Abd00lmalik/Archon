@@ -67,6 +67,7 @@ export async function buildTaskHeatmap(
     submissions?: (taskId: number, agent: string) => Promise<unknown>;
     getSelectedFinalists?: (taskId: number) => Promise<string[]>;
     getSubmissionResponses?: (submissionId: bigint | number) => Promise<Array<bigint | number>>;
+    submissionResponses?: (submissionId: bigint | number, index: bigint | number) => Promise<bigint | number>;
     submissionResponseCount?: (submissionId: bigint | number) => Promise<bigint | number>;
     getResponse?: (responseId: bigint | number) => Promise<unknown>;
     getRevealPhaseEnd?: (taskId: number) => Promise<bigint | number>;
@@ -111,6 +112,27 @@ export async function buildTaskHeatmap(
     };
     peopleMap.set(normalized, created);
     return created;
+  };
+
+  const loadResponseIds = async (submissionId: bigint | number): Promise<Array<bigint | number>> => {
+    const explicit = contract.getSubmissionResponses
+      ? await contract.getSubmissionResponses(submissionId).catch(() => null)
+      : null;
+    if (explicit) return Array.from(explicit);
+
+    const count = Number(
+      contract.submissionResponseCount
+        ? await contract.submissionResponseCount(submissionId).catch(() => 0n)
+        : 0n
+    );
+    const ids: Array<bigint | number> = [];
+    for (let index = 0; index < count; index += 1) {
+      const responseId = contract.submissionResponses
+        ? await contract.submissionResponses(submissionId, index).catch(() => null)
+        : null;
+      if (responseId !== null && responseId !== undefined) ids.push(responseId);
+    }
+    return ids;
   };
 
   let revealPhaseEnd = 0;
@@ -182,7 +204,7 @@ export async function buildTaskHeatmap(
       }
 
       try {
-        const responseIds = await contract.getSubmissionResponses?.(BigInt(submission.submissionId)) ?? [];
+        const responseIds = await loadResponseIds(BigInt(submission.submissionId));
         if (Array.from(responseIds).length > 0) {
           eligibleAddresses.add(submission.agent.toLowerCase());
         }
@@ -212,7 +234,7 @@ export async function buildTaskHeatmap(
     }
 
     try {
-      const responseIds = await contract.getSubmissionResponses?.(BigInt(parsedSubmission.submissionId)) ?? [];
+      const responseIds = await loadResponseIds(BigInt(parsedSubmission.submissionId));
       for (const responseId of responseIds as Array<bigint | number>) {
         try {
           const response = (await contract.getResponse?.(responseId)) as Record<string, unknown> & unknown[];
@@ -243,26 +265,37 @@ export async function buildTaskHeatmap(
   }
 
   const people = Array.from(peopleMap.values());
-  let globalActivity = 0;
   for (const person of people) {
+    const receivedSignals = person.buildsOnReceived + person.critiquesReceived;
     person.totalActivity =
-      person.submissionCount +
+      (person.submissionCount > 0 ? 1 : 0) +
       person.buildsOnGiven +
-      person.buildsOnReceived +
       person.critiquesGiven +
-      person.critiquesReceived;
-    globalActivity += person.totalActivity;
+      Math.floor(receivedSignals / 2);
+
+    if (person.submissionCount > 0 && person.totalActivity === 0) {
+      person.totalActivity = 1;
+    }
   }
 
+  const globalActivity = people.reduce((sum, person) => sum + person.totalActivity, 0) || people.length;
+
   for (const person of people) {
-    person.activityWeight =
-      globalActivity > 0 ? Math.round((person.totalActivity / globalActivity) * 100) : Math.round(100 / people.length);
+    person.activityWeight = globalActivity > 0 ? Math.round((person.totalActivity / globalActivity) * 100) : 0;
     const buildSignals = person.buildsOnGiven + person.buildsOnReceived;
     const critiqueSignals = person.critiquesGiven + person.critiquesReceived;
     const totalSignals = buildSignals + critiqueSignals;
     person.colorRatio = totalSignals === 0 ? 0.5 : buildSignals / totalSignals;
     person.dominantSignal =
       person.colorRatio > 0.6 ? "builds_on" : person.colorRatio < 0.4 ? "critiques" : "neutral";
+  }
+
+  const weightSum = people.reduce((sum, person) => sum + person.activityWeight, 0);
+  if (weightSum !== 100 && people.length > 0) {
+    const largest = people.reduce((left, right) =>
+      left.activityWeight >= right.activityWeight ? left : right
+    );
+    largest.activityWeight += 100 - weightSum;
   }
 
   await Promise.all(
