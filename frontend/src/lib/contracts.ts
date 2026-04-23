@@ -4,21 +4,21 @@ import deploymentRaw from "@/lib/generated/contracts.json";
 export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 export const JOB_STATUS_LABELS: Record<number, string> = {
   0: "Open",
-  1: "In Progress",
+  1: "Open",
   2: "Submitted",
-  3: "Selection",
+  3: "Under Review",
   4: "Reveal Phase",
-  5: "Approved",
-  6: "Rejected"
+  5: "Completed",
+  6: "Closed"
 };
 export const JOB_STATUS_COLORS: Record<number, string> = {
   0: "#00FFA3",
-  1: "#00E5FF",
+  1: "#00FFA3",
   2: "#F5A623",
   3: "#F5A623",
   4: "#00E5FF",
   5: "#F5A623",
-  6: "#FF3366"
+  6: "#7A9BB5"
 };
 export const SUBMISSION_STATUS_LABELS = ["Not Submitted", "Submitted", "Approved", "Rejected"] as const;
 
@@ -606,7 +606,7 @@ export function deriveTaskStatus(
   let label = getJobStatusLabel(contractStatus);
   let color = getJobStatusColor(contractStatus);
   if (revealEnded) {
-    label = "Reveal Ended";
+    label = "Ready to Finalize";
     color = "#FF6B35";
   }
 
@@ -644,29 +644,26 @@ export function deriveDisplayStatus(
   let label: string;
   let color: string;
 
-  if (contractStatus === 4 && revealEnded) {
-    label = "Reveal Ended";
-    color = "#FF6B35";
-  } else if (contractStatus === 4) {
-    label = "Reveal Phase";
-    color = "#00E5FF";
+  if (contractStatus === 6) {
+    label = "Closed";
+    color = "#7A9BB5";
   } else if (contractStatus === 5) {
     label = "Completed";
     color = "#F5A623";
-  } else if (contractStatus === 6) {
-    label = "Rejected";
-    color = "#FF3366";
-  } else if (contractStatus === 2 || contractStatus === 3) {
-    label = viewerSubmitted === true && !isCreator ? "Submitted" : "Under Review";
+  } else if (contractStatus === 4) {
+    label = revealEnded ? "Ready to Finalize" : "Reveal Phase";
+    color = revealEnded ? "#FF6B35" : "#00E5FF";
+  } else if (contractStatus === 3) {
+    label = "Under Review";
     color = "#F5A623";
-  } else if ((contractStatus === 0 || contractStatus === 1) && deadlinePassed) {
-    label = "Closed";
-    color = "#7A9BB5";
+  } else if (contractStatus === 2) {
+    label = deadlinePassed ? "Under Review" : "Open";
+    color = deadlinePassed ? "#F5A623" : "#00FFA3";
   } else if (contractStatus === 0 || contractStatus === 1) {
-    label = "Open";
-    color = "#00FFA3";
+    label = deadlinePassed ? "Closed" : "Open";
+    color = deadlinePassed ? "#7A9BB5" : "#00FFA3";
   } else {
-    label = `Status ${contractStatus}`;
+    label = "Unknown";
     color = "#7A9BB5";
   }
 

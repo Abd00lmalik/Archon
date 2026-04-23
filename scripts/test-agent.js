@@ -10,7 +10,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { ethers } = require("ethers");
 
-const RPC = "https://rpc.testnet.arc.network";
+const RPC = process.env.ARC_RPC_URL || "https://rpc.testnet.arc.network";
 const USDC_ADDR = "0x3600000000000000000000000000000000000000";
 const V1_ADDRESS = "0xEEF4C172ea2A8AB184CA5d121D142789F78BFb16";
 const PREV_V2_ADDRESS = "0xB099Ad4Bd472a0Ee17cDbe3C29a10E1A84d52363";
@@ -51,6 +51,32 @@ function formatUsdc(value) {
   } catch {
     return "0.000";
   }
+}
+
+function isTransientRpcError(error) {
+  const message = String(error?.reason ?? error?.message ?? error ?? "").toLowerCase();
+  return (
+    message.includes("txpool is full") ||
+    message.includes("timeout") ||
+    message.includes("temporarily unavailable") ||
+    message.includes("rate limit")
+  );
+}
+
+async function withRetry(label, action, retries = 3) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= retries; attempt += 1) {
+    try {
+      return await action();
+    } catch (error) {
+      lastError = error;
+      if (!isTransientRpcError(error) || attempt === retries) throw error;
+      const delayMs = attempt * 2500;
+      console.warn(label + " transient failure (" + (error.reason ?? error.message.slice(0, 120)) + "); retrying in " + delayMs + "ms");
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw lastError;
 }
 
 function readClient(job) {
@@ -142,7 +168,7 @@ async function discoverAllTasks(provider, contracts) {
         ? Number(await contract.getRevealPhaseEnd(jobId).catch(() => 0n))
         : 0;
 
-      const isOpen = (status === 0 || status === 1) && deadline > nowSec;
+      const isOpen = (status === 0 || status === 1 || status === 2) && deadline > nowSec;
       const isReveal = status === 4 || Boolean(reveal);
 
       allTasks.push({
@@ -186,7 +212,7 @@ async function submitToOpenTask(openTasks, wallet, usdc) {
 
   if (hasAbiFunction(target.abi, "submitDirect")) {
     try {
-      const tx = await taskContract.submitDirect(BigInt(target.jobId), output);
+      const tx = await withRetry("submitDirect", () => taskContract.submitDirect(BigInt(target.jobId), output));
       const receipt = await tx.wait();
       txHash = tx.hash;
       console.log("Submitted via submitDirect. Tx:", tx.hash, "block:", receipt.blockNumber);
@@ -198,9 +224,9 @@ async function submitToOpenTask(openTasks, wallet, usdc) {
 
   if (!submitted) {
     try {
-      const accept = await taskContract.acceptJob(BigInt(target.jobId));
+      const accept = await withRetry("acceptJob", () => taskContract.acceptJob(BigInt(target.jobId)));
       await accept.wait();
-      const tx = await taskContract.submitDeliverable(BigInt(target.jobId), output);
+      const tx = await withRetry("submitDeliverable", () => taskContract.submitDeliverable(BigInt(target.jobId), output));
       const receipt = await tx.wait();
       txHash = tx.hash;
       console.log("Submitted via acceptJob + submitDeliverable. Tx:", tx.hash, "block:", receipt.blockNumber);
@@ -242,20 +268,38 @@ async function interactWithRevealTask(revealTask, agentWallet, contracts) {
     }
   }
 
+  const submissions = Array.from(await taskContract.getSubmissions(revealTask.jobId).catch(() => []));
   const agentAddress = agentWallet.address.toLowerCase();
-  const targetAgent = finalists.find((addr) => String(addr).toLowerCase() !== agentAddress);
-  if (!targetAgent) {
-    console.log("No eligible target submission found (all finalists are this wallet or none exist).");
-    return false;
+  let targetAgent = null;
+  let targetSub = null;
+  let targetIndex = -1;
+
+  for (const finalist of finalists) {
+    const candidate = String(finalist);
+    if (!candidate || candidate.toLowerCase() === agentAddress) continue;
+    const index = submissions.findIndex((submission) =>
+      readSubmissionAgent(submission).toLowerCase() === candidate.toLowerCase()
+    );
+    if (index < 0) continue;
+
+    const submission = submissions[index];
+    const submissionId = readSubmissionId(submission, index + 1);
+    const alreadyResponded = hasAbiFunction(revealTask.abi, "hasResponded")
+      ? await taskContract.hasResponded(submissionId, agentWallet.address).catch(() => false)
+      : false;
+    if (alreadyResponded) {
+      console.log("Already responded to submission", submissionId.toString(), "- trying next finalist.");
+      continue;
+    }
+
+    targetAgent = candidate;
+    targetSub = submission;
+    targetIndex = index;
+    break;
   }
 
-  const submissions = Array.from(await taskContract.getSubmissions(revealTask.jobId).catch(() => []));
-  const targetIndex = submissions.findIndex((submission) =>
-    readSubmissionAgent(submission).toLowerCase() === String(targetAgent).toLowerCase()
-  );
-  const targetSub = targetIndex >= 0 ? submissions[targetIndex] : null;
-  if (!targetSub) {
-    console.log("Could not find submission struct for target finalist.");
+  if (!targetAgent || !targetSub) {
+    console.log("No eligible target submission found (own submissions, already responded, or none exist).");
     return false;
   }
 
@@ -307,19 +351,21 @@ async function interactWithRevealTask(revealTask, agentWallet, contracts) {
       const digest = ethers.keccak256(ethers.concat(["0x1901", domainSeparator, transferHash]));
       const sig = agentWallet.signingKey.sign(digest);
 
-      const tx = await taskContract.respondWithAuthorization(
-        parentSubmissionId,
-        1,
-        contentURI,
-        from,
-        to,
-        stakeAmount,
-        validAfter,
-        validBefore,
-        nonce,
-        sig.v,
-        sig.r,
-        sig.s
+      const tx = await withRetry("respondWithAuthorization", () =>
+        taskContract.respondWithAuthorization(
+          parentSubmissionId,
+          1,
+          contentURI,
+          from,
+          to,
+          stakeAmount,
+          validAfter,
+          validBefore,
+          nonce,
+          sig.v,
+          sig.r,
+          sig.s
+        )
       );
       const receipt = await tx.wait();
       console.log("respondWithAuthorization tx:", tx.hash, "block:", receipt.blockNumber);
@@ -334,11 +380,11 @@ async function interactWithRevealTask(revealTask, agentWallet, contracts) {
       console.log("Using classic respondToSubmission...");
       const allowance = await usdc.allowance(agentWallet.address, revealTask.contractAddress);
       if (allowance < stakeAmount) {
-        const approveTx = await usdc.approve(revealTask.contractAddress, stakeAmount * 2n);
+        const approveTx = await withRetry("approve interaction stake", () => usdc.approve(revealTask.contractAddress, stakeAmount * 2n));
         await approveTx.wait();
         console.log("USDC approved");
       }
-      const tx = await taskContract.respondToSubmission(parentSubmissionId, 1, contentURI);
+      const tx = await withRetry("respondToSubmission", () => taskContract.respondToSubmission(parentSubmissionId, 1, contentURI));
       const receipt = await tx.wait();
       console.log("respondToSubmission tx:", tx.hash, "block:", receipt.blockNumber);
       interacted = true;

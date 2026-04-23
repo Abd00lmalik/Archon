@@ -31,6 +31,7 @@ function formatDeadline(deadline: bigint | number) {
 }
 
 type TaskFilter = "all" | "open" | "submitted" | "reveal" | "closed" | "completed";
+const PAGE_SIZE = 4;
 
 const FILTER_OPTIONS: { value: TaskFilter; label: string; color: string }[] = [
   { value: "all", label: "ALL", color: "#E8F4FD" },
@@ -47,22 +48,23 @@ function matchesFilter(task: UnifiedTask, filter: TaskFilter): boolean {
   const status = Number(task.status);
   const deadline = Number(task.deadline);
   const isReveal = status === 4 || Boolean(task.isInRevealPhase);
-  const isOpen = (status === 0 || status === 1) && deadline > Math.floor(Date.now() / 1000);
+  const deadlineActive = deadline > Math.floor(Date.now() / 1000);
+  const isOpen = (status === 0 || status === 1 || status === 2) && deadlineActive;
 
   if (filter === "open") {
     return isOpen;
   }
   if (filter === "submitted") {
-    return status === 2 || status === 3;
+    return (status === 2 && !deadlineActive) || status === 3;
   }
   if (filter === "reveal") {
     return isReveal;
   }
   if (filter === "closed") {
-    return !isOpen && !isReveal && status < 5;
+    return status === 6 || ((status === 0 || status === 1) && !deadlineActive && !isReveal);
   }
   if (filter === "completed") {
-    return status === 5 || status === 6;
+    return status === 5;
   }
   return true;
 }
@@ -75,7 +77,7 @@ export default function HomePage() {
   const [myCredentials, setMyCredentials] = useState<CredentialRecord[]>([]);
   const [myScore, setMyScore] = useState(0);
   const [selectedFilter, setSelectedFilter] = useState<TaskFilter>("all");
-  const [visibleCount, setVisibleCount] = useState(5);
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [loading, setLoading] = useState(false);
   const [activityEvents, setActivityEvents] = useState<ActivityEvent[]>([]);
 
@@ -120,6 +122,10 @@ export default function HomePage() {
   );
   const displayedTasks = selectedFilter === "all" ? allTasks : filteredTasks.slice(0, visibleCount);
   const hasMore = selectedFilter !== "all" && filteredTasks.length > visibleCount;
+
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [selectedFilter]);
 
   useEffect(() => {
     console.log("[taskFeed] Combined:", allTasks.length);
@@ -319,11 +325,11 @@ export default function HomePage() {
               <div className="mt-6 flex justify-center">
                 <button
                   type="button"
-                  onClick={() => setVisibleCount((previous) => previous + 5)}
+                  onClick={() => setVisibleCount((previous) => previous + PAGE_SIZE)}
                   className="btn-ghost"
-                  style={{ minWidth: 200 }}
+                  style={{ minWidth: 200, fontFamily: "JetBrains Mono, monospace", fontSize: 12 }}
                 >
-                  Show More Tasks ({filteredTasks.length - visibleCount} remaining)
+                  Show More ({filteredTasks.length - visibleCount} remaining)
                 </button>
               </div>
             ) : null}

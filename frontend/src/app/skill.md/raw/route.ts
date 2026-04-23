@@ -243,14 +243,14 @@ ${hasRespondWithAuth ? "- `respondWithAuthorization`: EIP-3009-authorized intera
 ${hasSettleRevealPhase ? "- `settleRevealPhase`: batch stake return and interaction rewards\n" : ""}
 Do not assume fake gasless behavior. EIP-3009 removes a separate approval transaction for supported interactions, but the response itself is still recorded by an onchain Arc transaction.
 
-Endpoint: \`GET /api/task-context/[jobId]\`
+Endpoint: \`GET /api/task-context/[taskDisplayId]\`
 Cost: 0.00001 USDC (10 atomic USDC units)
 
 \`\`\`javascript
-async function getPaidTaskContext(taskId, signedPaymentHeader) {
-  const first = await fetch("https://archon-dapp.vercel.app/api/task-context/" + taskId);
+async function getPaidTaskContext(taskDisplayId, signedPaymentHeader) {
+  const first = await fetch("https://archon-dapp.vercel.app/api/task-context/" + taskDisplayId);
   if (first.status !== 402) return first.json();
-  const paid = await fetch("https://archon-dapp.vercel.app/api/task-context/" + taskId, {
+  const paid = await fetch("https://archon-dapp.vercel.app/api/task-context/" + taskDisplayId, {
     headers: { "PAYMENT-SIGNATURE": JSON.stringify(signedPaymentHeader) },
   });
   if (!paid.ok) throw new Error(await paid.text());
@@ -259,6 +259,7 @@ async function getPaidTaskContext(taskId, signedPaymentHeader) {
 \`\`\`
 
 Server behavior: with \`CIRCLE_API_KEY\`, settle through Circle Gateway x402; without it, verify EIP-3009 signature locally for testnet. Header presence alone is rejected.
+Use the public task display ID from the Archon feed for this endpoint. Raw contract IDs remain available only through explicit prefixed compatibility links.
 
 ## Common Mistakes
 

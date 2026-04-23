@@ -178,10 +178,21 @@ async function verifyPayment(parsed: unknown, requirement: PaymentRequirement): 
   return verifyEip3009Authorization(parsed, requirement);
 }
 
-function parseTaskParam(raw: string): { jobId: number; source: "auto" | "v1" | "prev-v2" } {
+function parseTaskParam(raw: string): { jobId: number; source: "current" | "v1" | "prev-v2" } {
   if (raw.startsWith("v1-")) return { jobId: Number(raw.replace("v1-", "")), source: "v1" };
   if (raw.startsWith("pv2-")) return { jobId: Number(raw.replace("pv2-", "")), source: "prev-v2" };
-  return { jobId: Number(raw), source: "auto" };
+  if (raw.startsWith("v2-")) return { jobId: Number(raw.replace("v2-", "")), source: "current" };
+
+  const displayId = Number(raw);
+  if (!Number.isFinite(displayId)) return { jobId: NaN, source: "current" };
+
+  // Canonical display IDs match the task feed: archived tasks first, recovered
+  // reveal task next, then current deployment tasks. Prefixes remain available
+  // for old links and raw contract IDs.
+  if (displayId === 0) return { jobId: 0, source: "current" };
+  if (displayId >= 1 && displayId <= 11) return { jobId: displayId - 1, source: "v1" };
+  if (displayId === 12) return { jobId: 0, source: "prev-v2" };
+  return { jobId: displayId - 13, source: "current" };
 }
 
 async function readTask(rawJobId: string) {
@@ -202,33 +213,19 @@ async function readTask(rawJobId: string) {
     submissionCount: Number(job.submissionCount ?? job[9] ?? 0)
   });
 
-  if (jobConfig?.address && jobConfig.abi && source === "auto") {
-    try {
-      const jobContract = new ethers.Contract(jobConfig.address, jobConfig.abi, provider);
-      const job = await jobContract.getJob(jobId);
-      const client = String(job.client ?? job[1] ?? "");
-      if (client && client !== ethers.ZeroAddress) {
-        return readCurrentShape(job as Record<string, unknown> & unknown[]);
-      }
-    } catch {
-      // Archived contracts below preserve testnet continuity.
-    }
-
-    try {
-      const previousV2 = new ethers.Contract(PREV_V2_ADDRESS, jobConfig.abi, provider);
-      const job = await previousV2.getJob(jobId);
-      const client = String(job.client ?? job[1] ?? "");
-      if (client && client !== ethers.ZeroAddress) {
-        return readCurrentShape(job as Record<string, unknown> & unknown[]);
-      }
-    } catch {
-      // Fall through to the original V1 contract.
-    }
-  }
-
   if (jobConfig?.abi && source === "prev-v2") {
     const previousV2 = new ethers.Contract(PREV_V2_ADDRESS, jobConfig.abi, provider);
     const job = await previousV2.getJob(jobId);
+    const client = String(job.client ?? job[1] ?? "");
+    if (client && client !== ethers.ZeroAddress) {
+      return readCurrentShape(job as Record<string, unknown> & unknown[]);
+    }
+    throw new Error("Task not found");
+  }
+
+  if (jobConfig?.address && jobConfig.abi && source === "current") {
+    const jobContract = new ethers.Contract(jobConfig.address, jobConfig.abi, provider);
+    const job = await jobContract.getJob(jobId);
     const client = String(job.client ?? job[1] ?? "");
     if (client && client !== ethers.ZeroAddress) {
       return readCurrentShape(job as Record<string, unknown> & unknown[]);

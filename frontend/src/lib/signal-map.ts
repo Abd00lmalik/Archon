@@ -74,7 +74,14 @@ export async function buildTaskHeatmap(
 
   const peopleMap = new Map<string, PersonSignal>();
 
-  const isZero = (address: string) => !address || address.toLowerCase() === ZERO_ADDRESS.toLowerCase();
+  const isZero = (address: string) => {
+    const normalized = String(address ?? "").toLowerCase();
+    return (
+      !normalized ||
+      normalized === ZERO_ADDRESS.toLowerCase() ||
+      normalized.replace(/^0x/, "").replace(/0/g, "") === ""
+    );
+  };
 
   const getOrCreate = (address: string, defaultRole: PersonSignal["role"]): PersonSignal => {
     const normalized = address.toLowerCase();
@@ -84,7 +91,7 @@ export async function buildTaskHeatmap(
       if (defaultRole === "responder" && existing.role === "submitter") existing.role = "both";
       return existing;
     }
-    const checksumish = address;
+    const checksumish = normalized;
     const created: PersonSignal = {
       address: checksumish,
       username: null,
@@ -107,6 +114,7 @@ export async function buildTaskHeatmap(
 
   let rawSubmissions: unknown[] = [];
   try {
+    if (!contract.getSubmissions) throw new Error("getSubmissions unavailable");
     rawSubmissions = Array.from((await contract.getSubmissions?.(taskId)) ?? []);
   } catch (error) {
     console.warn("[heatmap] getSubmissions failed, scanning submittedAgents:", error);
@@ -115,7 +123,7 @@ export async function buildTaskHeatmap(
         const agent = await contract.submittedAgents?.(taskId, i);
         if (!agent || isZero(agent)) break;
         const submission = await contract.submissions?.(taskId, agent);
-        if (submission) rawSubmissions.push(submission);
+        if (submission && isValidSubmission(submission)) rawSubmissions.push(submission);
       } catch {
         break;
       }
@@ -124,7 +132,8 @@ export async function buildTaskHeatmap(
 
   const validSubmissions = rawSubmissions
     .filter((submission) => isValidSubmission(submission))
-    .map((submission) => parseSubmission(submission));
+    .map((submission) => parseSubmission(submission))
+    .filter((submission) => !isZero(submission.agent));
 
   let finalists: string[] = [];
   try {
@@ -136,9 +145,14 @@ export async function buildTaskHeatmap(
   }
 
   const finalistSet = new Set(finalists.map((address) => address.toLowerCase()));
+  // Strict live rule: finalist submissions drive submitter tiles during reveal.
+  // Responders are added below only when a real non-slashed response exists.
   const visibleSubmissions = finalistSet.size > 0
     ? validSubmissions.filter((submission) => finalistSet.has(submission.agent.toLowerCase()))
     : validSubmissions;
+
+  console.log(`[heatmap] task #${taskId} valid submissions: ${validSubmissions.length}`);
+  console.log(`[heatmap] task #${taskId} finalist submissions: ${visibleSubmissions.length}`);
 
   for (const parsedSubmission of visibleSubmissions) {
     const agent = String(parsedSubmission.agent ?? "");

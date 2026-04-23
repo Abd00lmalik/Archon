@@ -149,13 +149,13 @@ function PhaseBanner({
     { status: 2, label: "SUBMITTED", desc: "Creator reviewing submissions", color: "var(--warn)" },
     { status: 3, label: "SELECTION", desc: "Creator selecting finalists", color: "var(--warn)" },
     { status: 4, label: "REVEAL PHASE", desc: "Critique and build-on window open", color: "var(--arc)" },
-    { status: 5, label: "APPROVED", desc: "Winners selected", color: "var(--pulse)" },
-    { status: 6, label: "REJECTED", desc: "Task closed", color: "var(--danger)" }
+    { status: 5, label: "COMPLETED", desc: "Winners selected", color: "var(--pulse)" },
+    { status: 6, label: "CLOSED", desc: "Task closed", color: "var(--text-muted)" }
   ];
 
   const displayStatus = deriveDisplayStatus(job.status, job.deadline, revealEnd);
   const current = phases.find((phase) => phase.status === displayStatus.code) ?? phases[0];
-  const revealEnded = displayStatus.label === "Reveal Ended";
+  const revealEnded = displayStatus.label === "Ready to Finalize";
   const label = displayStatus.label.toUpperCase();
   const description = awaitingSelection
     ? "Submission deadline passed - awaiting creator finalist selection"
@@ -1087,15 +1087,18 @@ export default function JobDetailsPage() {
   };
 
   const hasSubmitted = Boolean(mySubmission && mySubmission.status !== 0);
-  const isApproved = mySubmission?.status === 2;
   const isClaimed = Boolean(mySubmission?.credentialClaimed);
+  const viewerIsCreator = isCreator;
+  const viewerHasSubmitted = hasSubmitted;
+  const viewerSubmission = mySubmission;
+  const viewerSubmissionApproved = viewerSubmission?.status === 2;
 
   const revealEndValue = revealPhaseEnd || Number(job?.revealPhaseEnd ?? 0n);
   const displayStatus = job
     ? deriveDisplayStatus(job.status, job.deadline, revealEndValue, account ?? undefined, hasSubmitted, isCreator)
     : null;
   const canClaim = Boolean(
-    displayStatus?.canClaim && isConnected && !isCreator && isApproved && !isClaimed && claimCountdown <= 0
+    displayStatus?.canClaim && isConnected && !viewerIsCreator && viewerSubmissionApproved && !isClaimed && claimCountdown <= 0
   );
   const revealEnded = Boolean(job?.status === 4 && revealEndValue > 0 && Math.floor(Date.now() / 1000) > revealEndValue);
   const submissionDeadlinePassed = Boolean(
@@ -1127,9 +1130,25 @@ export default function JobDetailsPage() {
   const isOwnSelectedSubmission = Boolean(
     account && selectedSubmission && account.toLowerCase() === selectedSubmission.agent.toLowerCase()
   );
+  const canSubmitToTask = Boolean(
+    task?.caps.canSubmit &&
+      displayStatus?.label === "Open" &&
+      isConnected &&
+      !viewerIsCreator &&
+      !viewerHasSubmitted
+  );
+  const showAcceptAction = Boolean(canSubmitToTask && !isAccepted);
+  const showSubmitAction = Boolean(canSubmitToTask && isAccepted);
+  const showInteractionAction = Boolean(
+    task?.caps.canInteract &&
+      isRevealActive &&
+      isConnected &&
+      !viewerIsCreator &&
+      job?.status === 4
+  );
   const canInteract = Boolean(
     task?.caps.canInteract &&
-      displayStatus?.canInteract &&
+      showInteractionAction &&
       isRevealActive &&
       signer &&
       isConnected &&
@@ -1557,7 +1576,7 @@ export default function JobDetailsPage() {
             <>
               <div className="section-header">YOUR ACTIONS</div>
 
-              {displayStatus?.canSubmit && !isAccepted ? (
+              {showAcceptAction ? (
                 <button
                   type="button"
                   className="btn-primary w-full"
@@ -1568,7 +1587,7 @@ export default function JobDetailsPage() {
                 </button>
               ) : null}
 
-              {displayStatus?.canSubmit && isAccepted && !hasSubmitted ? (
+              {showSubmitAction ? (
                 <form className="space-y-3" onSubmit={handleSubmit}>
                   <input
                     type="url"
@@ -1652,11 +1671,11 @@ export default function JobDetailsPage() {
                   {job.status === 2 ? "Creator is reviewing submissions" : ""}
                   {job.status === 3 ? "Creator is selecting finalists" : ""}
                   {job.status === 5 ? "Task is finalized" : ""}
-                  {job.status === 6 ? "Task is rejected/closed" : ""}
+                  {job.status === 6 ? "Task is closed" : ""}
                 </div>
               ) : null}
 
-              {displayStatus?.canInteract && job.status === 4 && selectedSubmission ? (
+              {showInteractionAction && selectedSubmission ? (
                 isOwnSelectedSubmission ? (
                   <div className="border border-[var(--border)] p-3 text-xs text-[var(--text-muted)]">
                     You cannot respond to your own submission. Select another finalist submission to critique or build on.

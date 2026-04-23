@@ -5,8 +5,8 @@ import { useEffect, useMemo, useState } from "react";
 import {
   fetchAgentTasksByAddress,
   getReadProvider,
+  deriveDisplayStatus,
   formatTaskTitle,
-  statusLabel,
   SubmissionRecord
 } from "@/lib/contracts";
 import { UserDisplay } from "@/components/ui/user-display";
@@ -126,7 +126,15 @@ export default function MyWorkPage() {
                       <p className="font-semibold text-[#EAEAF0]">
                         #{job.displayId} {formatTaskTitle(job.title)}
                       </p>
-                      <span className="rounded-full bg-white/5 px-2 py-1 text-xs">{statusLabel(job.status)}</span>
+                      <span
+                        className="rounded-full px-2 py-1 text-xs"
+                        style={{
+                          color: deriveDisplayStatus(job.status, job.deadline, job.revealPhaseEnd).color,
+                          background: "rgba(255,255,255,0.05)"
+                        }}
+                      >
+                        {deriveDisplayStatus(job.status, job.deadline, job.revealPhaseEnd).label}
+                      </span>
                     </div>
                     <p className="mt-2 text-xs">Submissions: {job.submissionCount}</p>
                     <div className="mt-2">
