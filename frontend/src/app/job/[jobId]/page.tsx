@@ -29,8 +29,16 @@ import {
   txReturnStake,
   ZERO_ADDRESS
 } from "@/lib/contracts";
-import { fetchAllTasks, getContractForSource, loadTaskSubmissions, unifiedTaskToJobRecord, UnifiedTask } from "@/lib/task-adapter";
-import { formatDisplayId, parseTaskUrl } from "@/lib/task-id";
+import {
+  fetchAllTasks,
+  fetchTaskById,
+  getContractForSource,
+  invalidateTaskCache,
+  loadTaskSubmissions,
+  unifiedTaskToJobRecord,
+  UnifiedTask
+} from "@/lib/task-adapter";
+import { getDisplayId, parseTaskUrl } from "@/lib/task-id";
 import { useWallet } from "@/lib/wallet-context";
 
 type ViewMode = "signal" | "list" | "timeline";
@@ -413,14 +421,18 @@ export default function JobDetailsPage() {
   const router = useRouter();
   const { account, browserProvider, connect, signer } = useWallet();
   const rawJobParam = params.jobId ?? "";
-  const parsedRoute = useMemo(() => parseTaskUrl(rawJobParam), [rawJobParam]);
+  const prefixedRoute = useMemo(() => parseTaskUrl(rawJobParam), [rawJobParam]);
+  const displayId = useMemo(() => {
+    const numeric = Number(rawJobParam);
+    if (Number.isInteger(numeric) && numeric > 0) return numeric;
+    return prefixedRoute ? getDisplayId(prefixedRoute.source, prefixedRoute.contractJobId) : NaN;
+  }, [prefixedRoute, rawJobParam]);
+  const validDisplayId = Number.isInteger(displayId) && displayId > 0;
 
   const [task, setTask] = useState<UnifiedTask | null>(null);
   const [job, setJob] = useState<JobRecord | null>(null);
-  const jobId = parsedRoute?.contractJobId ?? -1;
-  const [displayTaskId, setDisplayTaskId] = useState(
-    parsedRoute ? formatDisplayId(parsedRoute.source, parsedRoute.contractJobId) : `#${rawJobParam}`
-  );
+  const jobId = task?.jobId ?? -1;
+  const [displayTaskId, setDisplayTaskId] = useState(validDisplayId ? `#${displayId}` : `#${rawJobParam}`);
   const [jobLoading, setJobLoading] = useState(true);
   const [jobError, setJobError] = useState<string | null>(null);
   const [submissions, setSubmissions] = useState<SubmissionRecord[]>([]);
@@ -455,6 +467,7 @@ export default function JobDetailsPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("signal");
   const [submissionFilterAddress, setSubmissionFilterAddress] = useState("");
   const mapContainerRef = useRef<HTMLDivElement>(null);
+  const taskRef = useRef<UnifiedTask | null>(null);
   const [mapDimensions, setMapDimensions] = useState({ w: 640, h: 380 });
 
   const [deliverableLink, setDeliverableLink] = useState("");
@@ -473,6 +486,14 @@ export default function JobDetailsPage() {
 
   const isConnected = Boolean(account);
   const isCreator = Boolean(account && job && account.toLowerCase() === job.client.toLowerCase());
+  const taskJobId = task?.jobId ?? -1;
+  const taskSourceId = task?.sourceId ?? "";
+  const taskHasSignalMap = Boolean(task?.caps.hasSignalMap);
+  const taskLoaded = Boolean(task);
+
+  useEffect(() => {
+    taskRef.current = task;
+  }, [task]);
 
   const safeSubmissions = useMemo(
     () =>
@@ -523,7 +544,7 @@ export default function JobDetailsPage() {
   };
 
   const loadTask = useCallback(async () => {
-    if (!parsedRoute) {
+    if (!validDisplayId) {
       setJobLoading(false);
       setJobError(`Invalid task ID: ${rawJobParam}`);
       setJob(null);
@@ -533,15 +554,10 @@ export default function JobDetailsPage() {
 
     setJobLoading(true);
     setJobError(null);
-    setJob(null);
-    setTask(null);
 
     try {
       const readProvider = browserProvider ?? getReadProvider();
-      const allTasks = await fetchAllTasks(getReadProvider());
-      const unifiedTask = allTasks.find(
-        (candidate) => candidate.source === parsedRoute.source && candidate.jobId === parsedRoute.contractJobId
-      ) ?? null;
+      const unifiedTask = await fetchTaskById(displayId, readProvider);
 
       if (!unifiedTask) {
         setJobError(`Task #${rawJobParam} not found`);
@@ -551,10 +567,12 @@ export default function JobDetailsPage() {
       }
 
       setTask(unifiedTask);
+      setDisplayTaskId(`#${unifiedTask.displayId}`);
 
       const readContract = getContractForSource(unifiedTask.sourceId, readProvider);
       const jobData = unifiedTaskToJobRecord(unifiedTask);
       const rawSubmissions = await loadTaskSubmissions(unifiedTask, readProvider);
+      const allTasks = await fetchAllTasks(readProvider);
 
       let finals: string[] = [];
       let revealEnd = Number(unifiedTask.revealPhaseEnd);
@@ -640,10 +658,10 @@ export default function JobDetailsPage() {
     } finally {
       setJobLoading(false);
     }
-  }, [account, browserProvider, parsedRoute, rawJobParam]);
+  }, [account, browserProvider, displayId, rawJobParam, validDisplayId]);
 
   const loadHeatmap = useCallback(async () => {
-    if (!task?.caps.hasSignalMap || !Number.isInteger(task.jobId) || task.jobId < 0) {
+    if (!taskHasSignalMap || !Number.isInteger(taskJobId) || taskJobId < 0 || !taskSourceId) {
       setHeatmap({ people: [], totalActivity: 0, revealPhaseEnd: 0, isRevealPhase: false });
       setHeatmapLoading(false);
       return;
@@ -651,7 +669,7 @@ export default function JobDetailsPage() {
     setHeatmapLoading(true);
     try {
       const provider = browserProvider ?? getReadProvider();
-      const data = await buildTaskHeatmap(provider, Number(task.jobId), task.sourceId);
+      const data = await buildTaskHeatmap(provider, Number(taskJobId), taskSourceId);
       setHeatmap(data);
     } catch (error) {
       console.warn("[heatmap] load error:", error);
@@ -659,7 +677,7 @@ export default function JobDetailsPage() {
     } finally {
       setHeatmapLoading(false);
     }
-  }, [browserProvider, task]);
+  }, [browserProvider, taskHasSignalMap, taskJobId, taskSourceId]);
 
   useEffect(() => {
     void loadTask();
@@ -670,10 +688,10 @@ export default function JobDetailsPage() {
   }, [loadHeatmap]);
 
   useEffect(() => {
-    if (task && !task.caps.hasSignalMap && viewMode === "signal") {
+    if (taskLoaded && !taskHasSignalMap && viewMode === "signal") {
       setViewMode("list");
     }
-  }, [task, viewMode]);
+  }, [taskHasSignalMap, taskLoaded, viewMode]);
 
   useEffect(() => {
     const element = mapContainerRef.current;
@@ -699,7 +717,7 @@ export default function JobDetailsPage() {
   }, [claimReadyAt]);
 
   const refreshPendingReleases = useCallback(async () => {
-    if (!account || task?.sourceId !== "current" || !Number.isInteger(jobId) || jobId < 0) {
+    if (!account || taskSourceId !== "current" || !Number.isInteger(jobId) || jobId < 0) {
       setPendingReleases([]);
       return;
     }
@@ -712,15 +730,15 @@ export default function JobDetailsPage() {
       console.warn("[releases] load failed:", error);
       setPendingReleases([]);
     }
-  }, [account, browserProvider, jobId, task?.sourceId]);
+  }, [account, browserProvider, jobId, taskSourceId]);
 
   useEffect(() => {
     void refreshPendingReleases();
   }, [refreshPendingReleases, job?.status, revealPhaseEnd, selectedFinalists.length]);
 
   useEffect(() => {
-    if (!task?.caps.hasSignalMap || !Number.isInteger(jobId) || jobId < 0) return () => undefined;
-    const contract = getContractForSource(task.sourceId, getReadProvider());
+    if (!taskHasSignalMap || !taskSourceId || !Number.isInteger(jobId) || jobId < 0) return () => undefined;
+    const contract = getContractForSource(taskSourceId, getReadProvider());
     const refresh = async (id: bigint | number) => {
       if (Number(id) === jobId) {
         await loadTask();
@@ -741,7 +759,7 @@ export default function JobDetailsPage() {
       contract.off("FinalistsSelected", onFinalists);
       contract.off("WinnersFinalized", onWinners);
     };
-  }, [jobId, loadTask, loadHeatmap, task?.caps.hasSignalMap, task?.sourceId]);
+  }, [jobId, loadTask, loadHeatmap, taskHasSignalMap, taskSourceId]);
 
   useEffect(() => {
     if (!selectedFinalists.length) {
@@ -751,8 +769,9 @@ export default function JobDetailsPage() {
 
     let active = true;
     const loadFinalists = async () => {
-      if (!task) return;
-      const contract = getContractForSource(task.sourceId, getReadProvider());
+      const currentTask = taskRef.current;
+      if (!currentTask || !taskSourceId) return;
+      const contract = getContractForSource(taskSourceId, getReadProvider());
       const byAgent: Record<string, SubmissionRecord | null> = {};
       let cachedAllSubmissions: SubmissionRecord[] | null = null;
 
@@ -768,7 +787,7 @@ export default function JobDetailsPage() {
 
         try {
           if (!cachedAllSubmissions) {
-            cachedAllSubmissions = await loadTaskSubmissions(task, getReadProvider());
+            cachedAllSubmissions = await loadTaskSubmissions(currentTask, getReadProvider());
           }
           byAgent[key] =
             cachedAllSubmissions.find(
@@ -786,7 +805,7 @@ export default function JobDetailsPage() {
     return () => {
       active = false;
     };
-  }, [jobId, selectedFinalists, task]);
+  }, [jobId, selectedFinalists, taskSourceId]);
 
   const handleAccept = async () => {
     try {
@@ -795,6 +814,7 @@ export default function JobDetailsPage() {
       const tx = await contract.acceptJob(jobId);
       setStatusMessage(`Accept tx: ${tx.hash}`);
       await tx.wait();
+      invalidateTaskCache();
       await loadTask();
     } catch (error) {
       setErrorMessage(errorText(error, "Failed to accept task"));
@@ -814,6 +834,7 @@ export default function JobDetailsPage() {
       setStatusMessage(`Submit tx: ${tx.hash}`);
       await tx.wait();
       setDeliverableLink("");
+      invalidateTaskCache();
       await loadTask();
       await loadHeatmap();
     } catch (error) {
@@ -872,6 +893,7 @@ export default function JobDetailsPage() {
       setStatusMessage(`Response tx: ${txHash}`);
       setResponseContent("");
       setShowResponsePanel(false);
+      invalidateTaskCache();
       await loadHeatmap();
       await loadTask();
     } catch (error) {
@@ -894,6 +916,7 @@ export default function JobDetailsPage() {
       await tx.wait();
       const txHash = tx.hash as string;
       setStatusMessage(`Stake slashed: ${txHash}`);
+      invalidateTaskCache();
       await loadHeatmap();
       await loadTask();
     } catch (error) {
@@ -920,6 +943,7 @@ export default function JobDetailsPage() {
       await tx.wait();
       const txHash = tx.hash as string;
       setStatusMessage(`Finalists tx: ${txHash}`);
+      invalidateTaskCache();
       await loadTask();
       await loadHeatmap();
     } catch (error) {
@@ -960,6 +984,7 @@ export default function JobDetailsPage() {
         const txHash = tx.hash as string;
         setStatusMessage(`Reveal phase started via selectFinalists fallback: ${txHash}`);
       }
+      invalidateTaskCache();
       await loadTask();
       await loadHeatmap();
     } catch (error) {
@@ -986,6 +1011,7 @@ export default function JobDetailsPage() {
       await tx.wait();
       const txHash = tx.hash as string;
       setStatusMessage(`Finalize tx: ${txHash}`);
+      invalidateTaskCache();
       await loadTask();
       await loadHeatmap();
     } catch (error) {
@@ -1002,6 +1028,7 @@ export default function JobDetailsPage() {
       const tx = await contract.claimCredential(jobId);
       setStatusMessage(`Claim tx: ${tx.hash}`);
       await tx.wait();
+      invalidateTaskCache();
       await loadTask();
     } catch (error) {
       setErrorMessage(errorText(error, "Failed to claim reward"));
@@ -1025,6 +1052,7 @@ export default function JobDetailsPage() {
       }
       setStatusMessage(`Claimed pending reveal releases: ${hashes.join(", ")}`);
       await refreshPendingReleases();
+      invalidateTaskCache();
       await loadTask();
       await loadHeatmap();
     } catch (error) {
@@ -1048,6 +1076,7 @@ export default function JobDetailsPage() {
       const txHash = tx.hash as string;
       setStatusMessage(`Reveal phase settled: ${txHash}`);
       await refreshPendingReleases();
+      invalidateTaskCache();
       await loadTask();
       await loadHeatmap();
     } catch (error) {
@@ -1123,20 +1152,8 @@ export default function JobDetailsPage() {
     0n
   );
   useEffect(() => {
-    let active = true;
-    if (!job || !task) {
-      setDisplayTaskId(parsedRoute ? formatDisplayId(parsedRoute.source, parsedRoute.contractJobId) : `#${rawJobParam}`);
-      return () => {
-        active = false;
-      };
-    }
-
-    if (active) setDisplayTaskId(`#${task.displayId}`);
-
-    return () => {
-      active = false;
-    };
-  }, [job, parsedRoute, rawJobParam, task]);
+    setDisplayTaskId(task?.displayId ? `#${task.displayId}` : validDisplayId ? `#${displayId}` : `#${rawJobParam}`);
+  }, [displayId, rawJobParam, task?.displayId, validDisplayId]);
 
   useEffect(() => {
     console.log("[revealCheck]", {
@@ -1154,7 +1171,7 @@ export default function JobDetailsPage() {
       <div className="page-container flex min-h-[40vh] items-center justify-center">
         <div className="flex items-center gap-3 font-mono text-sm text-[var(--text-secondary)]">
           <span className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--arc-dim)] border-t-[var(--arc)]" />
-          Loading task #{jobId}...
+          Loading task {displayTaskId}...
         </div>
       </div>
     );

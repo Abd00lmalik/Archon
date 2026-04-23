@@ -10,7 +10,7 @@ import {
   SubmissionRecord,
   ZERO_ADDRESS
 } from "./contracts";
-import { getDisplayId, makeTaskUrl, TaskSource } from "./task-id";
+import { getDisplayId, TaskSource } from "./task-id";
 
 const V1_JOB_ADDRESS = "0xEEF4C172ea2A8AB184CA5d121D142789F78BFb16";
 
@@ -203,6 +203,10 @@ function deploymentSources(): RawSource[] {
 
 export const TASK_SOURCES = deploymentSources();
 
+let _cachedTasks: UnifiedTask[] | null = null;
+let _cacheTime = 0;
+const CACHE_TTL_MS = 60_000;
+
 export function getContractForSource(
   sourceId: string,
   provider: BrowserProvider | JsonRpcProvider | JsonRpcSigner
@@ -352,22 +356,42 @@ async function readSourceTasks(source: RawSource, provider: BrowserProvider | Js
   return tasks;
 }
 
-export async function fetchAllTasks(provider: JsonRpcProvider | BrowserProvider): Promise<UnifiedTask[]> {
-  const chronological: UnifiedTask[] = [];
+export async function fetchAllTasks(
+  provider: JsonRpcProvider | BrowserProvider,
+  forceRefresh = false
+): Promise<UnifiedTask[]> {
+  const now = Date.now();
+  if (!forceRefresh && _cachedTasks && now - _cacheTime < CACHE_TTL_MS) {
+    console.log("[adapter] Using cached tasks:", _cachedTasks.length);
+    return _cachedTasks;
+  }
 
-  for (const source of TASK_SOURCES) {
-    const sourceTasks = await readSourceTasks(source, provider).catch((error) => {
-      console.warn(`[adapter] Failed to load source ${source.id}:`, error);
-      return [];
-    });
-    console.log(`[adapter] source ${source.id} has ${sourceTasks.length} task(s)`);
-    for (const sourceTask of sourceTasks.sort((a, b) => a.jobId - b.jobId)) {
+  const chronological: UnifiedTask[] = [];
+  const sourceResults = await Promise.allSettled(
+    TASK_SOURCES.map(async (source) => ({
+      source,
+      tasks: await readSourceTasks(source, provider)
+    }))
+  );
+
+  for (const result of sourceResults) {
+    if (result.status === "rejected") {
+      console.warn("[adapter] Failed to load source:", result.reason);
+      continue;
+    }
+
+    const { source, tasks } = result.value;
+    console.log(`[adapter] source ${source.id} has ${tasks.length} task(s)`);
+    for (const sourceTask of tasks.sort((a, b) => a.jobId - b.jobId)) {
       const displayId = getDisplayId(source.source, sourceTask.jobId);
       chronological.push(withCapabilities(source, sourceTask, displayId));
     }
   }
 
-  return chronological.sort((a, b) => b.displayId - a.displayId);
+  const allTasks = chronological.sort((a, b) => b.displayId - a.displayId);
+  _cachedTasks = allTasks;
+  _cacheTime = now;
+  return allTasks;
 }
 
 export async function fetchTaskById(
@@ -375,12 +399,21 @@ export async function fetchTaskById(
   provider: JsonRpcProvider | BrowserProvider
 ): Promise<UnifiedTask | null> {
   if (!Number.isInteger(displayId) || displayId <= 0) return null;
-  const tasks = await fetchAllTasks(provider);
+  if (_cachedTasks) {
+    const cached = _cachedTasks.find((task) => task.displayId === displayId);
+    if (cached) return cached;
+  }
+  const tasks = await fetchAllTasks(provider, Boolean(_cachedTasks));
   return tasks.find((task) => task.displayId === displayId) ?? null;
 }
 
 export function getTaskUrl(task: UnifiedTask): string {
-  return makeTaskUrl(task.source, task.jobId);
+  return `/job/${task.displayId}`;
+}
+
+export function invalidateTaskCache() {
+  _cachedTasks = null;
+  _cacheTime = 0;
 }
 
 export function unifiedTaskToJobRecord(task: UnifiedTask): JobRecord {

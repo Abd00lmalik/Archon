@@ -58,22 +58,39 @@ export async function buildTaskHeatmap(
   taskId: number,
   sourceId = "current"
 ): Promise<TaskHeatmap> {
-  console.log("[heatmap] Building for task:", taskId);
+  console.log("[heatmap] Building for task:", taskId, "source:", sourceId);
   const readProvider = provider ?? getReadProvider();
   const jobContract = getContractForSource(sourceId, readProvider);
+  const contract = jobContract as unknown as {
+    getSubmissions?: (taskId: number) => Promise<unknown[]>;
+    submittedAgents?: (taskId: number, index: number) => Promise<string>;
+    submissions?: (taskId: number, agent: string) => Promise<unknown>;
+    getSelectedFinalists?: (taskId: number) => Promise<string[]>;
+    getSubmissionResponses?: (submissionId: bigint | number) => Promise<Array<bigint | number>>;
+    getResponse?: (responseId: bigint | number) => Promise<unknown>;
+    getRevealPhaseEnd?: (taskId: number) => Promise<bigint | number>;
+    isInRevealPhase?: (taskId: number) => Promise<boolean>;
+  };
 
   const peopleMap = new Map<string, PersonSignal>();
 
-  const getOrCreate = (address: string): PersonSignal => {
-    const key = address.toLowerCase();
-    const existing = peopleMap.get(key);
-    if (existing) return existing;
+  const isZero = (address: string) => !address || address.toLowerCase() === ZERO_ADDRESS.toLowerCase();
+
+  const getOrCreate = (address: string, defaultRole: PersonSignal["role"]): PersonSignal => {
+    const normalized = address.toLowerCase();
+    const existing = peopleMap.get(normalized);
+    if (existing) {
+      if (defaultRole === "submitter" && existing.role === "responder") existing.role = "both";
+      if (defaultRole === "responder" && existing.role === "submitter") existing.role = "both";
+      return existing;
+    }
+    const checksumish = address;
     const created: PersonSignal = {
-      address,
+      address: checksumish,
       username: null,
       avatarUrl: null,
-      blockieUrl: generateBlockie(address),
-      role: "submitter",
+      blockieUrl: generateBlockie(checksumish),
+      role: defaultRole,
       submissionCount: 0,
       buildsOnGiven: 0,
       buildsOnReceived: 0,
@@ -84,27 +101,50 @@ export async function buildTaskHeatmap(
       dominantSignal: "neutral",
       colorRatio: 0.5
     };
-    peopleMap.set(key, created);
+    peopleMap.set(normalized, created);
     return created;
   };
 
   let rawSubmissions: unknown[] = [];
   try {
-    rawSubmissions = Array.from(await jobContract.getSubmissions(taskId));
+    rawSubmissions = Array.from((await contract.getSubmissions?.(taskId)) ?? []);
   } catch (error) {
-    console.warn("[heatmap] getSubmissions failed:", error);
-    return { people: [], totalActivity: 0, revealPhaseEnd: 0, isRevealPhase: false };
+    console.warn("[heatmap] getSubmissions failed, scanning submittedAgents:", error);
+    for (let i = 0; i < 50; i += 1) {
+      try {
+        const agent = await contract.submittedAgents?.(taskId, i);
+        if (!agent || isZero(agent)) break;
+        const submission = await contract.submissions?.(taskId, agent);
+        if (submission) rawSubmissions.push(submission);
+      } catch {
+        break;
+      }
+    }
   }
 
-  const validSubmissions = rawSubmissions.filter((submission) => isValidSubmission(submission));
+  const validSubmissions = rawSubmissions
+    .filter((submission) => isValidSubmission(submission))
+    .map((submission) => parseSubmission(submission));
 
-  for (let i = 0; i < validSubmissions.length; i += 1) {
-    const parsedSubmission = parseSubmission(validSubmissions[i]);
-    const submission = validSubmissions[i] as Record<string, unknown> & unknown[];
-    const agent = String(parsedSubmission.agent ?? submission.agent ?? submission[1] ?? "");
-    if (!agent || agent.toLowerCase() === ZERO_ADDRESS.toLowerCase()) continue;
+  let finalists: string[] = [];
+  try {
+    finalists = Array.from((await contract.getSelectedFinalists?.(taskId)) ?? [])
+      .map((address) => String(address))
+      .filter((address) => !isZero(address));
+  } catch {
+    finalists = [];
+  }
 
-    const submitter = getOrCreate(agent);
+  const finalistSet = new Set(finalists.map((address) => address.toLowerCase()));
+  const visibleSubmissions = finalistSet.size > 0
+    ? validSubmissions.filter((submission) => finalistSet.has(submission.agent.toLowerCase()))
+    : validSubmissions;
+
+  for (const parsedSubmission of visibleSubmissions) {
+    const agent = String(parsedSubmission.agent ?? "");
+    if (isZero(agent)) continue;
+
+    const submitter = getOrCreate(agent, "submitter");
     submitter.submissionCount += 1;
     if (submitter.submissionId === undefined) {
       submitter.submissionId = parsedSubmission.submissionId;
@@ -113,33 +153,16 @@ export async function buildTaskHeatmap(
     }
 
     try {
-      const profile = await fetchUserProfile(readProvider, agent);
-      if (profile) {
-        submitter.username = profile.username || null;
-        submitter.avatarUrl = profile.avatarUrl || null;
-      }
-    } catch {
-      // Non-blocking profile read.
-    }
-
-    const rawSubmissionId = submission.submissionId ?? submission.id ?? submission[0] ?? parsedSubmission.submissionId;
-    const submissionId =
-      rawSubmissionId !== undefined && rawSubmissionId !== null
-        ? BigInt(String(rawSubmissionId))
-        : BigInt(parsedSubmission.submissionId);
-
-    try {
-      const responseIds = await jobContract.getSubmissionResponses(submissionId);
+      const responseIds = await contract.getSubmissionResponses?.(BigInt(parsedSubmission.submissionId)) ?? [];
       for (const responseId of responseIds as Array<bigint | number>) {
         try {
-          const response = (await jobContract.getResponse(responseId)) as Record<string, unknown> & unknown[];
+          const response = (await contract.getResponse?.(responseId)) as Record<string, unknown> & unknown[];
           const responder = String(response.responder ?? response[3] ?? "");
           const stakeSlashed = Boolean(response.stakeSlashed ?? response[8] ?? false);
           const responseType = Number(response.responseType ?? response[4] ?? 0);
-          if (!responder || responder.toLowerCase() === ZERO_ADDRESS.toLowerCase() || stakeSlashed) continue;
+          if (isZero(responder) || stakeSlashed) continue;
 
-          const responderPerson = getOrCreate(responder);
-          responderPerson.role = responderPerson.submissionCount > 0 ? "both" : "responder";
+          const responderPerson = getOrCreate(responder, "responder");
 
           if (responseType === 0) {
             submitter.buildsOnReceived += 1;
@@ -171,24 +194,47 @@ export async function buildTaskHeatmap(
 
   for (const person of people) {
     person.activityWeight =
-      globalActivity > 0 ? Math.round((person.totalActivity / globalActivity) * 100) : 0;
-    const totalSignals = person.buildsOnGiven + person.critiquesGiven;
-    person.colorRatio = totalSignals === 0 ? 0.5 : person.buildsOnGiven / totalSignals;
+      globalActivity > 0 ? Math.round((person.totalActivity / globalActivity) * 100) : Math.round(100 / people.length);
+    const buildSignals = person.buildsOnGiven + person.buildsOnReceived;
+    const critiqueSignals = person.critiquesGiven + person.critiquesReceived;
+    const totalSignals = buildSignals + critiqueSignals;
+    person.colorRatio = totalSignals === 0 ? 0.5 : buildSignals / totalSignals;
     person.dominantSignal =
       person.colorRatio > 0.6 ? "builds_on" : person.colorRatio < 0.4 ? "critiques" : "neutral";
   }
+
+  await Promise.all(
+    people.map(async (person) => {
+      try {
+        const profile = await fetchUserProfile(readProvider, person.address);
+        if (profile) {
+          person.username = profile.username || null;
+          person.avatarUrl = profile.avatarUrl || null;
+        }
+      } catch {
+        // Non-blocking profile read.
+      }
+    })
+  );
 
   people.sort((a, b) => b.activityWeight - a.activityWeight);
 
   let revealPhaseEnd = 0;
   let isRevealPhase = false;
   try {
-    revealPhaseEnd = Number(await jobContract.getRevealPhaseEnd(taskId));
-    isRevealPhase = Boolean(await jobContract.isInRevealPhase(taskId));
+    revealPhaseEnd = Number((await contract.getRevealPhaseEnd?.(taskId)) ?? 0);
+    isRevealPhase = Boolean((await contract.isInRevealPhase?.(taskId)) ?? false);
   } catch {
     revealPhaseEnd = 0;
     isRevealPhase = false;
   }
+
+  console.log(`[signalMap] task #${taskId} tiles: ${people.length}`);
+  people.forEach((person) => {
+    console.log(
+      `  ${person.address.slice(0, 10)} role:${person.role} weight:${person.activityWeight}%`
+    );
+  });
 
   return {
     people,

@@ -1,6 +1,6 @@
 // Canonical task identity across all known testnet job deployments.
-// Display IDs are human-facing only; URLs carry the source prefix so reads
-// always land on the exact contract that owns the task.
+// Display IDs are the canonical human-facing route. Source-prefixed parsing is
+// retained only as a backwards-compatible fallback for old shared links.
 
 export type TaskSource = "V1" | "PrevV2" | "CurrV2";
 
@@ -10,15 +10,13 @@ export const SOURCE_OFFSETS: Record<TaskSource, number> = {
   CurrV2: 12
 };
 
-const SOURCE_PREFIX: Record<TaskSource, string> = {
-  V1: "v1",
-  PrevV2: "pv2",
-  CurrV2: "v2"
-};
-
 export function getDisplayId(source: TaskSource, contractJobId: number): number {
   const offset = SOURCE_OFFSETS[source] ?? 0;
   return offset + contractJobId + 1;
+}
+
+export function getCurrentTaskDisplayId(contractJobId: number): number {
+  return getDisplayId("CurrV2", contractJobId);
 }
 
 export function formatDisplayId(source: TaskSource, contractJobId: number): string {
@@ -26,7 +24,7 @@ export function formatDisplayId(source: TaskSource, contractJobId: number): stri
 }
 
 export function makeTaskUrl(source: TaskSource, contractJobId: number): string {
-  return `/job/${SOURCE_PREFIX[source]}-${contractJobId}`;
+  return `/job/${getDisplayId(source, contractJobId)}`;
 }
 
 export function parseTaskUrl(param: string): { source: TaskSource; contractJobId: number } | null {

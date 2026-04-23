@@ -40,14 +40,26 @@ const _listeners: Array<(events: ActivityEvent[]) => void> = [];
 const MAX_EVENTS = 10;
 const ZERO = "0x0000000000000000000000000000000000000000";
 
+export function formatTimeAgo(timestampInput: number | bigint): string {
+  const ts = Number(timestampInput);
+  if (!ts || ts <= 0) return "recently";
+
+  const now = Math.floor(Date.now() / 1000);
+  const tsSeconds = ts > 1e12 ? Math.floor(ts / 1000) : ts;
+  const diffSeconds = now - tsSeconds;
+
+  if (diffSeconds < 0 || diffSeconds > 315_360_000) return "recently";
+  if (diffSeconds < 60) return "just now";
+  if (diffSeconds < 3_600) return `${Math.floor(diffSeconds / 60)}m ago`;
+  if (diffSeconds < 86_400) return `${Math.floor(diffSeconds / 3_600)}h ago`;
+  if (diffSeconds < 604_800) return `${Math.floor(diffSeconds / 86_400)}d ago`;
+  if (diffSeconds < 2_592_000) return `${Math.floor(diffSeconds / 604_800)}w ago`;
+  if (diffSeconds < 31_536_000) return `${Math.floor(diffSeconds / 2_592_000)}mo ago`;
+  return `${Math.floor(diffSeconds / 31_536_000)}y ago`;
+}
+
 function _timeAgo(timestamp: number): string {
-  const diff = Date.now() - timestamp;
-  if (diff < 0) return "just now";
-  if (diff < 60_000) return "just now";
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
-  if (diff < 604_800_000) return `${Math.floor(diff / 86_400_000)}d ago`;
-  return `${Math.floor(diff / 604_800_000)}w ago`;
+  return formatTimeAgo(timestamp);
 }
 
 function _notify() {
@@ -67,14 +79,14 @@ function _makeEventId(prefix: string, log?: EventLog | Log): string {
   return `${prefix}-${log.transactionHash}-${log.index}`;
 }
 
-async function _getBlockTimestampMs(provider: ReturnType<typeof getReadProvider>, blockNumber: number): Promise<number> {
+async function _getBlockTimestampSeconds(provider: ReturnType<typeof getReadProvider>, blockNumber: number): Promise<number> {
   try {
     const block = await provider.getBlock(blockNumber);
-    if (block?.timestamp) return Number(block.timestamp) * 1000;
+    if (block?.timestamp) return Number(block.timestamp);
   } catch {
     // Ignore and fall back.
   }
-  return Date.now();
+  return Math.floor(Date.now() / 1000);
 }
 
 async function _checkIsAgent(identityContract: Contract, address: string): Promise<boolean> {
@@ -116,7 +128,7 @@ async function _loadRecentHistory(jobContract: Contract, identityContract: Contr
     );
     console.log("[activity] Found", created.length, "JobCreated events");
     for (const log of created.slice(-5) as EventLog[]) {
-      const timestamp = await _getBlockTimestampMs(provider, log.blockNumber);
+      const timestamp = await _getBlockTimestampSeconds(provider, log.blockNumber);
       merged.push({
         id: _makeEventId("hist-created", log),
         type: "task_created",
@@ -137,7 +149,7 @@ async function _loadRecentHistory(jobContract: Contract, identityContract: Contr
     );
     console.log("[activity] Found", submitted.length, "DeliverableSubmitted events");
     for (const log of submitted.slice(-5) as EventLog[]) {
-      const timestamp = await _getBlockTimestampMs(provider, log.blockNumber);
+      const timestamp = await _getBlockTimestampSeconds(provider, log.blockNumber);
       const agent = String(log.args?.[1] ?? ZERO);
       merged.push({
         id: _makeEventId("hist-submitted", log),
@@ -158,7 +170,7 @@ async function _loadRecentHistory(jobContract: Contract, identityContract: Contr
       latest
     );
     for (const log of claimed.slice(-5) as EventLog[]) {
-      const timestamp = await _getBlockTimestampMs(provider, log.blockNumber);
+      const timestamp = await _getBlockTimestampSeconds(provider, log.blockNumber);
       const agent = String(log.args?.[1] ?? ZERO);
       merged.push({
         id: _makeEventId("hist-credential", log),
@@ -183,7 +195,7 @@ async function _loadRecentHistory(jobContract: Contract, identityContract: Contr
       const to = String(log.args?.[1] ?? ZERO);
       if (from !== ZERO) continue;
       if (!to || to.toLowerCase() === ZERO) continue;
-      const timestamp = await _getBlockTimestampMs(provider, log.blockNumber);
+      const timestamp = await _getBlockTimestampSeconds(provider, log.blockNumber);
       merged.push({
         id: _makeEventId("hist-agent", log),
         type: "agent_joined",
@@ -213,7 +225,7 @@ async function _loadRecentHistory(jobContract: Contract, identityContract: Contr
         [
           "function totalJobs() view returns (uint256)",
           "function nextJobId() view returns (uint256)",
-          "function getJob(uint256) view returns (tuple(uint256 jobId,address client,string title,string description,uint256 deadline,uint256 rewardUSDC,uint256 createdAt,uint256 acceptedCount,uint256 submissionCount,uint256 approvedCount,uint256 claimedCount,uint256 paidOutUSDC,bool refunded,uint8 status))"
+          "function getJob(uint256) view returns (tuple(uint256 jobId,address client,string title,string description,uint256 deadline,uint256 rewardUSDC,uint256 maxApprovals,uint256 createdAt,uint256 acceptedCount,uint256 submissionCount,uint256 approvedCount,uint256 claimedCount,uint256 paidOutUSDC,bool refunded,uint8 status))"
         ],
         provider
       );
@@ -236,8 +248,8 @@ async function _loadRecentHistory(jobContract: Contract, identityContract: Contr
         const job = await stateReader.getJob(jobId);
         const client = String(job.client ?? job[1] ?? ZERO);
         const title = formatTaskTitle(String(job.title ?? job[2] ?? `Task #${jobId}`));
-        const submissionCount = Number(job.submissionCount ?? job[8] ?? 0);
-        const createdAt = Number(job.createdAt ?? job[6] ?? 0) * 1000;
+        const submissionCount = Number(job.submissionCount ?? job[9] ?? 0);
+        const createdAt = Number(job.createdAt ?? job[7] ?? 0);
 
         if (client && client.toLowerCase() !== ZERO) {
           merged.push({
@@ -247,7 +259,7 @@ async function _loadRecentHistory(jobContract: Contract, identityContract: Contr
             isAgent: false,
             description: `Task posted: "${title.slice(0, 50)}"`,
             taskId: jobId,
-            timestamp: createdAt || Date.now(),
+            timestamp: createdAt || Math.floor(Date.now() / 1000),
             timeAgo: ""
           });
 
@@ -259,7 +271,7 @@ async function _loadRecentHistory(jobContract: Contract, identityContract: Contr
               isAgent: false,
               description: `${submissionCount} submission${submissionCount > 1 ? "s" : ""} on task ${await _taskLabel(jobId)}: "${title.slice(0, 30)}"`,
               taskId: jobId,
-              timestamp: createdAt ? createdAt + 10 * 60 * 1000 : Date.now(),
+              timestamp: createdAt ? createdAt + 10 * 60 : Math.floor(Date.now() / 1000),
               timeAgo: ""
             });
           }
@@ -290,7 +302,7 @@ async function _loadRecentHistory(jobContract: Contract, identityContract: Contr
           actor: "",
           isAgent: false,
           description: `${legacyCount} earlier tasks are still visible in the task feed`,
-          timestamp: Date.now() - 86_400_000,
+          timestamp: Math.floor(Date.now() / 1000) - 86_400,
           timeAgo: "1d ago"
         });
       }
@@ -386,7 +398,7 @@ export function initActivityFeed() {
     const jobId = Number(args[0] ?? 0);
     const client = String(args[1] ?? ZERO);
     const title = formatTaskTitle(String(args[2] ?? ""));
-    const timestamp = Date.now();
+    const timestamp = Math.floor(Date.now() / 1000);
     _addEvent({
       id: _makeEventId("job-created", log),
       type: "task_created",
@@ -405,7 +417,7 @@ export function initActivityFeed() {
     const jobId = Number(args[0] ?? 0);
     const agent = String(args[1] ?? ZERO);
     const isAgent = await _checkIsAgent(identityContract, agent);
-    const timestamp = Date.now();
+    const timestamp = Math.floor(Date.now() / 1000);
     _addEvent({
       id: _makeEventId("accepted", log),
       type: "task_accepted",
@@ -424,7 +436,7 @@ export function initActivityFeed() {
     const jobId = Number(args[0] ?? 0);
     const agent = String(args[1] ?? ZERO);
     const isAgent = await _checkIsAgent(identityContract, agent);
-    const timestamp = Date.now();
+    const timestamp = Math.floor(Date.now() / 1000);
     _addEvent({
       id: _makeEventId("submitted", log),
       type: "submission_made",
@@ -443,7 +455,7 @@ export function initActivityFeed() {
     const jobId = Number(args[0] ?? 0);
     const agent = String(args[1] ?? ZERO);
     const isAgent = await _checkIsAgent(identityContract, agent);
-    const timestamp = Date.now();
+    const timestamp = Math.floor(Date.now() / 1000);
     _addEvent({
       id: _makeEventId("approved", log),
       type: "submission_approved",
@@ -462,7 +474,7 @@ export function initActivityFeed() {
     const jobId = Number(args[0] ?? 0);
     const agent = String(args[1] ?? ZERO);
     const isAgent = await _checkIsAgent(identityContract, agent);
-    const timestamp = Date.now();
+    const timestamp = Math.floor(Date.now() / 1000);
     _addEvent({
       id: _makeEventId("credential", log),
       type: "credential_minted",
@@ -482,7 +494,7 @@ export function initActivityFeed() {
     const agent = String(args[1] ?? ZERO);
     const net = Number(args[4] ?? 0) / 1_000_000;
     const isAgent = await _checkIsAgent(identityContract, agent);
-    const timestamp = Date.now();
+    const timestamp = Math.floor(Date.now() / 1000);
     _addEvent({
       id: _makeEventId("reward", log),
       type: "reward_claimed",
@@ -503,7 +515,7 @@ export function initActivityFeed() {
     const parentSubmissionId = Number(args[1] ?? 0);
     const responseId = Number(args[2] ?? 0);
     const responseType = Number(args[3] ?? 0);
-    const timestamp = Date.now();
+    const timestamp = Math.floor(Date.now() / 1000);
     _addEvent({
       id: _makeEventId(`response-${responseId}`, log),
       type: "response_added",
@@ -521,7 +533,7 @@ export function initActivityFeed() {
     const log = args[args.length - 1] as EventLog;
     const responseId = Number(args[0] ?? 0);
     const responder = String(args[1] ?? ZERO);
-    const timestamp = Date.now();
+    const timestamp = Math.floor(Date.now() / 1000);
     _addEvent({
       id: _makeEventId(`slashed-${responseId}`, log),
       type: "stake_slashed",
@@ -540,7 +552,7 @@ export function initActivityFeed() {
     const to = String(args[1] ?? ZERO);
     if (from !== ZERO) return;
     if (!to || to.toLowerCase() === ZERO) return;
-    const timestamp = Date.now();
+    const timestamp = Math.floor(Date.now() / 1000);
     _addEvent({
       id: _makeEventId("agent-joined", log),
       type: "agent_joined",
@@ -596,7 +608,7 @@ export function initActivityFeed() {
           description: `Task: "${formatTaskTitle(String(args[2] ?? "")).slice(0, 50)}"`,
           taskId: Number(args[0] ?? 0),
           txHash: log.transactionHash,
-          timestamp: Date.now(),
+          timestamp: Math.floor(Date.now() / 1000),
           timeAgo: "just now"
         });
       }
@@ -611,7 +623,7 @@ export function initActivityFeed() {
           description: `Submission for task ${await _taskLabel(Number(args[0] ?? 0))}`,
           taskId: Number(args[0] ?? 0),
           txHash: log.transactionHash,
-          timestamp: Date.now(),
+          timestamp: Math.floor(Date.now() / 1000),
           timeAgo: "just now"
         });
       }

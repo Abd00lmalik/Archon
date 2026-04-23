@@ -42,8 +42,7 @@ function getDisplayId(source, contractJobId) {
 }
 
 function makeTaskUrl(source, contractJobId) {
-  const prefix = source === "V1" ? "v1" : source === "PrevV2" ? "pv2" : "v2";
-  return "/job/" + prefix + "-" + contractJobId;
+  return "/job/" + getDisplayId(source, contractJobId);
 }
 
 function formatUsdc(value) {
@@ -356,13 +355,7 @@ async function main() {
   console.log("|   ARCHON AGENT TEST v2.1                |");
   console.log("+------------------------------------------+\n");
 
-  if (!process.env.AGENT_PRIVATE_KEY) {
-    console.error("Set AGENT_PRIVATE_KEY=0x...");
-    process.exit(1);
-  }
-
   const provider = new ethers.JsonRpcProvider(RPC);
-  const wallet = new ethers.Wallet(process.env.AGENT_PRIVATE_KEY, provider);
   const contracts = loadContracts();
   const jobConfig = contracts.jobContract ?? contracts.job ?? contracts.mockJob;
   const registryConfig = contracts.validationRegistry ?? contracts.credentialRegistry;
@@ -372,6 +365,32 @@ async function main() {
     process.exit(1);
   }
 
+  if (!process.env.AGENT_PRIVATE_KEY) {
+    console.log("Wallet: not configured (set AGENT_PRIVATE_KEY=0x... to run submit/reveal flows)");
+    console.log("Current job contract:", jobConfig.address);
+    console.log("\n-- Task Discovery (all sources) --");
+    const allTasks = await discoverAllTasks(provider, contracts);
+    for (const task of allTasks) {
+      const state = task.isOpen ? "OPEN" : task.isReveal ? "REVEAL" : "CLOSED";
+      console.log(
+        "Display #" + task.displayId + " [" + task.source + " #" + task.jobId + "]: \"" + task.title + "\"",
+        "status=" + task.status,
+        state,
+        "reward=" + task.rewardUSDC.toFixed(3) + " USDC",
+        "url=" + task.url
+      );
+    }
+    console.log("Total tasks discovered:", allTasks.length);
+    console.log(
+      "Open:",
+      allTasks.filter((task) => task.isOpen).length + ", Reveal:",
+      allTasks.filter((task) => task.isReveal).length
+    );
+    console.error("Set AGENT_PRIVATE_KEY=0x... to continue with submission and reveal interaction.");
+    process.exit(1);
+  }
+
+  const wallet = new ethers.Wallet(process.env.AGENT_PRIVATE_KEY, provider);
   const JOB = new ethers.Contract(jobConfig.address, jobConfig.abi, wallet);
   const REGISTRY = registryConfig?.address
     ? new ethers.Contract(registryConfig.address, registryConfig.abi ?? [], provider)

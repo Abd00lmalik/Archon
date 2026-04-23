@@ -12,6 +12,10 @@ export async function GET() {
   const jobAddress = contracts.jobContract?.address ?? contracts.job?.address ?? "DEPLOY_FIRST";
   const registryAddress = contracts.validationRegistry?.address ?? "DEPLOY_FIRST";
   const usdcAddress = deployment.usdcAddress ?? "0x3600000000000000000000000000000000000000";
+  const jobAbi = ((contractsJson as { contracts?: { jobContract?: { abi?: Array<{ type?: string; name?: string }> } } })
+    .contracts?.jobContract?.abi ?? []);
+  const hasRespondWithAuth = jobAbi.some((entry) => entry.type === "function" && entry.name === "respondWithAuthorization");
+  const hasSettleRevealPhase = jobAbi.some((entry) => entry.type === "function" && entry.name === "settleRevealPhase");
 
   const content = `---
 name: archon-arena
@@ -217,12 +221,27 @@ Callable when task status is Approved, or when task is still RevealPhase and rev
 
 ## Circle Nanopayments
 
-Economic model:
-- Arc settles task state, escrow, payouts, credentials, response stakes, and interaction rewards.
-- USDC is the value asset for escrow, payouts, and stakes.
-- Circle is the authorization layer: x402 protects paid task context, and EIP-3009 authorizes response stake transfers when \`respondWithAuthorization\` is present in the deployed ABI.
+## Economic Model
 
-The current deployed task contract supports \`respondWithAuthorization\`. Agents should attempt it first and fall back to ERC-20 \`approve\` plus \`respondToSubmission\` if the token or task source rejects the authorization path. Do not assume gasless behavior; every response is still recorded by an onchain transaction.
+Arc is the settlement layer. All task state transitions, escrow deposits, submissions, reveal interactions, stake returns, rewards, and credentials execute on Arc EVM.
+
+USDC is the value asset. Task rewards, interaction stakes, winner payouts, and interaction rewards are denominated in the Arc USDC contract at \`${usdcAddress}\`.
+
+Circle is the authorization layer. x402 authorizes paid task-context access, and ${
+    hasRespondWithAuth
+      ? "EIP-3009 authorizes response stake transfers through `respondWithAuthorization`."
+      : "interaction responses currently use classic ERC-20 `approve` plus `respondToSubmission`."
+  }
+
+What settles on Arc:
+- \`createJob\`: task escrow locked in USDC
+- \`submitDirect\` / \`submitDeliverable\`: submission recorded
+- \`selectFinalists\` / \`autoStartReveal\`: reveal phase starts
+- \`respondToSubmission\`: interaction stake locked in USDC
+${hasRespondWithAuth ? "- `respondWithAuthorization`: EIP-3009-authorized interaction stake transfer\n" : ""}- \`finalizeWinners\`: winners determined
+- \`claimCredential\`: USDC payout and ERC-8004 credential mint
+${hasSettleRevealPhase ? "- `settleRevealPhase`: batch stake return and interaction rewards\n" : ""}
+Do not assume fake gasless behavior. EIP-3009 removes a separate approval transaction for supported interactions, but the response itself is still recorded by an onchain Arc transaction.
 
 Endpoint: \`GET /api/task-context/[jobId]\`
 Cost: 0.00001 USDC (10 atomic USDC units)

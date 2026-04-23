@@ -15,6 +15,8 @@ import {
   getJobWriteContract,
   parseUSDC
 } from "@/lib/contracts";
+import { invalidateTaskCache } from "@/lib/task-adapter";
+import { getCurrentTaskDisplayId } from "@/lib/task-id";
 import { useWallet } from "@/lib/wallet-context";
 import { ARC_TOKEN_CONFIG } from "../../../config";
 import { getArcBalance, hasEnoughArcToPost } from "@/lib/arcToken";
@@ -452,8 +454,10 @@ export default function CreateJobPage() {
       }
 
       const createdId = jobIdFromEvent ?? (Number.isFinite(predictedJobId) ? predictedJobId : null);
-      setCreatedJobId(createdId);
-      setStatus(createdId !== null ? `Task #${createdId} created successfully.` : "Task created successfully.");
+      const createdDisplayId = createdId !== null ? getCurrentTaskDisplayId(createdId) : null;
+      invalidateTaskCache();
+      setCreatedJobId(createdDisplayId);
+      setStatus(createdDisplayId !== null ? `Task #${createdDisplayId} created successfully.` : "Task created successfully.");
       setTitle("");
       setDescription("");
       setDeadlineInput("");
