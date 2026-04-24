@@ -222,11 +222,11 @@ function ResponseItem({
         style={{ color: "var(--text-muted)", fontFamily: "JetBrains Mono, monospace" }}
       >
         <span>Stake: {(Number(response.stakedAmount) / 1e6).toFixed(3)} USDC</span>
-        <span>·</span>
+        <span>-</span>
         <span>Slashed: {response.stakeSlashed ? "yes" : "no"}</span>
         {response.timestamp > 0 ? (
           <>
-            <span>·</span>
+            <span>-</span>
             <span>{toDisplayDate(response.timestamp)}</span>
           </>
         ) : null}
@@ -303,7 +303,7 @@ function SubmissionDetailPanel({
           onClick={onClose}
           style={{ color: "var(--text-muted)", fontSize: 18, background: "none", border: "none", cursor: "pointer" }}
         >
-          ?
+          X
         </button>
       </div>
 
@@ -516,7 +516,7 @@ export default function SignalMap({
             <div style={{ width: 10, height: 10, background: "var(--amber, #f59e0b)" }} />
             MIXED
           </div>
-          <span className="ml-auto">{heatmap.totalActivity} interactions · {heatmap.people.length} submissions</span>
+          <span className="ml-auto">{heatmap.totalActivity} interactions - {heatmap.people.length} submissions</span>
         </div>
 
         <div
@@ -559,5 +559,6 @@ export default function SignalMap({
     </div>
   );
 }
+
 
 
