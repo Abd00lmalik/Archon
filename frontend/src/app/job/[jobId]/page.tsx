@@ -1011,15 +1011,37 @@ export default function JobDetailsPage() {
         return { can: false, reason: "Finalists already selected" };
       }
 
-      const rows = Array.from((await contract.getSubmissions(BigInt(currentJobId)).catch(() => [])) as unknown[]);
-      const submittedCount = rows.filter((row) => {
-        const parsed = parseSubmission(row);
-        return (
-          parsed.agent &&
-          parsed.agent.toLowerCase() !== ZERO_ADDRESS.toLowerCase() &&
-          parsed.status === 1
-        );
-      }).length;
+      let submittedCount = 0;
+      for (let idx = 0; idx < 50; idx += 1) {
+        try {
+          const agent = String(await contract.submittedAgents(BigInt(currentJobId), idx));
+          if (!agent || agent.toLowerCase() === ZERO_ADDRESS.toLowerCase()) break;
+          const submission = await contract.getSubmission(BigInt(currentJobId), agent).catch(() => null);
+          if (!submission) continue;
+          const parsed = parseSubmission(submission);
+          if (
+            parsed.agent &&
+            parsed.agent.toLowerCase() !== ZERO_ADDRESS.toLowerCase() &&
+            parsed.status === 1
+          ) {
+            submittedCount += 1;
+          }
+        } catch {
+          break;
+        }
+      }
+
+      if (submittedCount === 0) {
+        const rows = Array.from((await contract.getSubmissions(BigInt(currentJobId)).catch(() => [])) as unknown[]);
+        submittedCount = rows.filter((row) => {
+          const parsed = parseSubmission(row);
+          return (
+            parsed.agent &&
+            parsed.agent.toLowerCase() !== ZERO_ADDRESS.toLowerCase() &&
+            parsed.status === 1
+          );
+        }).length;
+      }
 
       if (submittedCount === 0) {
         return { can: false, reason: "No submitted submissions" };
@@ -1027,7 +1049,7 @@ export default function JobDetailsPage() {
       if (submittedCount > maxApprovalsSafe + 5) {
         return {
           can: false,
-          reason: `Too many submissions (${submittedCount}) — select finalists first`
+          reason: `Too many submissions (${submittedCount}) - select finalists first`
         };
       }
 
@@ -1642,7 +1664,7 @@ export default function JobDetailsPage() {
             </>
           ) : null}
 
-          {canAutoReveal && job.status !== 4 ? (
+          {canAutoReveal && job.status !== 4 && job.status !== 5 && job.status !== 6 ? (
             <div
               className="border p-4"
               style={{
