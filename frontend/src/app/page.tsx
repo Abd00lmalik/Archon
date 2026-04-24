@@ -44,32 +44,24 @@ const FILTER_OPTIONS: { value: TaskFilter; label: string; color: string }[] = [
 function matchesFilter(task: UnifiedTask, filter: TaskFilter): boolean {
   if (filter === "all") return true;
 
-  const status = Number(task.status);
-  const deadline = Number(task.deadline);
-  const revealEnd = Number(task.revealPhaseEnd ?? 0);
-  const nowSec = Math.floor(Date.now() / 1000);
-  const revealEnded = status === 4 && revealEnd > 0 && nowSec > revealEnd;
-  const isReveal = (status === 4 || Boolean(task.isInRevealPhase)) && !revealEnded;
-  const deadlinePassed = deadline > 0 && nowSec > deadline;
-  const deadlineActive = !deadlinePassed;
-  const isOpen = (status === 0 || status === 1 || status === 2) && deadlineActive;
+  const display = deriveDisplayStatus(
+    task.status,
+    task.deadline,
+    task.revealPhaseEnd,
+    task.submissionCount
+  );
 
   if (filter === "open") {
-    return isOpen;
+    return display.label === "Open";
   }
   if (filter === "submitted") {
-    return ((status === 2 && deadlinePassed) || status === 3) && !isReveal;
+    return display.label === "Under Review";
   }
   if (filter === "reveal") {
-    return isReveal;
+    return display.label === "Reveal Phase";
   }
   if (filter === "closed") {
-    return (
-      status === 5 ||
-      status === 6 ||
-      revealEnded ||
-      (!isOpen && !isReveal && deadlinePassed && task.submissionCount === 0)
-    );
+    return display.label === "Closed";
   }
   return true;
 }

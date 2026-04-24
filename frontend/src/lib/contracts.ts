@@ -1,8 +1,15 @@
 import { ethers } from "ethers";
 import deploymentRaw from "@/lib/generated/contracts.json";
+import {
+  deriveDisplayStatus as deriveCanonicalDisplayStatus,
+  mapRawStatusFlags,
+  statusColorHex,
+  TaskDisplayStatus,
+  TaskStatusInput
+} from "@/lib/task-status";
 
 export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
-export type TaskStatusLabel = "Open" | "Under Review" | "Reveal Phase" | "Closed";
+export type TaskStatusLabel = TaskDisplayStatus;
 
 export const JOB_STATUS_LABELS: Record<number, TaskStatusLabel> = {
   0: "Open",
@@ -14,13 +21,13 @@ export const JOB_STATUS_LABELS: Record<number, TaskStatusLabel> = {
   6: "Closed"
 };
 export const JOB_STATUS_COLORS: Record<number, string> = {
-  0: "#00FFA3",
-  1: "#00FFA3",
-  2: "#F5A623",
-  3: "#F5A623",
-  4: "#00E5FF",
-  5: "#7A9BB5",
-  6: "#7A9BB5"
+  0: statusColorHex("Open"),
+  1: statusColorHex("Open"),
+  2: statusColorHex("Under Review"),
+  3: statusColorHex("Under Review"),
+  4: statusColorHex("Reveal Phase"),
+  5: statusColorHex("Closed"),
+  6: statusColorHex("Closed")
 };
 export const SUBMISSION_STATUS_LABELS = ["Not Submitted", "Submitted", "Approved", "Rejected"] as const;
 
@@ -617,7 +624,8 @@ export function getJobStatusLabel(status: number): string {
 }
 
 export function getJobStatusColor(status: number): string {
-  return JOB_STATUS_COLORS[status] ?? "#7A9BB5";
+  const label = JOB_STATUS_LABELS[status] ?? "Closed";
+  return statusColorHex(label);
 }
 
 export function deriveTaskStatus(
@@ -628,23 +636,19 @@ export function deriveTaskStatus(
   const revealEnd = Number(revealPhaseEnd ?? 0);
   const revealActive = contractStatus === 4 && revealEnd > 0 && nowSec <= revealEnd;
   const revealEnded = contractStatus === 4 && revealEnd > 0 && nowSec > revealEnd;
-
-  const label: TaskStatusLabel =
-    contractStatus === 5 || contractStatus === 6 || revealEnded
-      ? "Closed"
-      : revealActive
-        ? "Reveal Phase"
-        : contractStatus === 2 || contractStatus === 3
-          ? "Under Review"
-          : "Open";
-  const color =
-    label === "Open"
-      ? "#00FFA3"
-      : label === "Under Review"
-        ? "#F5A623"
-        : label === "Reveal Phase"
-          ? "#00E5FF"
-          : "#7A9BB5";
+  const flags = mapRawStatusFlags(contractStatus);
+  const input: TaskStatusInput = {
+    status: contractStatus,
+    deadline: 0,
+    submissionCount: 1,
+    finalistCount: 0,
+    isInRevealPhase: contractStatus === 4,
+    revealPhaseEnd: revealEnd,
+    winnersFinalized: flags.winnersFinalized,
+    rewardsClaimed: flags.rewardsClaimed
+  };
+  const label = deriveCanonicalDisplayStatus(input);
+  const color = statusColorHex(label);
 
   return {
     label,
@@ -672,31 +676,21 @@ export function deriveDisplayStatus(
   const nowSec = Math.floor(Date.now() / 1000);
   const deadlineSec = Number(deadline ?? 0);
   const revealEndSec = Number(revealPhaseEnd ?? 0);
-  const deadlinePassed = deadlineSec > 0 && nowSec > deadlineSec;
   const revealActive = contractStatus === 4 && revealEndSec > 0 && nowSec <= revealEndSec;
   const revealEnded = contractStatus === 4 && revealEndSec > 0 && nowSec > revealEndSec;
-
-  let label: TaskStatusLabel;
-  let color: string;
-
-  if (
-    contractStatus === 5 ||
-    contractStatus === 6 ||
-    revealEnded ||
-    (deadlinePassed && submissionCount === 0)
-  ) {
-    label = "Closed";
-    color = "#7A9BB5";
-  } else if (revealActive) {
-    label = "Reveal Phase";
-    color = "#00E5FF";
-  } else if (deadlinePassed) {
-    label = "Under Review";
-    color = "#F5A623";
-  } else {
-    label = "Open";
-    color = "#00FFA3";
-  }
+  const flags = mapRawStatusFlags(contractStatus);
+  const input: TaskStatusInput = {
+    status: contractStatus,
+    deadline: deadlineSec,
+    submissionCount: Math.max(0, Number(submissionCount ?? 0)),
+    finalistCount: 0,
+    isInRevealPhase: contractStatus === 4,
+    revealPhaseEnd: revealEndSec,
+    winnersFinalized: flags.winnersFinalized,
+    rewardsClaimed: flags.rewardsClaimed
+  };
+  const label = deriveCanonicalDisplayStatus(input);
+  const color = statusColorHex(label);
 
   return {
     label,

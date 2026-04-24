@@ -62,6 +62,7 @@ export default function MilestonesPage() {
   const [disputeNotes, setDisputeNotes] = useState<Record<number, string>>({});
   const [busy, setBusy] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
+  const [creating, setCreating] = useState(false);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
 
@@ -233,12 +234,27 @@ export default function MilestonesPage() {
 
   const onPropose = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (creating) return;
     setStatus("");
     setError("");
     if (!ethers.isAddress(freelancerWallet.trim())) return setError("Enter a valid freelancer wallet address.");
     if (drafts.length < 1 || drafts.length > 20) return setError("Milestones must be between 1 and 20.");
+    setCreating(true);
     try {
       const provider = await withProvider();
+      const signer = await provider.getSigner();
+      const address = await signer.getAddress();
+      const [pendingNonce, confirmedNonce] = await Promise.all([
+        provider.getTransactionCount(address, "pending"),
+        provider.getTransactionCount(address, "latest")
+      ]);
+      if (pendingNonce > confirmedNonce) {
+        setError(
+          "You have a pending transaction on the network. Wait for it to confirm before submitting a new one."
+        );
+        return;
+      }
+
       const titles = drafts.map((row) => row.title.trim());
       const descriptions = drafts.map((row) => row.description.trim());
       const amounts = drafts.map((row) => ethers.parseUnits(row.amount || "0", 6));
@@ -252,7 +268,24 @@ export default function MilestonesPage() {
       setStatus(`Project #${nextProjectId} created.`);
       await load();
     } catch (proposeError) {
-      setError(proposeError instanceof Error ? proposeError.message : "Failed to create project.");
+      const message =
+        proposeError instanceof Error ? proposeError.message : String(proposeError ?? "Failed to create project.");
+      const lower = message.toLowerCase();
+      if (
+        lower.includes("txpool is full") ||
+        lower.includes("pool is full") ||
+        lower.includes("-32603")
+      ) {
+        setError(
+          "The Arc testnet transaction pool is temporarily full. Wait 30-60 seconds and try again. Do not click multiple times."
+        );
+      } else if (lower.includes("user rejected") || lower.includes("4001")) {
+        setError("Transaction rejected in wallet.");
+      } else {
+        setError(`Transaction failed: ${message.slice(0, 120)}`);
+      }
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -373,7 +406,13 @@ export default function MilestonesPage() {
             <div className="flex flex-wrap gap-2">
               <button type="button" className="archon-button-secondary px-3 py-2 text-xs" onClick={() => drafts.length < 20 && setDrafts((prev) => [...prev, newDraft()])}>Add Milestone</button>
               {drafts.length > 1 ? <button type="button" className="archon-button-secondary px-3 py-2 text-xs" onClick={() => setDrafts((prev) => prev.slice(0, -1))}>Remove Last</button> : null}
-              <button type="submit" className="archon-button-primary px-4 py-2 text-sm">Create Project</button>
+              <button
+                type="submit"
+                disabled={creating}
+                className={creating ? "archon-button-primary px-4 py-2 text-sm opacity-50 cursor-not-allowed" : "archon-button-primary px-4 py-2 text-sm"}
+              >
+                {creating ? "Creating..." : "Create Project"}
+              </button>
             </div>
           </form>
           {createdProjectId !== null ? <div className="mt-3 rounded-xl border border-[#00D1B2]/25 bg-[#00D1B2]/10 p-3 text-sm text-[#9EF6E8]">Project #{createdProjectId} created. {createdProjectMilestones[0] ? <button type="button" className="archon-button-primary ml-2 px-3 py-2 text-xs" onClick={() => void onFund(createdProjectMilestones[0])}>Fund Milestone 1</button> : null}</div> : null}

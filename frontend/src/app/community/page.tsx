@@ -90,6 +90,25 @@ const COMMUNITY_TYPES = [
 ] as const;
 
 const PLATFORMS = ["discord", "telegram", "twitter", "forum", "github"] as const;
+const CONTRIBUTION_CATEGORIES = [
+  "Bug Report",
+  "Open Source PR",
+  "dApp Built",
+  "Contract Deployed",
+  "Repo Contribution",
+  "Technical Tutorial",
+  "Security Audit",
+  "Protocol Integration",
+  "Other"
+] as const;
+
+type ModeratorApplicationDraft = {
+  wallet: string;
+  profileLink: string;
+  experience: string;
+  categories: string[];
+  submittedAt: number;
+};
 
 function parseCommunityApplication(raw: unknown): CommunityApplicationRecord {
   const tuple = raw as Record<string, unknown> & unknown[];
@@ -129,6 +148,13 @@ export default function CommunityPage() {
   const [evidenceLink, setEvidenceLink] = useState("");
   const [platform, setPlatform] = useState("discord");
   const [selectedType, setSelectedType] = useState(0);
+  const [selectedModerator, setSelectedModerator] = useState("");
+  const [modApp, setModApp] = useState({
+    profileLink: "",
+    experience: "",
+    categories: [] as string[]
+  });
+  const [storedModApplication, setStoredModApplication] = useState<ModeratorApplicationDraft | null>(null);
 
   const [reviewTypeById, setReviewTypeById] = useState<Record<number, number>>({});
   const [reviewNoteById, setReviewNoteById] = useState<Record<number, string>>({});
@@ -212,6 +238,67 @@ export default function CommunityPage() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    if (!account || typeof window === "undefined") {
+      setStoredModApplication(null);
+      return;
+    }
+    try {
+      const raw = window.localStorage.getItem(`archon_mod_application_${account}`);
+      if (!raw) {
+        setStoredModApplication(null);
+        return;
+      }
+      const parsed = JSON.parse(raw) as ModeratorApplicationDraft;
+      setStoredModApplication(parsed);
+    } catch {
+      setStoredModApplication(null);
+    }
+  }, [account]);
+
+  useEffect(() => {
+    if (moderators.length > 0 && !selectedModerator) {
+      setSelectedModerator(moderators[0].wallet);
+    }
+  }, [moderators, selectedModerator]);
+
+  const handleApplyModerator = () => {
+    setStatus("");
+    setError("");
+    if (!account) {
+      setError("Connect wallet first.");
+      return;
+    }
+    if (!modApp.profileLink.trim()) {
+      setError("Profile or portfolio link is required.");
+      return;
+    }
+    if (modApp.experience.trim().length < 40) {
+      setError("Experience summary must be at least 40 characters.");
+      return;
+    }
+    if (modApp.categories.length === 0) {
+      setError("Select at least one contribution category.");
+      return;
+    }
+    const application: ModeratorApplicationDraft = {
+      wallet: account,
+      profileLink: modApp.profileLink.trim(),
+      experience: modApp.experience.trim(),
+      categories: modApp.categories,
+      submittedAt: Date.now()
+    };
+    try {
+      window.localStorage.setItem(`archon_mod_application_${account}`, JSON.stringify(application));
+      setStoredModApplication(application);
+      setStatus(
+        "Moderator application submitted. A platform operator will review and approve moderator roles via the admin CLI."
+      );
+    } catch {
+      setError("Failed to save moderator application locally. Please try again.");
+    }
+  };
+
   const handleSubmitApplication = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setStatus("");
@@ -225,11 +312,16 @@ export default function CommunityPage() {
       setError("Evidence link is required for technical activity applications.");
       return;
     }
+    if (moderators.length > 0 && !selectedModerator) {
+      setError("Select a moderator for this application.");
+      return;
+    }
 
     try {
       const provider = await withProvider();
       const selected = COMMUNITY_TYPES.find((type) => type.id === selectedType);
-      const normalizedDescription = `[Requested Type: ${selected?.title ?? "General"}] ${activityDescription.trim()}`;
+      const moderatorNote = selectedModerator ? `[Preferred Moderator: ${selectedModerator}] ` : "";
+      const normalizedDescription = `${moderatorNote}[Requested Type: ${selected?.title ?? "General"}] ${activityDescription.trim()}`;
       const tx = await txSubmitCommunityApplication(
         provider,
         normalizedDescription,
@@ -328,6 +420,76 @@ export default function CommunityPage() {
       {error ? (
         <div className="archon-card border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</div>
       ) : null}
+
+      <div className="archon-card p-6">
+        <h2 className="text-lg font-semibold text-[#EAEAF0]">Become a Moderator</h2>
+        {!account ? (
+          <p className="mt-3 text-sm text-[#9CA3AF]">Connect wallet to apply as a moderator.</p>
+        ) : myModeratorProfile?.active ? (
+          <p className="mt-3 text-sm text-emerald-300">Your wallet is already an active moderator.</p>
+        ) : storedModApplication ? (
+          <div className="mt-3 rounded-xl border border-amber-300/35 bg-amber-500/10 p-4 text-sm text-amber-200">
+            <p className="font-medium">Application pending review</p>
+            <p className="mt-1 text-xs">Submitted: {new Date(storedModApplication.submittedAt).toLocaleString()}</p>
+            <p className="mt-1 text-xs">Categories: {storedModApplication.categories.join(", ")}</p>
+            <p className="mt-2 text-xs text-[#9CA3AF]">
+              Platform operators approve moderator roles via admin CLI scripts in the contracts workspace.
+            </p>
+          </div>
+        ) : (
+          <div className="mt-4 space-y-3">
+            <label className="block text-sm text-[#9CA3AF]">
+              Profile / GitHub / proof link
+              <input
+                className="archon-input mt-1"
+                value={modApp.profileLink}
+                onChange={(event) => setModApp((prev) => ({ ...prev, profileLink: event.target.value }))}
+                placeholder="https://..."
+              />
+            </label>
+            <label className="block text-sm text-[#9CA3AF]">
+              Relevant experience
+              <textarea
+                className="archon-input mt-1 min-h-24"
+                value={modApp.experience}
+                onChange={(event) => setModApp((prev) => ({ ...prev, experience: event.target.value }))}
+                placeholder="Summarize your technical review/moderation experience."
+              />
+            </label>
+            <div>
+              <p className="text-sm text-[#9CA3AF]">Contribution categories</p>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                {CONTRIBUTION_CATEGORIES.map((category) => {
+                  const selected = modApp.categories.includes(category);
+                  return (
+                    <label key={category} className="flex items-center gap-2 rounded border border-white/10 p-2 text-xs text-[#9CA3AF]">
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        onChange={(event) =>
+                          setModApp((prev) => ({
+                            ...prev,
+                            categories: event.target.checked
+                              ? [...prev.categories, category]
+                              : prev.categories.filter((item) => item !== category)
+                          }))
+                        }
+                      />
+                      <span>{category}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+            <button type="button" onClick={handleApplyModerator} className="archon-button-primary px-4 py-2 text-sm">
+              Submit Moderator Application
+            </button>
+            <p className="text-xs text-[#9CA3AF]">
+              Approval is completed by a platform operator using the admin CLI once your application is reviewed.
+            </p>
+          </div>
+        )}
+      </div>
 
       <div className="archon-card p-6">
         <h2 className="text-lg font-semibold text-[#EAEAF0]">Who Reviews Your Application</h2>
@@ -481,6 +643,28 @@ export default function CommunityPage() {
                 placeholder="Describe specifically what you built or contributed. Include: what the project does, what your role was, what problem it solves, and relevant technical details."
                 required
               />
+            </label>
+            <label className="block text-sm text-[#9CA3AF]">
+              Select moderator
+              {moderators.length === 0 ? (
+                <p className="mt-1 text-xs text-[#9CA3AF]">
+                  No moderators have been approved yet. Apply to become a moderator above, or contact a platform
+                  operator to approve moderators for your contribution type.
+                </p>
+              ) : (
+                <select
+                  className="archon-input mt-1"
+                  value={selectedModerator}
+                  onChange={(event) => setSelectedModerator(event.target.value)}
+                >
+                  <option value="">Choose a moderator</option>
+                  {moderators.map((moderator) => (
+                    <option key={moderator.wallet} value={moderator.wallet}>
+                      {(moderator.name || shortAddress(moderator.wallet))} — {(moderator.role || "All categories")}
+                    </option>
+                  ))}
+                </select>
+              )}
             </label>
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="block text-sm text-[#9CA3AF]">
