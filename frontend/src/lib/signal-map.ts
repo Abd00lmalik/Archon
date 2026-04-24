@@ -5,31 +5,51 @@ import {
   parseSubmission,
   ZERO_ADDRESS
 } from "@/lib/contracts";
+import { decodeInteractionContent, DecodedInteraction } from "@/lib/content-decoder";
 import { getContractForSource } from "@/lib/task-adapter";
 import { fetchUserProfile } from "@/lib/user-profiles";
 
-export interface PersonSignal {
-  address: string;
+const COLOR_NEUTRAL = "var(--text-muted, #6b7280)";
+const COLOR_GREEN = "var(--arc-green, #22c55e)";
+const COLOR_RED = "var(--pulse, #ef4444)";
+const COLOR_MIXED = "var(--amber, #f59e0b)";
+
+export interface SignalResponse {
+  responseId: string;
+  responder: string;
+  responseType: "critique" | "builds_on" | "other";
+  contentURI: string;
+  decoded: DecodedInteraction | null;
+  stakedAmount: string;
+  stakeSlashed: boolean;
+  timestamp: number;
+}
+
+export interface SignalTile {
+  submissionId: string;
+  agent: string;
+  deliverableLink: string;
+  submittedAt: number;
+  critiquesReceived: number;
+  buildOnsReceived: number;
+  totalReceived: number;
+  responses: SignalResponse[];
+}
+
+export interface SignalTileWithWeight extends SignalTile {
   username: string | null;
   avatarUrl: string | null;
   blockieUrl: string;
-  role: "submitter" | "responder" | "both";
-  submissionId?: number;
-  deliverableLink?: string;
-  submittedAt?: number;
-  submissionCount: number;
-  buildsOnGiven: number;
-  buildsOnReceived: number;
-  critiquesGiven: number;
-  critiquesReceived: number;
-  totalActivity: number;
-  activityWeight: number;
-  dominantSignal: "builds_on" | "critiques" | "neutral";
-  colorRatio: number;
+  weight: number;
+  percentage: number;
+  color: string;
 }
 
+// Backwards-compat alias for existing imports in the UI layer.
+export type PersonSignal = SignalTileWithWeight;
+
 export interface TaskHeatmap {
-  people: PersonSignal[];
+  people: SignalTileWithWeight[];
   totalActivity: number;
   revealPhaseEnd: number;
   isRevealPhase: boolean;
@@ -53,86 +73,238 @@ function generateBlockie(address: string): string {
   return addressToColor(address || mirror);
 }
 
-export async function buildTaskHeatmap(
-  provider: BrowserProvider | JsonRpcProvider,
-  taskId: number,
-  sourceId = "current"
-): Promise<TaskHeatmap> {
-  console.log("[heatmap] Building for task:", taskId, "source:", sourceId);
-  const readProvider = provider ?? getReadProvider();
-  const jobContract = getContractForSource(sourceId, readProvider);
-  const contract = jobContract as unknown as {
+function isZeroAddress(address: string): boolean {
+  const normalized = String(address ?? "").toLowerCase();
+  return (
+    !normalized ||
+    normalized === ZERO_ADDRESS.toLowerCase() ||
+    normalized.replace(/^0x/, "").replace(/0/g, "") === ""
+  );
+}
+
+function mapResponseType(responseType: number): "critique" | "builds_on" | "other" {
+  if (responseType === 1) return "critique";
+  if (responseType === 0) return "builds_on";
+  return "other";
+}
+
+async function loadResponseIds(
+  contract: {
+    getSubmissionResponses?: (submissionId: bigint | number) => Promise<Array<bigint | number>>;
+    submissionResponseCount?: (submissionId: bigint | number) => Promise<bigint | number>;
+    submissionResponses?: (submissionId: bigint | number, index: bigint | number) => Promise<bigint | number>;
+  },
+  submissionId: bigint | number
+): Promise<Array<bigint | number>> {
+  if (contract.getSubmissionResponses) {
+    const explicit = await contract.getSubmissionResponses(submissionId).catch(() => null);
+    if (explicit) return Array.from(explicit);
+  }
+
+  const count = Number(
+    contract.submissionResponseCount
+      ? await contract.submissionResponseCount(submissionId).catch(() => 0n)
+      : 0n
+  );
+
+  const ids: Array<bigint | number> = [];
+  for (let index = 0; index < count; index += 1) {
+    const responseId = contract.submissionResponses
+      ? await contract.submissionResponses(submissionId, index).catch(() => null)
+      : null;
+    if (responseId !== null && responseId !== undefined) ids.push(responseId);
+  }
+  return ids;
+}
+
+export async function buildSignalMapData(
+  jobContract: {
     getSubmissions?: (taskId: number) => Promise<unknown[]>;
     submittedAgents?: (taskId: number, index: number) => Promise<string>;
+    getSubmission?: (taskId: number, agent: string) => Promise<unknown>;
     submissions?: (taskId: number, agent: string) => Promise<unknown>;
     getSelectedFinalists?: (taskId: number) => Promise<string[]>;
     getSubmissionResponses?: (submissionId: bigint | number) => Promise<Array<bigint | number>>;
     submissionResponses?: (submissionId: bigint | number, index: bigint | number) => Promise<bigint | number>;
     submissionResponseCount?: (submissionId: bigint | number) => Promise<bigint | number>;
     getResponse?: (responseId: bigint | number) => Promise<unknown>;
+  },
+  jobId: number
+): Promise<SignalTile[]> {
+  let rawSubmissions: unknown[] = [];
+  try {
+    if (!jobContract.getSubmissions) throw new Error("getSubmissions unavailable");
+    rawSubmissions = Array.from((await jobContract.getSubmissions(jobId).catch(() => [])) ?? []);
+  } catch {
+    for (let idx = 0; idx < 100; idx += 1) {
+      try {
+        const agent = await jobContract.submittedAgents?.(jobId, idx);
+        if (!agent || isZeroAddress(agent)) break;
+        const raw =
+          (await jobContract.getSubmission?.(jobId, agent).catch(() => null)) ??
+          (await jobContract.submissions?.(jobId, agent).catch(() => null));
+        if (raw && isValidSubmission(raw)) rawSubmissions.push(raw);
+      } catch {
+        break;
+      }
+    }
+  }
+
+  const validSubmissions = rawSubmissions
+    .filter((row) => isValidSubmission(row))
+    .map((row) => parseSubmission(row))
+    .filter((row) => row.agent && !isZeroAddress(row.agent));
+
+  let finalists: string[] = [];
+  try {
+    finalists = Array.from((await jobContract.getSelectedFinalists?.(jobId)) ?? [])
+      .map((address) => String(address))
+      .filter((address) => !isZeroAddress(address));
+  } catch {
+    finalists = [];
+  }
+
+  const eligibleSet = new Set<string>(finalists.map((address) => address.toLowerCase()));
+
+  if (eligibleSet.size === 0) {
+    for (const submission of validSubmissions) {
+      const sid = BigInt(submission.submissionId);
+      let hasInteractions = false;
+      try {
+        const count = Number((await jobContract.submissionResponseCount?.(sid)) ?? 0n);
+        hasInteractions = count > 0;
+      } catch {
+        hasInteractions = false;
+      }
+
+      if (!hasInteractions) {
+        try {
+          const ids = await loadResponseIds(jobContract, sid);
+          hasInteractions = ids.length > 0;
+        } catch {
+          hasInteractions = false;
+        }
+      }
+
+      if (hasInteractions) {
+        eligibleSet.add(submission.agent.toLowerCase());
+      }
+    }
+
+    if (eligibleSet.size === 0) {
+      for (const submission of validSubmissions) {
+        eligibleSet.add(submission.agent.toLowerCase());
+      }
+    }
+  }
+
+  const tiles: SignalTile[] = [];
+
+  for (const sub of validSubmissions) {
+    const submissionId = String(sub.submissionId ?? "");
+    const agent = String(sub.agent ?? "");
+    if (!submissionId || !agent || !eligibleSet.has(agent.toLowerCase())) continue;
+
+    const responseIds = await loadResponseIds(jobContract, BigInt(submissionId)).catch(() => []);
+    const responses: SignalResponse[] = [];
+    let critiquesReceived = 0;
+    let buildOnsReceived = 0;
+
+    for (const rid of responseIds) {
+      const raw = (await jobContract.getResponse?.(rid).catch(() => null)) as
+        | (Record<string, unknown> & unknown[])
+        | null;
+      if (!raw) continue;
+
+      const responseType = Number(raw.responseType ?? raw[4] ?? raw[3] ?? 0);
+      const responder = String(raw.responder ?? raw[3] ?? raw[1] ?? "");
+      const contentURI = String(raw.contentURI ?? raw[5] ?? raw[4] ?? "");
+      const stakedAmount = String(raw.stakedAmount ?? raw[6] ?? "0");
+      const stakeSlashed = Boolean(raw.stakeSlashed ?? raw[8] ?? false);
+      const createdAt = Number(raw.createdAt ?? raw[7] ?? 0);
+
+      const typeLabel = mapResponseType(responseType);
+      if (!stakeSlashed) {
+        if (typeLabel === "critique") critiquesReceived += 1;
+        if (typeLabel === "builds_on") buildOnsReceived += 1;
+      }
+
+      let decoded: DecodedInteraction | null = null;
+      try {
+        decoded = decodeInteractionContent(contentURI, responseType);
+      } catch {
+        decoded = null;
+      }
+
+      responses.push({
+        responseId: String(rid),
+        responder,
+        responseType: typeLabel,
+        contentURI,
+        decoded,
+        stakedAmount,
+        stakeSlashed,
+        timestamp: createdAt
+      });
+    }
+
+    tiles.push({
+      submissionId,
+      agent,
+      deliverableLink: String(sub.deliverableLink ?? ""),
+      submittedAt: Number(sub.submittedAt ?? 0),
+      critiquesReceived,
+      buildOnsReceived,
+      totalReceived: critiquesReceived + buildOnsReceived,
+      responses
+    });
+  }
+
+  return tiles;
+}
+
+export function computeTileWeights(
+  tiles: SignalTile[]
+): Array<SignalTile & { weight: number; percentage: number }> {
+  if (tiles.length === 0) return [];
+
+  const BASE_WEIGHT = 1;
+  const rawWeights = tiles.map((tile) => BASE_WEIGHT + tile.totalReceived);
+  const totalRaw = rawWeights.reduce((sum, value) => sum + value, 0);
+
+  return tiles.map((tile, index) => ({
+    ...tile,
+    weight: rawWeights[index],
+    percentage: totalRaw > 0 ? Math.round((rawWeights[index] / totalRaw) * 1000) / 10 : 100 / tiles.length
+  }));
+}
+
+export function deriveTileColor(tile: SignalTile): string {
+  const { critiquesReceived, buildOnsReceived } = tile;
+  if (critiquesReceived === 0 && buildOnsReceived === 0) return COLOR_NEUTRAL;
+  if (critiquesReceived > buildOnsReceived) return COLOR_RED;
+  if (buildOnsReceived > critiquesReceived) return COLOR_GREEN;
+  return COLOR_MIXED;
+}
+
+export async function buildTaskHeatmap(
+  provider: BrowserProvider | JsonRpcProvider,
+  taskId: number,
+  sourceId = "current"
+): Promise<TaskHeatmap> {
+  const readProvider = provider ?? getReadProvider();
+  const contract = getContractForSource(sourceId, readProvider) as unknown as {
     getRevealPhaseEnd?: (taskId: number) => Promise<bigint | number>;
     isInRevealPhase?: (taskId: number) => Promise<boolean>;
-  };
-
-  const peopleMap = new Map<string, PersonSignal>();
-
-  const isZero = (address: string) => {
-    const normalized = String(address ?? "").toLowerCase();
-    return (
-      !normalized ||
-      normalized === ZERO_ADDRESS.toLowerCase() ||
-      normalized.replace(/^0x/, "").replace(/0/g, "") === ""
-    );
-  };
-
-  const getOrCreate = (address: string, defaultRole: PersonSignal["role"]): PersonSignal => {
-    const normalized = address.toLowerCase();
-    const existing = peopleMap.get(normalized);
-    if (existing) {
-      if (defaultRole === "submitter" && existing.role === "responder") existing.role = "both";
-      if (defaultRole === "responder" && existing.role === "submitter") existing.role = "both";
-      return existing;
-    }
-    const checksumish = normalized;
-    const created: PersonSignal = {
-      address: checksumish,
-      username: null,
-      avatarUrl: null,
-      blockieUrl: generateBlockie(checksumish),
-      role: defaultRole,
-      submissionCount: 0,
-      buildsOnGiven: 0,
-      buildsOnReceived: 0,
-      critiquesGiven: 0,
-      critiquesReceived: 0,
-      totalActivity: 0,
-      activityWeight: 0,
-      dominantSignal: "neutral",
-      colorRatio: 0.5
-    };
-    peopleMap.set(normalized, created);
-    return created;
-  };
-
-  const loadResponseIds = async (submissionId: bigint | number): Promise<Array<bigint | number>> => {
-    const explicit = contract.getSubmissionResponses
-      ? await contract.getSubmissionResponses(submissionId).catch(() => null)
-      : null;
-    if (explicit) return Array.from(explicit);
-
-    const count = Number(
-      contract.submissionResponseCount
-        ? await contract.submissionResponseCount(submissionId).catch(() => 0n)
-        : 0n
-    );
-    const ids: Array<bigint | number> = [];
-    for (let index = 0; index < count; index += 1) {
-      const responseId = contract.submissionResponses
-        ? await contract.submissionResponses(submissionId, index).catch(() => null)
-        : null;
-      if (responseId !== null && responseId !== undefined) ids.push(responseId);
-    }
-    return ids;
+    getSubmissions?: (taskId: number) => Promise<unknown[]>;
+    submittedAgents?: (taskId: number, index: number) => Promise<string>;
+    getSubmission?: (taskId: number, agent: string) => Promise<unknown>;
+    submissions?: (taskId: number, agent: string) => Promise<unknown>;
+    getSelectedFinalists?: (taskId: number) => Promise<string[]>;
+    getSubmissionResponses?: (submissionId: bigint | number) => Promise<Array<bigint | number>>;
+    submissionResponses?: (submissionId: bigint | number, index: bigint | number) => Promise<bigint | number>;
+    submissionResponseCount?: (submissionId: bigint | number) => Promise<bigint | number>;
+    getResponse?: (responseId: bigint | number) => Promise<unknown>;
   };
 
   let revealPhaseEnd = 0;
@@ -154,193 +326,38 @@ export async function buildTaskHeatmap(
     };
   }
 
-  let rawSubmissions: unknown[] = [];
-  try {
-    if (!contract.getSubmissions) throw new Error("getSubmissions unavailable");
-    rawSubmissions = Array.from((await contract.getSubmissions?.(taskId)) ?? []);
-  } catch (error) {
-    console.warn("[heatmap] getSubmissions failed, scanning submittedAgents:", error);
-    for (let i = 0; i < 50; i += 1) {
-      try {
-        const agent = await contract.submittedAgents?.(taskId, i);
-        if (!agent || isZero(agent)) break;
-        const submission = await contract.submissions?.(taskId, agent);
-        if (submission && isValidSubmission(submission)) rawSubmissions.push(submission);
-      } catch {
-        break;
-      }
-    }
-  }
+  const tiles = await buildSignalMapData(contract, taskId);
+  const weighted = computeTileWeights(tiles);
 
-  const validSubmissions = rawSubmissions
-    .filter((submission) => isValidSubmission(submission))
-    .map((submission) => parseSubmission(submission))
-    .filter((submission) => !isZero(submission.agent));
-
-  let finalists: string[] = [];
-  try {
-    finalists = Array.from((await contract.getSelectedFinalists?.(taskId)) ?? [])
-      .map((address) => String(address))
-      .filter((address) => !isZero(address));
-  } catch {
-    finalists = [];
-  }
-
-  const eligibleAddresses = new Set(finalists.map((address) => address.toLowerCase()));
-
-  // Auto-reveal fallback: if no explicit finalists exist, include only submitters
-  // whose submissions have received at least one interaction.
-  if (eligibleAddresses.size === 0) {
-    for (const submission of validSubmissions) {
-      try {
-        const responseCount =
-          Number((await contract.submissionResponseCount?.(BigInt(submission.submissionId))) ?? 0);
-        if (responseCount > 0) {
-          eligibleAddresses.add(submission.agent.toLowerCase());
-          continue;
-        }
-      } catch {
-        // Fall through to the response-list fallback below.
-      }
-
-      try {
-        const responseIds = await loadResponseIds(BigInt(submission.submissionId));
-        if (Array.from(responseIds).length > 0) {
-          eligibleAddresses.add(submission.agent.toLowerCase());
-        }
-      } catch {
-        // No response visibility for this submission.
-      }
-    }
-
-    if (eligibleAddresses.size === 0) {
-      for (const submission of validSubmissions) {
-        eligibleAddresses.add(submission.agent.toLowerCase());
-      }
-    }
-  }
-
-  const visibleSubmissions = validSubmissions.filter((submission) =>
-    eligibleAddresses.has(submission.agent.toLowerCase())
-  );
-
-  console.log(`[heatmap] task #${taskId} valid submissions: ${validSubmissions.length}`);
-  console.log(`[heatmap] task #${taskId} eligible finalist tiles: ${visibleSubmissions.length}`);
-
-  for (const parsedSubmission of visibleSubmissions) {
-    const agent = String(parsedSubmission.agent ?? "");
-    if (isZero(agent)) continue;
-
-    const submitter = getOrCreate(agent, "submitter");
-    submitter.submissionCount += 1;
-    if (submitter.submissionId === undefined) {
-      submitter.submissionId = parsedSubmission.submissionId;
-      submitter.deliverableLink = parsedSubmission.deliverableLink;
-      submitter.submittedAt = parsedSubmission.submittedAt;
-    }
-
-    try {
-      const responseIds = await loadResponseIds(BigInt(parsedSubmission.submissionId));
-      for (const responseId of responseIds as Array<bigint | number>) {
-        try {
-          const response = (await contract.getResponse?.(responseId)) as Record<string, unknown> & unknown[];
-          const responder = String(response.responder ?? response[3] ?? "");
-          const stakeSlashed = Boolean(response.stakeSlashed ?? response[8] ?? false);
-          const responseType = Number(response.responseType ?? response[4] ?? 0);
-          if (isZero(responder) || stakeSlashed) continue;
-
-          const responderPerson = peopleMap.get(responder.toLowerCase());
-          if (responderPerson && responderPerson.role === "submitter") {
-            responderPerson.role = "both";
-          }
-
-          if (responseType === 0) {
-            submitter.buildsOnReceived += 1;
-            if (responderPerson) responderPerson.buildsOnGiven += 1;
-          } else {
-            submitter.critiquesReceived += 1;
-            if (responderPerson) responderPerson.critiquesGiven += 1;
-          }
-        } catch {
-          // Skip malformed response rows.
-        }
-      }
-    } catch {
-      // Submission has no responses.
-    }
-  }
-
-  const people = Array.from(peopleMap.values());
-  const rawScores = new Map<string, number>();
-  for (const person of people) {
-    const rawScore =
-      person.submissionCount * 10 +
-      person.buildsOnGiven * 10 +
-      person.critiquesGiven * 10 +
-      Math.floor(person.buildsOnReceived / 2) * 10 +
-      Math.floor(person.critiquesReceived / 2) * 10;
-
-    rawScores.set(person.address.toLowerCase(), rawScore);
-    person.totalActivity = rawScore;
-  }
-
-  const totalScore = people.reduce(
-    (sum, person) => sum + (rawScores.get(person.address.toLowerCase()) ?? 0),
-    0
-  );
-  const totalActivity = people.reduce(
-    (sum, person) =>
-      sum +
-      person.buildsOnGiven +
-      person.critiquesGiven +
-      person.buildsOnReceived +
-      person.critiquesReceived,
-    0
-  );
-
-  for (const person of people) {
-    const rawScore = rawScores.get(person.address.toLowerCase()) ?? 0;
-    person.activityWeight = totalScore > 0 ? Math.round((rawScore / totalScore) * 100) : Math.round(100 / people.length);
-    const buildSignals = person.buildsOnGiven + person.buildsOnReceived;
-    const critiqueSignals = person.critiquesGiven + person.critiquesReceived;
-    const totalSignals = buildSignals + critiqueSignals;
-    person.colorRatio = totalSignals === 0 ? 0.5 : buildSignals / totalSignals;
-    person.dominantSignal =
-      person.colorRatio > 0.6 ? "builds_on" : person.colorRatio < 0.4 ? "critiques" : "neutral";
-  }
-
-  const weightSum = people.reduce((sum, person) => sum + person.activityWeight, 0);
-  if (weightSum !== 100 && people.length > 0) {
-    people[0].activityWeight += 100 - weightSum;
-  }
+  const people: SignalTileWithWeight[] = weighted.map((tile) => ({
+    ...tile,
+    username: null,
+    avatarUrl: null,
+    blockieUrl: generateBlockie(tile.agent),
+    color: deriveTileColor(tile)
+  }));
 
   await Promise.all(
-    people.map(async (person) => {
+    people.map(async (tile) => {
       try {
-        const profile = await fetchUserProfile(readProvider, person.address);
+        const profile = await fetchUserProfile(readProvider, tile.agent);
         if (profile) {
-          person.username = profile.username || null;
-          person.avatarUrl = profile.avatarUrl || null;
+          tile.username = profile.username || null;
+          tile.avatarUrl = profile.avatarUrl || null;
         }
       } catch {
-        // Non-blocking profile read.
+        // Ignore profile fetch issues.
       }
     })
   );
 
-  people.sort((a, b) => b.activityWeight - a.activityWeight);
-
-  console.log(`[signalMap] task #${taskId} tiles: ${people.length}`);
-  people.forEach((person) => {
-    console.log(
-      `  ${person.address.slice(0, 10)} role:${person.role} weight:${person.activityWeight}%`
-    );
-  });
+  people.sort((a, b) => b.percentage - a.percentage);
 
   return {
     people,
-    totalActivity,
+    totalActivity: people.reduce((sum, tile) => sum + tile.totalReceived, 0),
     revealPhaseEnd,
     isRevealPhase
   };
 }
+
