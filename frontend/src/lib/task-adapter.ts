@@ -295,6 +295,8 @@ function withCapabilities(
   const now = BigInt(Math.floor(Date.now() / 1000));
   const deadlinePassed = task.deadline > 0n && now > task.deadline;
   const revealEnded = task.revealPhaseEnd > 0n && now > task.revealPhaseEnd;
+  const finalistThreshold = Math.max(1, task.maxApprovals) + 5;
+  const hasSubmittedRows = task.submissionCount > 0;
 
   return {
     ...task,
@@ -304,8 +306,17 @@ function withCapabilities(
     sourceAddress: source.address,
     caps: {
       canSubmit: source.caps.submit && (task.status === 0 || task.status === 1 || task.status === 2) && !deadlinePassed,
-      canSelectFinalists: source.caps.selectFinalists && (task.status === 2 || task.status === 3) && deadlinePassed,
-      canAutoReveal: source.caps.autoStartReveal && deadlinePassed && (task.status === 0 || task.status === 1 || task.status === 2),
+      canSelectFinalists:
+        source.caps.selectFinalists &&
+        deadlinePassed &&
+        (task.status === 1 || task.status === 2) &&
+        task.submissionCount > finalistThreshold,
+      canAutoReveal:
+        source.caps.autoStartReveal &&
+        deadlinePassed &&
+        (task.status === 0 || task.status === 1 || task.status === 2) &&
+        hasSubmittedRows &&
+        task.submissionCount <= finalistThreshold,
       canFinalizeWinners: source.caps.finalizeWinners && task.status === 4 && revealEnded,
       canInteract: source.caps.respondToSubmission && task.status === 4 && !revealEnded,
       canRespondWithAuthorization: source.caps.respondWithAuthorization,

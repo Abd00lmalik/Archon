@@ -495,6 +495,11 @@ export default function JobDetailsPage() {
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [busyAction, setBusyAction] = useState("");
+  const [revealStarting, setRevealStarting] = useState(false);
+  const [revealTxHash, setRevealTxHash] = useState<string | null>(null);
+  const [revealError, setRevealError] = useState<string | null>(null);
+  const [finalistSelecting, setFinalistSelecting] = useState(false);
+  const [finalistError, setFinalistError] = useState<string | null>(null);
 
   const [claimReadyAt, setClaimReadyAt] = useState<number | null>(null);
   const [claimCountdown, setClaimCountdown] = useState(0);
@@ -982,10 +987,66 @@ export default function JobDetailsPage() {
     }
   };
 
+  const canCallAutoStartReveal = async (
+    contract: Awaited<ReturnType<typeof getTaskWriteContract>>,
+    currentJobId: number
+  ): Promise<{ can: boolean; reason: string }> => {
+    try {
+      const rawJob = await contract.getJob(BigInt(currentJobId));
+      const status = Number(rawJob.status ?? rawJob[14] ?? 0);
+      const deadline = Number(rawJob.deadline ?? rawJob[4] ?? 0);
+      const maxApprovalsRaw = Number(rawJob.maxApprovals ?? rawJob[6] ?? 1);
+      const maxApprovalsSafe = Number.isFinite(maxApprovalsRaw) && maxApprovalsRaw > 0 ? maxApprovalsRaw : 1;
+      const now = Math.floor(Date.now() / 1000);
+
+      if (deadline <= 0 || now <= deadline) {
+        return { can: false, reason: "Deadline has not passed" };
+      }
+      if (!(status === 0 || status === 1 || status === 2)) {
+        return { can: false, reason: `Wrong status: ${status}` };
+      }
+
+      const selected = Array.from((await contract.getSelectedFinalists(BigInt(currentJobId)).catch(() => [])) as string[]);
+      if (selected.length > 0) {
+        return { can: false, reason: "Finalists already selected" };
+      }
+
+      const rows = Array.from((await contract.getSubmissions(BigInt(currentJobId)).catch(() => [])) as unknown[]);
+      const submittedCount = rows.filter((row) => {
+        const parsed = parseSubmission(row);
+        return (
+          parsed.agent &&
+          parsed.agent.toLowerCase() !== ZERO_ADDRESS.toLowerCase() &&
+          parsed.status === 1
+        );
+      }).length;
+
+      if (submittedCount === 0) {
+        return { can: false, reason: "No submitted submissions" };
+      }
+      if (submittedCount > maxApprovalsSafe + 5) {
+        return {
+          can: false,
+          reason: `Too many submissions (${submittedCount}) — select finalists first`
+        };
+      }
+
+      await contract.autoStartReveal.estimateGas(BigInt(currentJobId));
+      return { can: true, reason: "OK" };
+    } catch (error) {
+      return {
+        can: false,
+        reason: errorText(error, "autoStartReveal precheck failed").slice(0, 180)
+      };
+    }
+  };
+
   const handleSelectFinalists = async (agents: string[]) => {
     if (!agents.length) return;
+    if (finalistSelecting) return;
     try {
-      setBusyAction("select");
+      setFinalistSelecting(true);
+      setFinalistError(null);
       const unique = [
         ...new Set(
           agents
@@ -994,6 +1055,10 @@ export default function JobDetailsPage() {
             .filter((value): value is string => Boolean(value))
         )
       ];
+      const threshold = Number(maxApprovals || 1) + 5;
+      if (unique.length > threshold) {
+        throw new Error(`Too many finalists selected (${unique.length}/${threshold}).`);
+      }
       const contract = await getTaskWriteContract();
       const tx = await contract.selectFinalists(BigInt(jobId), unique);
       await tx.wait();
@@ -1002,51 +1067,69 @@ export default function JobDetailsPage() {
       clearTaskCaches();
       await loadTask();
       await loadHeatmap();
+      const freshJob = await contract.getJob(BigInt(jobId));
+      const freshStatus = Number(freshJob.status ?? freshJob[14] ?? 0);
+      if (freshStatus !== 4) {
+        setFinalistError(`Finalists selected but reveal not active yet (status ${freshStatus}).`);
+      }
     } catch (error) {
-      setErrorMessage(errorText(error, "Failed selecting finalists"));
+      const message = errorText(error, "Failed selecting finalists");
+      setFinalistError(message);
+      setErrorMessage(message);
     } finally {
-      setBusyAction("");
+      setFinalistSelecting(false);
     }
   };
 
   const handleAutoStartReveal = async () => {
     if (!signer) {
-      setErrorMessage("Connect wallet to start reveal phase.");
+      const message = "Connect wallet to start reveal phase.";
+      setRevealError(message);
+      setErrorMessage(message);
       return;
     }
+    if (!task) return;
+    if (revealStarting) return;
+
     try {
-      setBusyAction("autoReveal");
-      try {
-        const contract = getContractForSource(task?.sourceId ?? "current", signer);
-        const tx = await contract.autoStartReveal(BigInt(jobId));
-        await tx.wait();
-        const txHash = tx.hash as string;
-        setStatusMessage(`Reveal phase started automatically: ${txHash}`);
-      } catch (error) {
-        const allAgents = [
-          ...new Set(
-            safeSubmissions
-              .map((submission) => submission.agent)
-              .filter((agent) => agent && agent.toLowerCase() !== ZERO_ADDRESS.toLowerCase())
-          )
-        ];
-        console.log("[autoReveal] autoStartReveal failed, falling back to selectFinalists:", allAgents, error);
-        if (!allAgents.length) {
-          throw new Error("No valid submissions available to promote.");
-        }
-        const contract = getContractForSource(task?.sourceId ?? "current", signer);
-        const tx = await contract.selectFinalists(BigInt(jobId), allAgents);
-        await tx.wait();
-        const txHash = tx.hash as string;
-        setStatusMessage(`Reveal phase started via selectFinalists fallback: ${txHash}`);
+      setRevealStarting(true);
+      setRevealError(null);
+      setRevealTxHash(null);
+      const contract = getContractForSource(task.sourceId, signer);
+      const precheck = await canCallAutoStartReveal(contract, jobId);
+      if (!precheck.can) {
+        const message = `Cannot start reveal: ${precheck.reason}`;
+        setRevealError(message);
+        setErrorMessage(message);
+        return;
       }
+
+      console.log("[reveal] Calling autoStartReveal for job", jobId);
+      const tx = await contract.autoStartReveal(BigInt(jobId));
+      setRevealTxHash(tx.hash as string);
+      const receipt = await tx.wait();
+      if (receipt?.status === 0) {
+        throw new Error("Transaction reverted on-chain");
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      const freshJob = await contract.getJob(BigInt(jobId));
+      const freshStatus = Number(freshJob.status ?? freshJob[14] ?? 0);
+      if (freshStatus !== 4) {
+        throw new Error(`Reveal did not start — status is ${freshStatus}, expected 4`);
+      }
+
+      setStatusMessage(`Reveal phase started automatically: ${tx.hash}`);
       clearTaskCaches();
       await loadTask();
       await loadHeatmap();
+      window.location.reload();
     } catch (error) {
-      setErrorMessage(errorText(error, "Failed to start auto-reveal"));
+      const message = errorText(error, "Failed to start auto-reveal").slice(0, 200);
+      setRevealError(message);
+      setErrorMessage(message);
     } finally {
-      setBusyAction("");
+      setRevealStarting(false);
     }
   };
 
@@ -1163,21 +1246,23 @@ export default function JobDetailsPage() {
   const awaitingSelection = Boolean(
     job && submissionDeadlinePassed && safeSubmissions.length > 0 && (job.status === 2 || job.status === 0 || job.status === 1)
   );
+  const submittedCountForReveal = pendingSubmissions.length;
+  const finalistThreshold = Number(maxApprovals || 1) + 5;
   const canAutoReveal = Boolean(
     task?.caps.canAutoReveal &&
       job &&
       displayStatus?.canAutoReveal &&
       submissionDeadlinePassed &&
       (job.status === 0 || job.status === 1 || job.status === 2) &&
-      safeSubmissions.length > 0 &&
-      safeSubmissions.length <= Number(maxApprovals) + 5
+      submittedCountForReveal > 0 &&
+      submittedCountForReveal <= finalistThreshold
   );
   const canManualReveal = Boolean(
     task?.caps.canSelectFinalists &&
       job &&
       submissionDeadlinePassed &&
-      (job.status === 0 || job.status === 1 || job.status === 2) &&
-      safeSubmissions.length > Number(maxApprovals) + 5
+      (job.status === 1 || job.status === 2) &&
+      submittedCountForReveal > finalistThreshold
   );
   const nowSeconds = Math.floor(Date.now() / 1000);
   const isRevealActive = Boolean(job?.status === 4 && revealEndValue > 0 && nowSeconds <= revealEndValue);
@@ -1557,7 +1642,7 @@ export default function JobDetailsPage() {
             </>
           ) : null}
 
-          {canAutoReveal ? (
+          {canAutoReveal && job.status !== 4 ? (
             <div
               className="border p-4"
               style={{
@@ -1585,21 +1670,42 @@ export default function JobDetailsPage() {
                     lineHeight: 1.5
                   }}
                 >
-                This task has {safeSubmissions.length} submission{safeSubmissions.length !== 1 ? "s" : ""} - under
-                the {maxApprovals + 5} finalist threshold. Anyone can trigger reveal phase automatically and promote
+                This task has {submittedCountForReveal} submitted submission{submittedCountForReveal !== 1 ? "s" : ""} - under
+                the {finalistThreshold} finalist threshold. Anyone can trigger reveal phase automatically and promote
                 every valid submission to finalist status.
                 </div>
               <button
                 type="button"
                 className="btn-primary w-full"
                 onClick={() => void handleAutoStartReveal()}
-                disabled={busyAction === "autoReveal" || !signer}
+                disabled={revealStarting || !signer}
+                style={{ opacity: revealStarting ? 0.6 : 1 }}
               >
-                {busyAction === "autoReveal" ? "Starting..." : "Start Reveal Phase Automatically"}
+                {revealStarting ? "Starting Reveal Phase..." : "Start Reveal Phase Automatically"}
               </button>
+              {revealTxHash && !revealError ? (
+                <div className="mt-2 text-[11px] font-mono text-[var(--arc)]">
+                  Tx: {revealTxHash.slice(0, 20)}... (confirming)
+                </div>
+              ) : null}
               {!signer ? (
                 <div className="mt-2 text-[11px] font-mono text-[var(--text-muted)]">
                   Connect wallet to submit the transaction.
+                </div>
+              ) : null}
+              {revealError ? (
+                <div className="mt-2 text-xs text-[var(--danger)]">
+                  {revealError}
+                  <button
+                    type="button"
+                    className="ml-2 text-[11px] text-[var(--text-muted)] underline"
+                    onClick={() => {
+                      setRevealError(null);
+                      setRevealStarting(false);
+                    }}
+                  >
+                    Retry
+                  </button>
                 </div>
               ) : null}
             </div>
@@ -1816,8 +1922,8 @@ export default function JobDetailsPage() {
                 <FinalistSelectionPanel
                   submissions={pendingSubmissions}
                   maxApprovals={maxApprovals}
-                  submitting={busyAction === "select"}
-                  error={errorMessage || null}
+                  submitting={finalistSelecting}
+                  error={finalistError}
                   onSubmit={(agents) => void handleSelectFinalists(agents)}
                 />
               ) : null}
