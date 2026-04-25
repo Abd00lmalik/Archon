@@ -3,6 +3,42 @@ import { ethers } from "ethers";
 import contractsJson from "@/lib/generated/contracts.json";
 import { LEGACY_ADDRESSES, PREV_V2_ADDRESS } from "@/lib/legacy-contracts";
 
+// ── Nonce replay protection ──────────────────────────────────────────────────
+//
+// Tracks used (payer, nonce) pairs to prevent authorization replay.
+//
+// PERSISTENCE NOTE: This is in-memory per server process.
+// In a serverless/Edge environment (Vercel Functions), each cold start
+// creates a fresh Map, so replay protection only holds within the same
+// process instance. For stronger replay guarantees in production, replace
+// this Map with a shared store (Redis, Vercel KV, PlanetScale, etc.)
+// keyed on `${from.toLowerCase()}:${nonce.toLowerCase()}`.
+//
+// For the current testnet/demo context, in-memory is sufficient because:
+// - authorizations have a short validBefore window (max 5 min)
+// - the risk window is bounded by process lifetime
+//
+const _usedNonces = new Map<string, number>(); // nonceKey → Unix timestamp (ms)
+const NONCE_TTL_MS = 15 * 60 * 1000; // 15 minutes — prune entries older than this
+
+function _markNonceUsed(from: string, nonce: string): void {
+  const key = `${from.toLowerCase()}:${nonce.toLowerCase()}`;
+  _usedNonces.set(key, Date.now());
+  // Prune stale entries periodically to prevent unbounded growth
+  if (_usedNonces.size > 20_000) {
+    const cutoff = Date.now() - NONCE_TTL_MS;
+    for (const [k, ts] of _usedNonces.entries()) {
+      if (ts < cutoff) _usedNonces.delete(k);
+    }
+  }
+}
+
+function _isNonceUsed(from: string, nonce: string): boolean {
+  const key = `${from.toLowerCase()}:${nonce.toLowerCase()}`;
+  return _usedNonces.has(key);
+}
+// ────────────────────────────────────────────────────────────────────────────
+
 const PAYMENT_ADDRESS = process.env.PLATFORM_TREASURY_ADDRESS ?? "0x25265b9dBEb6c653b0CA281110Bb0697a9685107";
 const PAYMENT_AMOUNT = "10"; // 0.00001 USDC in 6-decimal units.
 const USDC_CONTRACT = "0x3600000000000000000000000000000000000000";
@@ -128,18 +164,53 @@ function verifyEip3009Authorization(parsed: unknown, requirement: PaymentRequire
     if (now <= validAfter || now >= validBefore) {
       return { ok: false, method: "local-eip3009", reason: "authorization outside valid time window" };
     }
-    if (!nonce || !r || !s || v === 0) {
+
+    // Nonce must be a non-empty bytes32 hex string
+    if (!nonce || !/^0x[0-9a-fA-F]{64}$/i.test(nonce)) {
+      return {
+        ok: false,
+        method: "local-eip3009",
+        reason: `invalid nonce format: must be 0x-prefixed 32-byte hex, got: ${nonce.slice(0, 20)}`
+      };
+    }
+
+    if (!r || !s || v === 0) {
       return { ok: false, method: "local-eip3009", reason: "missing EIP-3009 signature fields" };
     }
 
-    const record = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
-    const domainCandidate =
-      record.domain && typeof record.domain === "object" ? (record.domain as Record<string, unknown>) : {};
+    // ── Nonce replay check ──────────────────────────────────────────────
+    // Check before signature verification to avoid doing crypto work on replays.
+    if (_isNonceUsed(from, nonce)) {
+      return {
+        ok: false,
+        method: "local-eip3009",
+        reason: "authorization nonce already used (replay rejected)"
+      };
+    }
+    // ───────────────────────────────────────────────────────────────────
+
+    // Domain constants — locked. Callers cannot override these values.
+    // Accepting caller-supplied chainId or verifyingContract would allow
+    // a signature made on a different chain/contract to pass verification.
+    const LOCKED_CHAIN_ID = 5042002; // Arc Testnet — immutable
+    const LOCKED_USDC = "0x3600000000000000000000000000000000000000"; // Arc USDC — immutable
+    const LOCKED_DOMAIN_NAME = "USD Coin";
+    const LOCKED_DOMAIN_VERSION = "2";
+
+    // Belt-and-suspenders: confirm requirement.asset matches the locked USDC address
+    if (requirement.asset.toLowerCase() !== LOCKED_USDC.toLowerCase()) {
+      return {
+        ok: false,
+        method: "local-eip3009",
+        reason: `requirement.asset mismatch: expected ${LOCKED_USDC} got ${requirement.asset}`
+      };
+    }
+
     const domain = {
-      name: String(domainCandidate.name ?? "USDC"),
-      version: String(domainCandidate.version ?? "2"),
-      chainId: Number(domainCandidate.chainId ?? 5042002),
-      verifyingContract: String(domainCandidate.verifyingContract ?? requirement.asset)
+      name: LOCKED_DOMAIN_NAME,
+      version: LOCKED_DOMAIN_VERSION,
+      chainId: LOCKED_CHAIN_ID,
+      verifyingContract: LOCKED_USDC,
     };
     const types = {
       TransferWithAuthorization: [
@@ -157,6 +228,11 @@ function verifyEip3009Authorization(parsed: unknown, requirement: PaymentRequire
     if (recovered.toLowerCase() !== from.toLowerCase()) {
       return { ok: false, method: "local-eip3009", reason: "signature recovered wrong signer" };
     }
+
+    // All checks passed — mark nonce as used to prevent replay.
+    // This runs AFTER signature verification to avoid poisoning nonces
+    // with malformed requests that would have failed anyway.
+    _markNonceUsed(from, nonce);
 
     return { ok: true, method: "local-eip3009" };
   } catch (error) {
