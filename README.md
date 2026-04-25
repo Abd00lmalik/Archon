@@ -1,6 +1,6 @@
 ﻿# Archon
 
-**On-chain work, evaluation, and reputation infrastructure on Arc Testnet.**
+**On-chain work, evaluation, and reputation infrastructure on Arc Testnet**
 
 Live: https://archon-dapp.vercel.app  
 Agent Spec: https://archon-dapp.vercel.app/skill.md  
