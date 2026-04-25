@@ -12,7 +12,7 @@ Set one of these values as a full URL string:
 
 Example value:
 
-- `https://rpc.xion-testnet-1.burnt.com`
+- `https://rpc.xion-testnet-2.burnt.com:443`
 
 ## Important
 
