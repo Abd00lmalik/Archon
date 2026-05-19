@@ -6,17 +6,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { UserDisplay } from "@/components/ui/user-display";
 import { getTileColor, PersonSignal, SignalResponse, TaskHeatmap } from "@/lib/signal-map";
 
-type Rect = {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-};
-
-type TreemapNode = {
-  person: PersonSignal;
-  rect: Rect;
-};
 
 interface Props {
   heatmap: TaskHeatmap;
@@ -87,120 +76,6 @@ function TileAvatar({ address, size }: { address: string; size: number }) {
   );
 }
 
-function worst(row: number[], sideLength: number): number {
-  if (!row.length) return Number.POSITIVE_INFINITY;
-  const sum = row.reduce((acc, value) => acc + value, 0);
-  const max = Math.max(...row);
-  const min = Math.min(...row);
-  const sideSquared = sideLength * sideLength;
-  return Math.max((sideSquared * max) / (sum * sum), (sum * sum) / (sideSquared * min));
-}
-
-function layoutRow(
-  rowItems: PersonSignal[],
-  rowAreas: number[],
-  rect: Rect,
-  horizontal: boolean
-): { placed: TreemapNode[]; rest: Rect } {
-  const totalRowArea = rowAreas.reduce((acc, value) => acc + value, 0);
-  const placed: TreemapNode[] = [];
-
-  if (horizontal) {
-    const rowWidth = totalRowArea / rect.h;
-    let offsetY = rect.y;
-    for (let i = 0; i < rowItems.length; i += 1) {
-      const itemHeight = rowAreas[i] / rowWidth;
-      placed.push({
-        person: rowItems[i],
-        rect: { x: rect.x, y: offsetY, w: rowWidth, h: itemHeight }
-      });
-      offsetY += itemHeight;
-    }
-    return {
-      placed,
-      rest: { x: rect.x + rowWidth, y: rect.y, w: rect.w - rowWidth, h: rect.h }
-    };
-  }
-
-  const rowHeight = totalRowArea / rect.w;
-  let offsetX = rect.x;
-  for (let i = 0; i < rowItems.length; i += 1) {
-    const itemWidth = rowAreas[i] / rowHeight;
-    placed.push({
-      person: rowItems[i],
-      rect: { x: offsetX, y: rect.y, w: itemWidth, h: rowHeight }
-    });
-    offsetX += itemWidth;
-  }
-  return {
-    placed,
-    rest: { x: rect.x, y: rect.y + rowHeight, w: rect.w, h: rect.h - rowHeight }
-  };
-}
-
-function squarify(items: PersonSignal[], x: number, y: number, w: number, h: number): TreemapNode[] {
-  if (!items.length || w <= 0 || h <= 0) return [];
-
-  const totalWeight = items.reduce((acc, item) => acc + Math.max(item.weight, 1), 0);
-  if (totalWeight <= 0) return [];
-
-  const totalArea = w * h;
-  const weightedItems = items.map((item) => ({
-    person: item,
-    area: (Math.max(item.weight, 1) / totalWeight) * totalArea
-  }));
-
-  const result: TreemapNode[] = [];
-  let rect: Rect = { x, y, w, h };
-  const remaining = [...weightedItems];
-
-  while (remaining.length > 0 && rect.w > 0 && rect.h > 0) {
-    const horizontal = rect.w >= rect.h;
-    const sideLength = horizontal ? rect.h : rect.w;
-    const row: typeof remaining = [];
-    let rowAreas: number[] = [];
-
-    while (remaining.length > 0) {
-      const next = remaining[0];
-      const nextRowAreas = [...rowAreas, next.area];
-      if (
-        rowAreas.length === 0 ||
-        worst(nextRowAreas, sideLength) <= worst(rowAreas, sideLength)
-      ) {
-        row.push(next);
-        rowAreas = nextRowAreas;
-        remaining.shift();
-      } else {
-        break;
-      }
-    }
-
-    if (row.length === 0) {
-      row.push(remaining.shift()!);
-      rowAreas = [row[0].area];
-    }
-
-    const placed = layoutRow(
-      row.map((entry) => entry.person),
-      rowAreas,
-      rect,
-      horizontal
-    );
-    result.push(...placed.placed);
-    rect = placed.rest;
-  }
-
-  return result;
-}
-
-function patchLastNode(nodes: TreemapNode[], containerW: number, containerH: number): TreemapNode[] {
-  if (nodes.length === 0) return nodes;
-  const patched = nodes.map((node) => ({ ...node, rect: { ...node.rect } }));
-  const last = patched[patched.length - 1];
-  last.rect.w = containerW - last.rect.x;
-  last.rect.h = containerH - last.rect.y;
-  return patched;
-}
 
 function prettyType(type: SignalResponse["responseType"]): string {
   if (type === "builds_on") return "BUILDS ON";
@@ -313,104 +188,49 @@ function ResponseThread({
   );
 }
 
-function TileBox({
-  node,
+function SignalCard({
+  person,
   isSelected,
-  onClick,
-  containerW,
-  containerH
+  onClick
 }: {
-  node: TreemapNode;
+  person: PersonSignal;
   isSelected: boolean;
   onClick: () => void;
-  containerW: number;
-  containerH: number;
 }) {
-  const { person, rect } = node;
   const tileColor = getTileColor(person.critiquesReceived, person.buildOnsReceived);
   const displayName = person.username ?? shortAddr(person.agent);
-
-  const clampedRect = {
-    x: Math.max(0, rect.x),
-    y: Math.max(0, rect.y),
-    w: Math.min(rect.w, containerW - rect.x),
-    h: Math.min(rect.h, containerH - rect.y),
-  };
-
-  const tileW = clampedRect.w;
-  const tileH = clampedRect.h;
 
   return (
     <button
       type="button"
       onClick={onClick}
       style={{
-        position: "absolute",
-        left: clampedRect.x,
-        top: clampedRect.y,
-        width: Math.max(clampedRect.w - 1, 1),
-        height: Math.max(clampedRect.h - 1, 1),
-        boxSizing: "border-box",
-        overflow: "hidden",
-        border: `1px solid ${isSelected ? "#E8F4FF" : "rgba(232,244,255,0.2)"}`,
-        cursor: "pointer",
-        padding: 0,
-        background: "transparent"
+        backgroundColor: tileColor,
+        border: `2px solid ${isSelected ? "#FFFFFF" : "transparent"}`,
+        boxShadow: isSelected ? "0 0 0 2px var(--arc)" : "none",
+        minWidth: 0,
+        boxSizing: "border-box"
       }}
+      className="relative flex min-h-[140px] w-full flex-col justify-between overflow-hidden rounded-lg p-3 text-left transition-all hover:brightness-110"
       title={`${displayName} (${person.percentage.toFixed(1)}%)`}
     >
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          padding: "6px",
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "space-between",
-          overflow: "hidden",
-          backgroundColor: tileColor,
-          cursor: "pointer"
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
-          <TileAvatar address={person.agent} size={tileW > 120 ? 28 : 20} />
-          {tileW > 80 ? (
-            <span
-              style={{
-                fontSize: tileW > 150 ? 11 : 9,
-                color: "#E8F4FF",
-                fontWeight: 600,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                maxWidth: tileW - 50
-              }}
-            >
-              {displayName}
-            </span>
-          ) : null}
-        </div>
+      <div className="flex w-full items-center gap-2 overflow-hidden">
+        <TileAvatar address={person.agent} size={24} />
+        <span
+          className="truncate text-xs font-semibold text-[#E8F4FF]"
+          style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+        >
+          {displayName}
+        </span>
+      </div>
 
-        {tileH > 60 ? (
-          <div
-            style={{
-              fontSize: Math.min(tileW, tileH) > 80 ? 20 : 14,
-              fontWeight: 700,
-              color: "#FFFFFF",
-              lineHeight: 1,
-              textAlign: "center"
-            }}
-          >
-            {person.percentage.toFixed(1)}%
-          </div>
-        ) : null}
+      <div className="my-2 flex w-full items-center justify-center">
+        <span className="text-3xl font-bold text-white">{person.percentage.toFixed(1)}%</span>
+      </div>
 
-        {tileH > 80 && tileW > 80 ? (
-          <div style={{ display: "flex", gap: 6, fontSize: 9, color: "rgba(255,255,255,0.75)" }}>
-            <span>🔴 {person.critiquesReceived}</span>
-            <span>🟢 {person.buildOnsReceived}</span>
-          </div>
-        ) : null}
+      <div className="flex w-full flex-wrap items-center justify-center gap-4 text-[10px] text-white/80">
+        <span className="flex items-center gap-1">🔴 {person.critiquesReceived}</span>
+        <span className="flex items-center gap-1">🟢 {person.buildOnsReceived}</span>
       </div>
     </button>
   );
@@ -553,20 +373,12 @@ export default function SignalMap(props: Props) {
     });
     ro.observe(containerRef.current);
     return () => ro.disconnect();
-  }, []);
-
-  const resolvedWidth = Math.max(320, containerWidth ?? dims.w);
   const resolvedHeight = Math.max(320, containerHeight ?? 400);
 
   const sortedPeople = useMemo(
     () => [...heatmap.people].sort((a, b) => b.weight - a.weight),
     [heatmap.people]
   );
-
-  const nodes = useMemo(() => {
-    const laidOut = squarify(sortedPeople, 0, 0, resolvedWidth, resolvedHeight);
-    return patchLastNode(laidOut, resolvedWidth, resolvedHeight);
-  }, [resolvedHeight, resolvedWidth, sortedPeople]);
 
   useEffect(() => {
     setSelected((current) => {
@@ -634,26 +446,32 @@ export default function SignalMap(props: Props) {
         <div
           ref={containerRef}
           style={{
-            position: "relative",
             width: "100%",
-            height: 400,
-            minHeight: 280,
-            maxHeight: 600,
             backgroundColor: "#0D1117",
             borderRadius: 8,
-            overflow: "hidden",
+            border: "1px solid var(--border)",
+            overflowY: "auto",
+            maxHeight: 600,
+            minHeight: 280,
+            padding: 12
           }}
         >
-          {nodes.map((node) => (
-            <TileBox
-              key={node.person.submissionId}
-              node={node}
-              isSelected={selected?.submissionId === node.person.submissionId}
-              onClick={() => setSelected(node.person)}
-              containerW={resolvedWidth}
-              containerH={resolvedHeight}
-            />
-          ))}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+              gap: 12
+            }}
+          >
+            {sortedPeople.map((person) => (
+              <SignalCard
+                key={person.submissionId}
+                person={person}
+                isSelected={selected?.submissionId === person.submissionId}
+                onClick={() => setSelected(person)}
+              />
+            ))}
+          </div>
         </div>
       </div>
 
