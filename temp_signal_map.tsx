@@ -1,11 +1,10 @@
-"use client";
+﻿"use client";
 
 import { BrowserProvider, JsonRpcProvider } from "ethers";
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { UserDisplay } from "@/components/ui/user-display";
 import { getTileColor, PersonSignal, SignalResponse, TaskHeatmap } from "@/lib/signal-map";
-
 
 type Rect = {
   x: number;
@@ -87,7 +86,6 @@ function TileAvatar({ address, size }: { address: string; size: number }) {
     </div>
   );
 }
-
 
 function worst(row: number[], sideLength: number): number {
   if (!row.length) return Number.POSITIVE_INFINITY;
@@ -193,6 +191,15 @@ function squarify(items: PersonSignal[], x: number, y: number, w: number, h: num
   }
 
   return result;
+}
+
+function patchLastNode(nodes: TreemapNode[], containerW: number, containerH: number): TreemapNode[] {
+  if (nodes.length === 0) return nodes;
+  const patched = nodes.map((node) => ({ ...node, rect: { ...node.rect } }));
+  const last = patched[patched.length - 1];
+  last.rect.w = containerW - last.rect.x;
+  last.rect.h = containerH - last.rect.y;
+  return patched;
 }
 
 function prettyType(type: SignalResponse["responseType"]): string {
@@ -306,7 +313,7 @@ function ResponseThread({
   );
 }
 
-function MosaicTile({
+function TileBox({
   node,
   isSelected,
   onClick,
@@ -322,70 +329,90 @@ function MosaicTile({
   const { person, rect } = node;
   const tileColor = getTileColor(person.critiquesReceived, person.buildOnsReceived);
   const displayName = person.username ?? shortAddr(person.agent);
-  
-  const leftPct = (rect.x / containerW) * 100;
-  const topPct = (rect.y / containerH) * 100;
-  const widthPct = (rect.w / containerW) * 100;
-  const heightPct = (rect.h / containerH) * 100;
+
+  const clampedRect = {
+    x: Math.max(0, rect.x),
+    y: Math.max(0, rect.y),
+    w: Math.min(rect.w, containerW - rect.x),
+    h: Math.min(rect.h, containerH - rect.y),
+  };
+
+  const tileW = clampedRect.w;
+  const tileH = clampedRect.h;
 
   return (
-    <div
+    <button
+      type="button"
+      onClick={onClick}
       style={{
         position: "absolute",
-        left: `${leftPct}%`,
-        top: `${topPct}%`,
-        width: `${widthPct}%`,
-        height: `${heightPct}%`,
-        padding: "4px",
-        boxSizing: "border-box"
+        left: clampedRect.x,
+        top: clampedRect.y,
+        width: Math.max(clampedRect.w - 1, 1),
+        height: Math.max(clampedRect.h - 1, 1),
+        boxSizing: "border-box",
+        overflow: "hidden",
+        border: `1px solid ${isSelected ? "#E8F4FF" : "rgba(232,244,255,0.2)"}`,
+        cursor: "pointer",
+        padding: 0,
+        background: "transparent"
       }}
+      title={`${displayName} (${person.percentage.toFixed(1)}%)`}
     >
-      <button
-        type="button"
-        onClick={onClick}
+      <div
         style={{
+          position: "absolute",
+          inset: 0,
+          padding: "6px",
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "space-between",
+          overflow: "hidden",
           backgroundColor: tileColor,
-          border: `2px solid ${isSelected ? "#FFFFFF" : "transparent"}`,
-          boxShadow: isSelected ? "0 0 0 2px var(--arc)" : "none",
-          width: "100%",
-          height: "100%",
-          minWidth: 0,
-          minHeight: 0,
-          boxSizing: "border-box",
-          padding: "8px",
+          cursor: "pointer"
         }}
-        className="relative flex flex-col justify-between overflow-hidden rounded-lg text-left transition-all hover:brightness-110"
-        title={`${displayName} (${person.percentage.toFixed(1)}%)`}
       >
-        <div className="flex w-full items-center gap-2 overflow-hidden">
-          {widthPct * containerW > 120 ? (
-            <TileAvatar address={person.agent} size={20} />
+        <div style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
+          <TileAvatar address={person.agent} size={tileW > 120 ? 28 : 20} />
+          {tileW > 80 ? (
+            <span
+              style={{
+                fontSize: tileW > 150 ? 11 : 9,
+                color: "#E8F4FF",
+                fontWeight: 600,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                maxWidth: tileW - 50
+              }}
+            >
+              {displayName}
+            </span>
           ) : null}
-          <span
-            className="truncate text-xs font-semibold text-[#E8F4FF]"
-            style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-          >
-            {displayName}
-          </span>
         </div>
 
-        <div className="my-1 flex w-full items-center justify-center overflow-hidden">
-          <span
-            className="font-bold text-white"
-            style={{ fontSize: heightPct * containerH > 100 ? 24 : 16 }}
+        {tileH > 60 ? (
+          <div
+            style={{
+              fontSize: Math.min(tileW, tileH) > 80 ? 20 : 14,
+              fontWeight: 700,
+              color: "#FFFFFF",
+              lineHeight: 1,
+              textAlign: "center"
+            }}
           >
             {person.percentage.toFixed(1)}%
-          </span>
-        </div>
-
-        {heightPct * containerH > 80 && widthPct * containerW > 100 ? (
-          <div className="flex w-full flex-wrap items-center justify-center gap-4 text-[10px] text-white/80 overflow-hidden">
-            <span className="flex items-center gap-1">🔴 {person.critiquesReceived}</span>
-            <span className="flex items-center gap-1">🟢 {person.buildOnsReceived}</span>
           </div>
         ) : null}
-      </button>
-    </div>
+
+        {tileH > 80 && tileW > 80 ? (
+          <div style={{ display: "flex", gap: 6, fontSize: 9, color: "rgba(255,255,255,0.75)" }}>
+            <span>≡ƒö┤ {person.critiquesReceived}</span>
+            <span>≡ƒƒó {person.buildOnsReceived}</span>
+          </div>
+        ) : null}
+      </div>
+    </button>
   );
 }
 
@@ -528,40 +555,18 @@ export default function SignalMap(props: Props) {
     return () => ro.disconnect();
   }, []);
 
-  const resolvedWidth = Math.max(300, dims.w);
+  const resolvedWidth = Math.max(320, containerWidth ?? dims.w);
+  const resolvedHeight = Math.max(320, containerHeight ?? 400);
 
-  const topPeople = useMemo(() => {
-    const sorted = [...heatmap.people].sort((a, b) => b.weight - a.weight);
-    if (sorted.length <= 10) return sorted;
-    
-    const top = sorted.slice(0, 9);
-    const rest = sorted.slice(9);
-    
-    const aggregate: PersonSignal = {
-      submissionId: "aggregate-others",
-      agent: "0x0000000000000000000000000000000000000000",
-      username: `+${rest.length} others`,
-      critiquesReceived: rest.reduce((sum, p) => sum + p.critiquesReceived, 0),
-      buildOnsReceived: rest.reduce((sum, p) => sum + p.buildOnsReceived, 0),
-      responses: [],
-      weight: rest.reduce((sum, p) => sum + p.weight, 0),
-      percentage: rest.reduce((sum, p) => sum + p.percentage, 0),
-      deliverableLink: "",
-      totalReceived: rest.reduce((sum, p) => sum + p.totalReceived, 0),
-      avatarUrl: "",
-      blockieUrl: "",
-      color: "#0D1117",
-      submittedAt: 0
-    };
-    
-    return [...top, aggregate];
-  }, [heatmap.people]);
-
-  const resolvedHeight = Math.max(320, Math.min(600, 240 + topPeople.length * 30));
+  const sortedPeople = useMemo(
+    () => [...heatmap.people].sort((a, b) => b.weight - a.weight),
+    [heatmap.people]
+  );
 
   const nodes = useMemo(() => {
-    return squarify(topPeople, 0, 0, resolvedWidth, resolvedHeight);
-  }, [resolvedHeight, resolvedWidth, topPeople]);
+    const laidOut = squarify(sortedPeople, 0, 0, resolvedWidth, resolvedHeight);
+    return patchLastNode(laidOut, resolvedWidth, resolvedHeight);
+  }, [resolvedHeight, resolvedWidth, sortedPeople]);
 
   useEffect(() => {
     setSelected((current) => {
@@ -631,23 +636,20 @@ export default function SignalMap(props: Props) {
           style={{
             position: "relative",
             width: "100%",
-            height: resolvedHeight,
+            height: 400,
+            minHeight: 280,
+            maxHeight: 600,
             backgroundColor: "#0D1117",
             borderRadius: 8,
-            border: "1px solid var(--border)",
-            overflow: "hidden"
+            overflow: "hidden",
           }}
         >
           {nodes.map((node) => (
-            <MosaicTile
+            <TileBox
               key={node.person.submissionId}
               node={node}
               isSelected={selected?.submissionId === node.person.submissionId}
-              onClick={() => {
-                if (node.person.submissionId !== "aggregate-others") {
-                  setSelected(node.person);
-                }
-              }}
+              onClick={() => setSelected(node.person)}
               containerW={resolvedWidth}
               containerH={resolvedHeight}
             />
