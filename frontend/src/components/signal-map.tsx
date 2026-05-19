@@ -373,6 +373,8 @@ export default function SignalMap(props: Props) {
     });
     ro.observe(containerRef.current);
     return () => ro.disconnect();
+  }, []);
+
   const resolvedHeight = Math.max(320, containerHeight ?? 400);
 
   const sortedPeople = useMemo(
