@@ -336,8 +336,9 @@ function MosaicTile({
         top: `${topPct}%`,
         width: `${widthPct}%`,
         height: `${heightPct}%`,
-        padding: "4px",
-        boxSizing: "border-box"
+        padding: 0,
+        boxSizing: "border-box",
+        zIndex: isSelected ? 10 : 1
       }}
     >
       <button
@@ -345,8 +346,8 @@ function MosaicTile({
         onClick={onClick}
         style={{
           backgroundColor: tileColor,
-          border: `2px solid ${isSelected ? "#FFFFFF" : "transparent"}`,
-          boxShadow: isSelected ? "0 0 0 2px var(--arc)" : "none",
+          border: isSelected ? "2px solid #FFFFFF" : "1px solid rgba(13, 17, 23, 0.4)",
+          boxShadow: isSelected ? "inset 0 0 0 2px var(--arc)" : "none",
           width: "100%",
           height: "100%",
           minWidth: 0,
@@ -354,11 +355,11 @@ function MosaicTile({
           boxSizing: "border-box",
           padding: "8px",
         }}
-        className="relative flex flex-col justify-between overflow-hidden rounded-lg text-left transition-all hover:brightness-110"
+        className="relative flex flex-col justify-between overflow-hidden text-left transition-all hover:brightness-110"
         title={`${displayName} (${person.percentage.toFixed(1)}%)`}
       >
         <div className="flex w-full items-center gap-2 overflow-hidden">
-          {widthPct * containerW > 120 ? (
+          {widthPct * containerW > 120 && heightPct * containerH > 40 ? (
             <TileAvatar address={person.agent} size={20} />
           ) : null}
           <span
