@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -18,6 +18,7 @@ import {
 import { fetchUnifiedScore, getReputationTier } from "@/lib/reputation";
 import { fetchAllTasks, fetchRecentTasks, getTaskUrl, UnifiedTask } from "@/lib/task-adapter";
 import { useWallet } from "@/lib/wallet-context";
+import LandingPage from "@/app/landing/page";
 
 function formatDeadline(deadline: bigint | number) {
   const now = Math.floor(Date.now() / 1000);
@@ -178,8 +179,9 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
+    if (!account) return;
     void loadFeed();
-  }, [loadFeed]);
+  }, [account, loadFeed]);
 
   useEffect(() => {
     void loadWalletStats();
@@ -216,6 +218,10 @@ export default function HomePage() {
         </div>
       </section>
     );
+  }
+
+  if (!account) {
+    return <LandingPage />;
   }
 
   return (
