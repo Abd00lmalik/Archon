@@ -207,6 +207,15 @@ let _cachedTasks: UnifiedTask[] | null = null;
 let _cacheTime = 0;
 const CACHE_TTL_MS = 60_000;
 
+const perf = {
+  start: (label: string) => {
+    if (process.env.NODE_ENV === "development") console.time(`[archon] ${label}`);
+  },
+  end: (label: string) => {
+    if (process.env.NODE_ENV === "development") console.timeEnd(`[archon] ${label}`);
+  }
+};
+
 export function getContractForSource(
   sourceId: string,
   provider: BrowserProvider | JsonRpcProvider | JsonRpcSigner
@@ -256,13 +265,14 @@ function normalizeArchiveJob(raw: unknown): Omit<UnifiedTask, "displayId" | "sou
 async function normalizeModernJob(
   source: RawSource,
   contract: Contract,
-  raw: unknown
+  raw: unknown,
+  includeRevealMeta = true
 ): Promise<Omit<UnifiedTask, "displayId" | "source" | "sourceId" | "sourceAddress" | "caps">> {
   const parsed = parseJob(raw);
-  const revealPhaseEnd = source.caps.signalMap
+  const revealPhaseEnd = source.caps.signalMap && includeRevealMeta
     ? toBigInt(await contract.getRevealPhaseEnd(parsed.jobId).catch(() => 0n))
     : 0n;
-  const isInRevealPhase = source.caps.signalMap
+  const isInRevealPhase = source.caps.signalMap && includeRevealMeta
     ? Boolean(await contract.isInRevealPhase(parsed.jobId).catch(() => false))
     : false;
 
@@ -327,17 +337,33 @@ function withCapabilities(
   };
 }
 
-async function readSourceTasks(source: RawSource, provider: BrowserProvider | JsonRpcProvider): Promise<Array<Omit<UnifiedTask, "displayId" | "source" | "sourceId" | "sourceAddress" | "caps">>> {
+type ReadSourceOptions = {
+  limitLatest?: number;
+  includeRevealMeta?: boolean;
+};
+
+async function readSourceTasks(
+  source: RawSource,
+  provider: BrowserProvider | JsonRpcProvider,
+  options: ReadSourceOptions = {}
+): Promise<Array<Omit<UnifiedTask, "displayId" | "source" | "sourceId" | "sourceAddress" | "caps">>> {
   const contract = new Contract(source.address, source.abi as InterfaceAbi, provider);
+  const includeRevealMeta = options.includeRevealMeta ?? true;
+  const limitLatest = Math.max(0, options.limitLatest ?? 0);
 
   if (source.version === "archive") {
     const rows = Array.from((await contract.getAllJobs().catch(() => [])) as unknown[]);
     if (rows.length > 0) {
-      return rows.map(normalizeArchiveJob).filter((task) => !isZeroAddress(task.client));
+      const normalized = rows.map(normalizeArchiveJob).filter((task) => !isZeroAddress(task.client));
+      if (limitLatest > 0) {
+        return normalized.sort((a, b) => b.jobId - a.jobId).slice(0, limitLatest);
+      }
+      return normalized;
     }
   }
 
   let total = 0n;
+  perf.start("task-count");
   for (const fn of ["nextJobId", "totalJobs"]) {
     try {
       total = await contract[fn]();
@@ -346,19 +372,28 @@ async function readSourceTasks(source: RawSource, provider: BrowserProvider | Js
       // try the next counter shape
     }
   }
+  perf.end("task-count");
+
+  const count = Number(total);
+  const start = source.version === "archive" ? 1 : 0;
+  const endExclusive = source.version === "archive" ? count + 1 : count;
+  const range = Array.from({ length: Math.max(endExclusive - start, 0) }, (_, i) => start + i);
+  const scopedRange = limitLatest > 0 ? range.slice(-limitLatest) : range;
+  const results = await Promise.allSettled(
+    scopedRange.map(async (jobId) => {
+      const raw = await contract.getJob(jobId).catch(() => null);
+      if (!raw) return null;
+      return source.version === "archive"
+        ? normalizeArchiveJob(raw)
+        : await normalizeModernJob(source, contract, raw, includeRevealMeta);
+    })
+  );
 
   const tasks: Array<Omit<UnifiedTask, "displayId" | "source" | "sourceId" | "sourceAddress" | "caps">> = [];
-  const count = Number(total);
-  const start = source.version === "archive" ? 0 : 0;
-  const endExclusive = source.version === "archive" ? count + 1 : count;
   const seen = new Set<number>();
-
-  for (let i = start; i < endExclusive; i += 1) {
-    const raw = await contract.getJob(i).catch(() => null);
-    if (!raw) continue;
-    const task = source.version === "archive"
-      ? normalizeArchiveJob(raw)
-      : await normalizeModernJob(source, contract, raw);
+  for (const result of results) {
+    if (result.status !== "fulfilled" || !result.value) continue;
+    const task = result.value;
     if (seen.has(task.jobId) || isZeroAddress(task.client)) continue;
     seen.add(task.jobId);
     tasks.push(task);
@@ -369,21 +404,30 @@ async function readSourceTasks(source: RawSource, provider: BrowserProvider | Js
 
 export async function fetchAllTasks(
   provider: JsonRpcProvider | BrowserProvider,
-  forceRefresh = false
+  forceRefresh = false,
+  options: ReadSourceOptions = {}
 ): Promise<UnifiedTask[]> {
   const now = Date.now();
-  if (!forceRefresh && _cachedTasks && now - _cacheTime < CACHE_TTL_MS) {
+  if (
+    !forceRefresh &&
+    _cachedTasks &&
+    now - _cacheTime < CACHE_TTL_MS &&
+    !options.limitLatest &&
+    options.includeRevealMeta !== false
+  ) {
     console.log("[adapter] Using cached tasks:", _cachedTasks.length);
     return _cachedTasks;
   }
 
   const chronological: UnifiedTask[] = [];
+  perf.start("contracts-load");
   const sourceResults = await Promise.allSettled(
     TASK_SOURCES.map(async (source) => ({
       source,
-      tasks: await readSourceTasks(source, provider)
+      tasks: await readSourceTasks(source, provider, options)
     }))
   );
+  perf.end("contracts-load");
 
   for (const result of sourceResults) {
     if (result.status === "rejected") {
@@ -400,9 +444,19 @@ export async function fetchAllTasks(
   }
 
   const allTasks = chronological.sort((a, b) => b.displayId - a.displayId);
-  _cachedTasks = allTasks;
-  _cacheTime = now;
+  if (!options.limitLatest && options.includeRevealMeta !== false) {
+    _cachedTasks = allTasks;
+    _cacheTime = now;
+  }
   return allTasks;
+}
+
+export async function fetchRecentTasks(
+  provider: JsonRpcProvider | BrowserProvider,
+  limit = 10
+): Promise<UnifiedTask[]> {
+  const recent = await fetchAllTasks(provider, false, { limitLatest: limit, includeRevealMeta: false });
+  return recent.slice(0, Math.max(1, limit));
 }
 
 export async function fetchTaskById(

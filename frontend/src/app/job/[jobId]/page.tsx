@@ -30,7 +30,6 @@ import {
   ZERO_ADDRESS
 } from "@/lib/contracts";
 import {
-  fetchAllTasks,
   fetchTaskBySourceAndId,
   getContractForSource,
   invalidateTaskCache,
@@ -62,6 +61,22 @@ function errorText(error: unknown, fallback: string) {
   return message;
 }
 
+function humanizeError(error: unknown): string {
+  const raw =
+    error instanceof Error
+      ? error.message
+      : typeof error === "object" && error !== null && "message" in error
+        ? String((error as { message?: unknown }).message ?? "Unknown error")
+        : String(error ?? "Unknown error");
+  const normalized = raw.toLowerCase();
+  if (normalized.includes("user rejected")) return "Transaction cancelled.";
+  if (normalized.includes("insufficient funds")) return "Insufficient USDC balance.";
+  if (normalized.includes("already submitted")) return "You have already submitted to this task.";
+  if (normalized.includes("deadline")) return "This task's deadline has passed.";
+  if (normalized.includes("network")) return "Network error - check your connection and retry.";
+  return raw.slice(0, 120);
+}
+
 function parseUsdcInput(value: string): bigint | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
@@ -89,6 +104,20 @@ function contentToURI(content: string): string {
   });
   return `data:application/json;base64,${btoa(unescape(encodeURIComponent(json)))}`;
 }
+
+function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  const timeout = new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms));
+  return Promise.race([promise, timeout]);
+}
+
+const perf = {
+  start: (label: string) => {
+    if (process.env.NODE_ENV === "development") console.time(`[archon] ${label}`);
+  },
+  end: (label: string) => {
+    if (process.env.NODE_ENV === "development") console.timeEnd(`[archon] ${label}`);
+  }
+};
 
 function DeadlineCountdown({ deadline }: { deadline: number }) {
   const [remaining, setRemaining] = useState("");
@@ -435,15 +464,17 @@ export default function JobDetailsPage() {
   const [job, setJob] = useState<JobRecord | null>(null);
   const jobId = task?.jobId ?? -1;
   const [displayTaskId, setDisplayTaskId] = useState(validRouteTask ? `#${displayId}` : `#${rawJobParam}`);
-  const [jobLoading, setJobLoading] = useState(true);
+  const [coreLoading, setCoreLoading] = useState(true);
+  const [subsLoading, setSubsLoading] = useState(true);
   const [jobError, setJobError] = useState<string | null>(null);
+  const [subsError, setSubsError] = useState<string | null>(null);
   const [submissions, setSubmissions] = useState<SubmissionRecord[]>([]);
   const [mySubmission, setMySubmission] = useState<SubmissionRecord | null>(null);
   const [selectedSubmission, setSelectedSubmission] = useState<SubmissionRecord | null>(null);
   const [isAccepted, setIsAccepted] = useState(false);
   const [maxApprovals, setMaxApprovals] = useState(1);
   const [approvalsUsed, setApprovalsUsed] = useState(0);
-  const [creatorPostedCount, setCreatorPostedCount] = useState(0);
+  const [creatorPostedCount] = useState(0);
   const [escrowLocked, setEscrowLocked] = useState(0n);
   const [taskEconomy, setTaskEconomy] = useState<TaskEconomyRecord>({
     interactionStake: 2_000_000n,
@@ -470,20 +501,6 @@ export default function JobDetailsPage() {
   const [submissionFilterAddress, setSubmissionFilterAddress] = useState("");
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const taskRef = useRef<UnifiedTask | null>(null);
-  const jobCache = useRef<Record<string, {
-    task: UnifiedTask;
-    job: JobRecord;
-    submissions: SubmissionRecord[];
-    escrowLocked: bigint;
-    approvalsUsed: number;
-    maxApprovals: number;
-    selectedFinalists: string[];
-    revealPhaseEnd: number;
-    isRevealPhase: boolean;
-    taskEconomy: TaskEconomyRecord;
-    creatorPostedCount: number;
-    buildOnParents: Record<string, string>;
-  }>>({});
   const [mapDimensions, setMapDimensions] = useState({ w: 640, h: 380 });
 
   const [deliverableLink, setDeliverableLink] = useState("");
@@ -495,6 +512,13 @@ export default function JobDetailsPage() {
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [busyAction, setBusyAction] = useState("");
+  const [txInFlight, setTxInFlight] = useState(false);
+  const [acceptState, setAcceptState] = useState<"idle" | "confirming" | "pending" | "success" | "error">("idle");
+  const [acceptTxHash, setAcceptTxHash] = useState<string | null>(null);
+  const [acceptError, setAcceptError] = useState<string | null>(null);
+  const [submitState, setSubmitState] = useState<"idle" | "confirming" | "pending" | "success" | "error">("idle");
+  const [submitTxHash, setSubmitTxHash] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [revealStarting, setRevealStarting] = useState(false);
   const [revealTxHash, setRevealTxHash] = useState<string | null>(null);
   const [revealError, setRevealError] = useState<string | null>(null);
@@ -507,43 +531,14 @@ export default function JobDetailsPage() {
 
   const isConnected = Boolean(account);
   const isCreator = Boolean(account && job && account.toLowerCase() === job.client.toLowerCase());
+  const jobLoading = coreLoading;
   const taskJobId = task?.jobId ?? -1;
   const taskSourceId = task?.sourceId ?? "";
   const taskHasSignalMap = Boolean(task?.caps.hasSignalMap);
   const taskLoaded = Boolean(task);
 
-  const applyCachedTaskState = useCallback((payload: {
-    task: UnifiedTask;
-    job: JobRecord;
-    submissions: SubmissionRecord[];
-    escrowLocked: bigint;
-    approvalsUsed: number;
-    maxApprovals: number;
-    selectedFinalists: string[];
-    revealPhaseEnd: number;
-    isRevealPhase: boolean;
-    taskEconomy: TaskEconomyRecord;
-    creatorPostedCount: number;
-    buildOnParents: Record<string, string>;
-  }) => {
-    setTask(payload.task);
-    setDisplayTaskId(`#${payload.task.displayId}`);
-    setJob(payload.job);
-    setSubmissions(payload.submissions);
-    setEscrowLocked(payload.escrowLocked);
-    setApprovalsUsed(payload.approvalsUsed);
-    setMaxApprovals(payload.maxApprovals);
-    setSelectedFinalists(payload.selectedFinalists);
-    setRevealPhaseEnd(payload.revealPhaseEnd);
-    setIsRevealPhase(payload.isRevealPhase);
-    setTaskEconomy(payload.taskEconomy);
-    setCreatorPostedCount(payload.creatorPostedCount);
-    setBuildOnParents(payload.buildOnParents);
-  }, []);
-
   const clearTaskCaches = useCallback(() => {
     invalidateTaskCache();
-    jobCache.current = {};
   }, []);
 
   useEffect(() => {
@@ -598,129 +593,143 @@ export default function JobDetailsPage() {
     return getContractForSource(task.sourceId, await provider.getSigner());
   };
 
-  const loadTask = useCallback(async () => {
+  const loadTaskCore = useCallback(async () => {
     if (!validRouteTask || !prefixedRoute) {
-      setJobLoading(false);
+      setCoreLoading(false);
       setJobError("Task not found");
       setJob(null);
       setTask(null);
       return;
     }
 
-    setJobLoading(true);
+    setCoreLoading(true);
     setJobError(null);
-
     try {
+      perf.start("task-core-load");
       const readProvider = getReadProvider();
-      const cacheKey = `${prefixedRoute.source}-${prefixedRoute.contractJobId}`;
-      let payload = jobCache.current[cacheKey];
+      const unifiedTask = await fetchTaskBySourceAndId(prefixedRoute.source, prefixedRoute.contractJobId, readProvider);
+      if (!unifiedTask) {
+        setJobError("Task not found");
+        setJob(null);
+        setTask(null);
+        return;
+      }
+      const jobData = unifiedTaskToJobRecord(unifiedTask);
+      setTask(unifiedTask);
+      setDisplayTaskId(`#${unifiedTask.displayId}`);
+      setJob(jobData);
+      setMaxApprovals(Math.max(1, jobData.maxApprovals || 1));
+      setApprovalsUsed(jobData.approvedCount);
+      setEscrowLocked(coerceBigInt(jobData.rewardUSDC) - coerceBigInt(jobData.paidOutUSDC));
+    } catch (error) {
+      console.error("[task] core load error:", error);
+      setJob(null);
+      setTask(null);
+      setJobError(errorText(error, "Failed to load task"));
+    } finally {
+      perf.end("task-core-load");
+      setCoreLoading(false);
+    }
+  }, [prefixedRoute, validRouteTask]);
 
-      if (!payload) {
-        const unifiedTask = await fetchTaskBySourceAndId(prefixedRoute.source, prefixedRoute.contractJobId, readProvider);
+  const loadTaskSecondary = useCallback(async () => {
+    if (!task || !job) return;
+    const readProvider = getReadProvider();
+    const readContract = getContractForSource(task.sourceId, readProvider);
 
-        if (!unifiedTask) {
-          setJobError("Task not found");
-          setJob(null);
-          setTask(null);
-          return;
-        }
+    setSubsLoading(true);
+    setSubsError(null);
+    try {
+      perf.start("task-submissions-load");
+      const rawSubmissions = await withTimeout(loadTaskSubmissions(task, readProvider), 5_000, []);
+      setSubmissions(rawSubmissions);
+    } catch {
+      setSubmissions([]);
+      setSubsError("Failed to load submissions.");
+    } finally {
+      perf.end("task-submissions-load");
+      setSubsLoading(false);
+    }
 
-        const readContract = getContractForSource(unifiedTask.sourceId, readProvider);
-        const jobData = unifiedTaskToJobRecord(unifiedTask);
-        const rawSubmissions = await loadTaskSubmissions(unifiedTask, readProvider);
-        const allTasks = await fetchAllTasks(readProvider);
+    const shouldLoadInteractions = task.caps.hasSignalMap || task.caps.canSelectFinalists || task.caps.canInteract;
+    if (shouldLoadInteractions) {
+      try {
+        const [finalRows, revealEndRaw, revealOpenRaw, economyRaw, poolRemainingRaw] = await Promise.all([
+          readContract.getSelectedFinalists(task.jobId).catch(() => []),
+          readContract.getRevealPhaseEnd(task.jobId).catch(() => task.revealPhaseEnd),
+          readContract.isInRevealPhase(task.jobId).catch(() => task.isInRevealPhase),
+          readContract.getTaskEconomy(task.jobId).catch(() => null),
+          readContract.getInteractionPoolRemaining(task.jobId).catch(() => 0n)
+        ]);
+        const finals = Array.from(finalRows as string[]);
+        const revealEnd = Number(revealEndRaw);
+        setSelectedFinalists(finals);
+        setRevealPhaseEnd(revealEnd);
+        setIsRevealPhase(Boolean(revealOpenRaw));
 
-        let finals: string[] = [];
-        let revealEnd = Number(unifiedTask.revealPhaseEnd);
-        let revealOpen = unifiedTask.isInRevealPhase;
-        let economy: TaskEconomyRecord = {
-          interactionStake: 2_000_000n,
-          interactionReward: 0n,
-          interactionPool: 0n,
-          interactionPoolFunded: false,
-          poolRemaining: 0n
-        };
-
-        if (unifiedTask.caps.hasSignalMap || unifiedTask.caps.canSelectFinalists || unifiedTask.caps.canInteract) {
-          const [finalRows, revealEndRaw, revealOpenRaw, economyRaw, poolRemainingRaw] = await Promise.all([
-            readContract.getSelectedFinalists(unifiedTask.jobId).catch(() => []),
-            readContract.getRevealPhaseEnd(unifiedTask.jobId).catch(() => unifiedTask.revealPhaseEnd),
-            readContract.isInRevealPhase(unifiedTask.jobId).catch(() => unifiedTask.isInRevealPhase),
-            readContract.getTaskEconomy(unifiedTask.jobId).catch(() => null),
-            readContract.getInteractionPoolRemaining(unifiedTask.jobId).catch(() => 0n)
-          ]);
-          finals = Array.from(finalRows as string[]);
-          revealEnd = Number(revealEndRaw);
-          revealOpen = Boolean(revealOpenRaw);
-          if (economyRaw) {
-            const raw = economyRaw as Record<string, unknown> & unknown[];
-            economy = {
-              interactionStake: coerceBigInt(raw.interactionStake ?? raw[0] ?? 2_000_000n, 2_000_000n),
-              interactionReward: coerceBigInt(raw.interactionReward ?? raw[1] ?? 0n),
-              interactionPool: coerceBigInt(raw.interactionPool ?? raw[2] ?? 0n),
-              interactionPoolFunded: Boolean(raw.interactionPoolFunded ?? raw[3] ?? false),
-              poolRemaining: coerceBigInt(poolRemainingRaw)
-            };
-          }
+        if (economyRaw) {
+          const raw = economyRaw as Record<string, unknown> & unknown[];
+          setTaskEconomy({
+            interactionStake: coerceBigInt(raw.interactionStake ?? raw[0] ?? 2_000_000n, 2_000_000n),
+            interactionReward: coerceBigInt(raw.interactionReward ?? raw[1] ?? 0n),
+            interactionPool: coerceBigInt(raw.interactionPool ?? raw[2] ?? 0n),
+            interactionPoolFunded: Boolean(raw.interactionPoolFunded ?? raw[3] ?? false),
+            poolRemaining: coerceBigInt(poolRemainingRaw)
+          });
         }
 
         const parentEntries = await Promise.all(
           finals.map(async (finalist) => {
             try {
-              const parent = String(await readContract.buildOnParentByResponder(unifiedTask.jobId, finalist));
+              const parent = String(await readContract.buildOnParentByResponder(task.jobId, finalist));
               return [finalist.toLowerCase(), parent] as const;
             } catch {
               return [finalist.toLowerCase(), ZERO_ADDRESS] as const;
             }
           })
         );
-
-        payload = {
-          task: unifiedTask,
-          job: { ...jobData, revealPhaseEnd: BigInt(revealEnd || 0) },
-          submissions: rawSubmissions,
-          escrowLocked: coerceBigInt(jobData.rewardUSDC) - coerceBigInt(jobData.paidOutUSDC),
-          approvalsUsed: jobData.approvedCount,
-          maxApprovals: Math.max(1, jobData.maxApprovals || 1),
-          selectedFinalists: finals,
-          revealPhaseEnd: revealEnd,
-          isRevealPhase: revealOpen,
-          taskEconomy: economy,
-          creatorPostedCount: allTasks.filter((candidate) => candidate.client.toLowerCase() === jobData.client.toLowerCase()).length,
-          buildOnParents: parentEntries.reduce<Record<string, string>>((acc, [key, value]) => {
+        setBuildOnParents(
+          parentEntries.reduce<Record<string, string>>((acc, [key, value]) => {
             acc[key] = value;
             return acc;
           }, {})
-        };
-        jobCache.current[cacheKey] = payload;
-      }
+        );
 
-      applyCachedTaskState(payload);
-
-      if (account) {
-        const readContract = getContractForSource(payload.task.sourceId, readProvider);
-        const mine = payload.submissions.find((submission) => submission.agent.toLowerCase() === account.toLowerCase()) ?? null;
-        const [accepted, lastClaim, cooldown] = await Promise.all([
-          readContract.isAccepted(payload.task.jobId, account).catch(() => Boolean(mine)),
-          fetchLastJobCredentialClaim(account),
-          fetchJobCredentialCooldownSeconds()
-        ]);
-        setIsAccepted(Boolean(accepted));
-        setMySubmission(mine);
-        setClaimReadyAt(Number(lastClaim) + cooldown);
-      } else {
-        setIsAccepted(false);
-        setMySubmission(null);
-        setClaimReadyAt(null);
+      } catch {
+        // keep page usable if interaction data fails
       }
-    } catch (error) {
-      console.error("[task] load error:", error);
-      setJob(null);
-      setJobError(errorText(error, "Failed to load task"));
-    } finally {
-      setJobLoading(false);
     }
-  }, [account, applyCachedTaskState, prefixedRoute, validRouteTask]);
+  }, [job, task]);
+
+  const loadTask = useCallback(async () => {
+    await loadTaskCore();
+  }, [loadTaskCore]);
+
+  const loadWalletState = useCallback(async () => {
+    if (!task || !account) {
+      setIsAccepted(false);
+      setMySubmission(null);
+      setClaimReadyAt(null);
+      return;
+    }
+    try {
+      const readProvider = getReadProvider();
+      const readContract = getContractForSource(task.sourceId, readProvider);
+      const mine = submissions.find((submission) => submission.agent.toLowerCase() === account.toLowerCase()) ?? null;
+      const [accepted, lastClaim, cooldown] = await Promise.all([
+        readContract.isAccepted(task.jobId, account).catch(() => Boolean(mine)),
+        fetchLastJobCredentialClaim(account),
+        fetchJobCredentialCooldownSeconds()
+      ]);
+      setIsAccepted(Boolean(accepted));
+      setMySubmission(mine);
+      setClaimReadyAt(Number(lastClaim) + cooldown);
+    } catch {
+      setIsAccepted(false);
+      setMySubmission(null);
+      setClaimReadyAt(null);
+    }
+  }, [account, submissions, task]);
 
   const loadHeatmap = useCallback(async () => {
     if (!taskHasSignalMap || !Number.isInteger(taskJobId) || taskJobId < 0 || !taskSourceId) {
@@ -743,6 +752,16 @@ export default function JobDetailsPage() {
   useEffect(() => {
     void loadTask();
   }, [loadTask]);
+
+  useEffect(() => {
+    if (coreLoading || !task || !job) return;
+    void loadTaskSecondary();
+  }, [coreLoading, job, loadTaskSecondary, task]);
+
+  useEffect(() => {
+    if (coreLoading) return;
+    void loadWalletState();
+  }, [coreLoading, loadWalletState]);
 
   useEffect(() => {
     void loadHeatmap();
@@ -869,39 +888,67 @@ export default function JobDetailsPage() {
   }, [jobId, selectedFinalists, taskSourceId]);
 
   const handleAccept = async () => {
+    if (txInFlight) return;
+    setTxInFlight(true);
+    setAcceptError(null);
+    setAcceptTxHash(null);
+    setAcceptState("confirming");
     try {
       setBusyAction("accept");
       const contract = await getTaskWriteContract();
       const tx = await contract.acceptJob(jobId);
+      setAcceptState("pending");
+      setAcceptTxHash(tx.hash);
       setStatusMessage(`Accept tx: ${tx.hash}`);
       await tx.wait();
-      clearTaskCaches();
-      await loadTask();
+      setAcceptState("success");
+      setIsAccepted(true);
+      setJob((previous) =>
+        previous ? { ...previous, acceptedCount: previous.acceptedCount + 1 } : previous
+      );
+      void loadWalletState();
     } catch (error) {
-      setErrorMessage(errorText(error, "Failed to accept task"));
+      const message = humanizeError(error);
+      setAcceptState("error");
+      setAcceptError(message);
+      setErrorMessage(message);
     } finally {
       setBusyAction("");
+      setTxInFlight(false);
     }
   };
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
+    if (txInFlight) return;
+    setTxInFlight(true);
+    setSubmitError(null);
+    setSubmitTxHash(null);
+    setSubmitState("confirming");
     try {
       setBusyAction("submit");
       const contract = await getTaskWriteContract();
       const tx = typeof contract.interface.hasFunction === "function" && contract.interface.hasFunction("submitDirect")
         ? await contract.submitDirect(BigInt(jobId), deliverableLink.trim())
         : await contract.submitDeliverable(jobId, deliverableLink.trim());
+      setSubmitState("pending");
+      setSubmitTxHash(tx.hash);
       setStatusMessage(`Submit tx: ${tx.hash}`);
       await tx.wait();
       setDeliverableLink("");
-      clearTaskCaches();
-      await loadTask();
-      await loadHeatmap();
+      setSubmitState("success");
+      setIsAccepted(true);
+      void loadTaskSecondary();
+      void loadWalletState();
+      void loadHeatmap();
     } catch (error) {
-      setErrorMessage(errorText(error, "Failed to submit work"));
+      const message = humanizeError(error);
+      setSubmitState("error");
+      setSubmitError(message);
+      setErrorMessage(message);
     } finally {
       setBusyAction("");
+      setTxInFlight(false);
     }
   };
 
@@ -1513,6 +1560,22 @@ export default function JobDetailsPage() {
             </div>
           ) : null}
 
+          {subsLoading ? (
+            <div className="text-xs font-mono text-[var(--text-muted)]">Loading submissions...</div>
+          ) : null}
+          {subsError ? (
+            <button
+              type="button"
+              className="text-xs text-[var(--text-muted)] underline"
+              onClick={() => {
+                setSubsError(null);
+                void loadTaskSecondary();
+              }}
+            >
+              Failed to load submissions - retry
+            </button>
+          ) : null}
+
           {viewMode === "signal" ? (
             <div className="panel">
               {isRevealActive && isRevealPhase ? (
@@ -1763,14 +1826,42 @@ export default function JobDetailsPage() {
               <div className="section-header">YOUR ACTIONS</div>
 
               {showAcceptAction ? (
-                <button
-                  type="button"
-                  className="btn-primary w-full"
-                  onClick={() => void handleAccept()}
-                  disabled={busyAction === "accept"}
-                >
-                  {busyAction === "accept" ? "Accepting..." : "Accept Task"}
-                </button>
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    className="btn-primary w-full"
+                    onClick={() => void handleAccept()}
+                    disabled={txInFlight || busyAction === "accept"}
+                  >
+                    {acceptState === "confirming"
+                      ? "Confirm in wallet..."
+                      : acceptState === "pending"
+                        ? "Transaction pending..."
+                        : acceptState === "success"
+                          ? "Accepted"
+                          : "Accept Task"}
+                  </button>
+                  {acceptTxHash ? (
+                    <div className="text-[11px] font-mono text-[var(--arc)] break-all">
+                      Tx: {acceptTxHash}
+                    </div>
+                  ) : null}
+                  {acceptError ? (
+                    <div className="text-xs text-[var(--danger)]">
+                      {acceptError}{" "}
+                      <button
+                        type="button"
+                        className="underline text-[11px] text-[var(--text-muted)]"
+                        onClick={() => {
+                          setAcceptError(null);
+                          setAcceptState("idle");
+                        }}
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               ) : null}
 
               {showSubmitAction ? (
@@ -1785,10 +1876,36 @@ export default function JobDetailsPage() {
                   <button
                     type="submit"
                     className="btn-primary w-full"
-                    disabled={busyAction === "submit" || !deliverableLink.trim()}
+                    disabled={txInFlight || busyAction === "submit" || !deliverableLink.trim()}
                   >
-                    {busyAction === "submit" ? "Submitting..." : "Submit Work"}
+                    {submitState === "confirming"
+                      ? "Confirm in wallet..."
+                      : submitState === "pending"
+                        ? "Transaction pending..."
+                        : submitState === "success"
+                          ? "Submitted"
+                          : "Submit Work"}
                   </button>
+                  {submitTxHash ? (
+                    <div className="text-[11px] font-mono text-[var(--arc)] break-all">
+                      Tx: {submitTxHash}
+                    </div>
+                  ) : null}
+                  {submitError ? (
+                    <div className="text-xs text-[var(--danger)]">
+                      {submitError}{" "}
+                      <button
+                        type="button"
+                        className="underline text-[11px] text-[var(--text-muted)]"
+                        onClick={() => {
+                          setSubmitError(null);
+                          setSubmitState("idle");
+                        }}
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  ) : null}
                 </form>
               ) : null}
 
