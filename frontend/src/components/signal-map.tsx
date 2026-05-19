@@ -316,17 +316,29 @@ function ResponseThread({
 function TileBox({
   node,
   isSelected,
-  onClick
+  onClick,
+  containerW,
+  containerH
 }: {
   node: TreemapNode;
   isSelected: boolean;
   onClick: () => void;
+  containerW: number;
+  containerH: number;
 }) {
   const { person, rect } = node;
   const tileColor = getTileColor(person.critiquesReceived, person.buildOnsReceived);
-  const tileW = rect.w;
-  const tileH = rect.h;
   const displayName = person.username ?? shortAddr(person.agent);
+
+  const clampedRect = {
+    x: Math.max(0, rect.x),
+    y: Math.max(0, rect.y),
+    w: Math.min(rect.w, containerW - rect.x),
+    h: Math.min(rect.h, containerH - rect.y),
+  };
+
+  const tileW = clampedRect.w;
+  const tileH = clampedRect.h;
 
   return (
     <button
@@ -334,10 +346,10 @@ function TileBox({
       onClick={onClick}
       style={{
         position: "absolute",
-        left: rect.x,
-        top: rect.y,
-        width: Math.max(rect.w - 1, 1),
-        height: Math.max(rect.h - 1, 1),
+        left: clampedRect.x,
+        top: clampedRect.y,
+        width: Math.max(clampedRect.w - 1, 1),
+        height: Math.max(clampedRect.h - 1, 1),
         boxSizing: "border-box",
         overflow: "hidden",
         border: `1px solid ${isSelected ? "#E8F4FF" : "rgba(232,244,255,0.2)"}`,
@@ -524,7 +536,7 @@ export default function SignalMap(props: Props) {
   } = props;
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const [dims, setDims] = useState({ w: 600, h: 400 });
+  const [dims, setDims] = useState({ w: 800, h: 400 });
   const [selected, setSelected] = useState<PersonSignal | null>(null);
 
   useEffect(() => {
@@ -535,7 +547,7 @@ export default function SignalMap(props: Props) {
     }
     const ro = new ResizeObserver((entries) => {
       const e = entries[0];
-      if (e?.contentRect.width > 0) {
+      if (e && e.contentRect.width > 0) {
         setDims({ w: Math.floor(e.contentRect.width), h: Math.floor(e.contentRect.height) });
       }
     });
@@ -544,7 +556,7 @@ export default function SignalMap(props: Props) {
   }, []);
 
   const resolvedWidth = Math.max(320, containerWidth ?? dims.w);
-  const resolvedHeight = Math.max(320, containerHeight ?? dims.h);
+  const resolvedHeight = Math.max(320, containerHeight ?? 400);
 
   const sortedPeople = useMemo(
     () => [...heatmap.people].sort((a, b) => b.weight - a.weight),
@@ -624,12 +636,12 @@ export default function SignalMap(props: Props) {
           style={{
             position: "relative",
             width: "100%",
-            height: resolvedHeight,
-            minHeight: 320,
+            height: 400,
+            minHeight: 280,
+            maxHeight: 600,
             backgroundColor: "#0D1117",
             borderRadius: 8,
             overflow: "hidden",
-            border: "1px solid var(--border)"
           }}
         >
           {nodes.map((node) => (
@@ -638,6 +650,8 @@ export default function SignalMap(props: Props) {
               node={node}
               isSelected={selected?.submissionId === node.person.submissionId}
               onClick={() => setSelected(node.person)}
+              containerW={resolvedWidth}
+              containerH={resolvedHeight}
             />
           ))}
         </div>

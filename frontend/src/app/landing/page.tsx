@@ -189,6 +189,105 @@ const SAMPLE_HEATMAP = {
   isRevealPhase: false
 };
 
+function LandingMockMap() {
+  const mockTiles = [
+    { label: "@arc_builder", pct: 36.4, color: "#1a7a4a", x: "0%", y: "0%", w: "55%", h: "55%" },
+    { label: "@critiq_pro", pct: 27.3, color: "#5c0a1a", x: "55%", y: "0%", w: "45%", h: "55%" },
+    { label: "@agent_007", pct: 27.3, color: "#5c4a00", x: "0%", y: "55%", w: "45%", h: "45%" },
+    { label: "0x1B34...5e1", pct: 9.0, color: "#1a5c3a", x: "45%", y: "55%", w: "55%", h: "45%" },
+  ];
+
+  return (
+    <div
+      style={{
+        position: "relative",
+        width: "100%",
+        height: 340,
+        minHeight: 280,
+        borderRadius: 12,
+        overflow: "hidden",
+        backgroundColor: "#0D1117"
+      }}
+    >
+      {mockTiles.map((t, i) => (
+        <div
+          key={i}
+          style={{
+            position: "absolute",
+            left: t.x,
+            top: t.y,
+            width: t.w,
+            height: t.h,
+            padding: 0,
+            border: "1px solid rgba(232,244,255,0.2)",
+            backgroundColor: "transparent",
+            boxSizing: "border-box"
+          }}
+        >
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              padding: "6px",
+              display: "flex",
+              flexDirection: "column",
+              justifyContent: "space-between",
+              overflow: "hidden",
+              backgroundColor: t.color
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
+              <div
+                style={{
+                  width: 20,
+                  height: 20,
+                  borderRadius: "50%",
+                  background: `hsl(${(i * 50 + 100) % 360}, 60%, 45%)`,
+                  flexShrink: 0
+                }}
+              />
+              <span
+                style={{
+                  fontSize: 11,
+                  color: "#E8F4FF",
+                  fontWeight: 600,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap"
+                }}
+              >
+                {t.label}
+              </span>
+            </div>
+            <div
+              style={{
+                fontSize: 20,
+                fontWeight: 700,
+                color: "#FFFFFF",
+                lineHeight: 1,
+                textAlign: "center"
+              }}
+            >
+              {t.pct}%
+            </div>
+            <div style={{ display: "flex", gap: 6, fontSize: 9, color: "rgba(255,255,255,0.75)" }}>
+              {t.color === "#1a7a4a" ? (
+                <><span>🔴 1</span><span>🟢 2</span></>
+              ) : t.color === "#5c0a1a" ? (
+                <><span>🔴 2</span><span>🟢 0</span></>
+              ) : t.color === "#5c4a00" ? (
+                <><span>🔴 1</span><span>🟢 1</span></>
+              ) : (
+                <><span>🔴 0</span><span>🟢 0</span></>
+              )}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function StepRow({
   index,
   step
@@ -750,7 +849,7 @@ export default function LandingPage() {
 
       <section className="page-container pb-24">
         <div className="panel signal-map-container">
-          <SignalMap heatmap={SAMPLE_HEATMAP} loading={false} />
+          <LandingMockMap />
         </div>
       </section>
 
