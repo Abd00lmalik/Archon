@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import LandingPage from "@/app/landing/page";
 import { UserDisplay } from "@/components/ui/user-display";
 import { LiveFeed } from "@/components/ui/live-feed";
 import { SectionHeader } from "@/components/ui/section-header";
@@ -17,7 +16,7 @@ import {
   getReadProvider
 } from "@/lib/contracts";
 import { fetchUnifiedScore, getReputationTier } from "@/lib/reputation";
-import { fetchAllTasks, getTaskUrl, UnifiedTask } from "@/lib/task-adapter";
+import { fetchAllTasks, fetchRecentTasks, getTaskUrl, UnifiedTask } from "@/lib/task-adapter";
 import { useWallet } from "@/lib/wallet-context";
 
 function formatDeadline(deadline: bigint | number) {
@@ -32,6 +31,32 @@ function formatDeadline(deadline: bigint | number) {
 
 type TaskFilter = "all" | "open" | "submitted" | "reveal" | "closed";
 const PAGE_SIZE = 4;
+const RECENT_TASK_LIMIT = 10;
+const FEED_CACHE_TTL = 60_000;
+const feedCache: Map<string, { data: unknown; ts: number }> = new Map();
+
+const perf = {
+  start: (label: string) => {
+    if (process.env.NODE_ENV === "development") console.time(`[archon] ${label}`);
+  },
+  end: (label: string) => {
+    if (process.env.NODE_ENV === "development") console.timeEnd(`[archon] ${label}`);
+  }
+};
+
+function getCached<T>(key: string): T | null {
+  const cached = feedCache.get(key);
+  if (!cached) return null;
+  if (Date.now() - cached.ts > FEED_CACHE_TTL) {
+    feedCache.delete(key);
+    return null;
+  }
+  return cached.data as T;
+}
+
+function setCached(key: string, data: unknown) {
+  feedCache.set(key, { data, ts: Date.now() });
+}
 
 const FILTER_OPTIONS: { value: TaskFilter; label: string; color: string }[] = [
   { value: "all", label: "ALL", color: "#E8F4FD" },
@@ -79,19 +104,70 @@ export default function HomePage() {
   const [activityEvents, setActivityEvents] = useState<ActivityEvent[]>([]);
 
   const loadFeed = useCallback(async () => {
-    if (!account) return;
     setLoading(true);
     try {
+      const cachedTasks = getCached<UnifiedTask[]>("public-feed-recent");
+      if (cachedTasks) {
+        setTasks(cachedTasks);
+        setLoading(false);
+      }
+
+      perf.start("provider-init");
       const provider = getReadProvider();
-      const [allTasks, unified] = await Promise.all([
-        fetchAllTasks(provider),
-        fetchUnifiedScore(provider, account)
-      ]);
-      setTasks(allTasks);
-      setMyCredentials([...unified.v2Credentials, ...unified.legacyCredentials]);
-      setMyScore(unified.totalScore);
+      perf.end("provider-init");
+
+      perf.start("feed-batch-fetch");
+      const recentTasks = await fetchRecentTasks(provider, RECENT_TASK_LIMIT);
+      perf.end("feed-batch-fetch");
+      setTasks(recentTasks);
+      setCached("public-feed-recent", recentTasks);
+      perf.start("feed-render");
+      perf.end("feed-render");
+
+      void (async () => {
+        try {
+          const enrichedRecent = await fetchAllTasks(provider, true, {
+            limitLatest: RECENT_TASK_LIMIT,
+            includeRevealMeta: true
+          });
+          setTasks((prev) => {
+            const enrichedMap = new Map(enrichedRecent.map((t) => [t.displayId, t]));
+            return prev.map((task) => enrichedMap.get(task.displayId) ?? task);
+          });
+          setCached("public-feed-recent", enrichedRecent);
+        } catch {
+          // non-blocking enrichment
+        }
+      })();
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  const loadWalletStats = useCallback(async () => {
+    if (!account) {
+      setMyCredentials([]);
+      setMyScore(0);
+      return;
+    }
+    const cacheKey = `wallet-stats:${account.toLowerCase()}`;
+    const cached = getCached<{ credentials: CredentialRecord[]; score: number }>(cacheKey);
+    if (cached) {
+      setMyCredentials(cached.credentials);
+      setMyScore(cached.score);
+      return;
+    }
+
+    try {
+      const provider = getReadProvider();
+      const unified = await fetchUnifiedScore(provider, account);
+      const credentials = [...unified.v2Credentials, ...unified.legacyCredentials];
+      const score = unified.totalScore;
+      setMyCredentials(credentials);
+      setMyScore(score);
+      setCached(cacheKey, { credentials, score });
+    } catch {
+      // keep non-critical wallet stats resilient
     }
   }, [account]);
 
@@ -104,6 +180,10 @@ export default function HomePage() {
   useEffect(() => {
     void loadFeed();
   }, [loadFeed]);
+
+  useEffect(() => {
+    void loadWalletStats();
+  }, [loadWalletStats]);
 
   useEffect(() => {
     const unsubscribe = subscribeToActivity(setActivityEvents);
@@ -138,16 +218,12 @@ export default function HomePage() {
     );
   }
 
-  if (!account) {
-    return <LandingPage />;
-  }
-
   return (
     <section className="page-container grid gap-6 xl:grid-cols-[240px_1fr_320px]">
       <aside className="panel h-fit space-y-6">
         <SectionHeader>Your Command</SectionHeader>
-        <StatBlock value={myScore} label="Score" accent="var(--arc)" />
-        <div className="badge badge-agent">{myTier}</div>
+        <StatBlock value={account ? myScore : "-"} label="Score" accent="var(--arc)" />
+        <div className="badge badge-agent">{account ? myTier : "Connect Wallet"}</div>
 
         <div className="space-y-2 text-sm">
           <Link href="/" className="nav-link block">Browse Tasks</Link>
@@ -156,7 +232,9 @@ export default function HomePage() {
         </div>
 
         <div className="space-y-2 border-t border-[var(--border)] pt-4">
-          <div className="mono text-xs text-[var(--text-secondary)]">Credentials: {myCredentials.length}</div>
+          <div className="mono text-xs text-[var(--text-secondary)]">
+            Credentials: {account ? myCredentials.length : "-"}
+          </div>
           <div className="mono text-xs text-[var(--text-secondary)]">
             Tasks Open: {allTasks.filter((task) => matchesFilter(task, "open")).length}
           </div>
