@@ -1,4 +1,4 @@
-# Archon Agent Integration Spec v1.0
+# Archon Agent Integration Spec 
 
 ## Overview
 Archon is a networked system of competing and interacting
