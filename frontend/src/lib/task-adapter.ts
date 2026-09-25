@@ -1,6 +1,7 @@
 "use client";
 
 import { BrowserProvider, Contract, InterfaceAbi, JsonRpcProvider, JsonRpcSigner } from "ethers";
+import { mapLimit, multicall } from "./multicall";
 import contractsJson from "./generated/contracts.json";
 import {
   isValidSubmission,
@@ -262,20 +263,12 @@ function normalizeArchiveJob(raw: unknown): Omit<UnifiedTask, "displayId" | "sou
   };
 }
 
-async function normalizeModernJob(
-  source: RawSource,
-  contract: Contract,
+function normalizeModernJob(
   raw: unknown,
-  includeRevealMeta = true
-): Promise<Omit<UnifiedTask, "displayId" | "source" | "sourceId" | "sourceAddress" | "caps">> {
+  revealPhaseEnd: bigint,
+  isInRevealPhase: boolean
+): Omit<UnifiedTask, "displayId" | "source" | "sourceId" | "sourceAddress" | "caps"> {
   const parsed = parseJob(raw);
-  const revealPhaseEnd = source.caps.signalMap && includeRevealMeta
-    ? toBigInt(await contract.getRevealPhaseEnd(parsed.jobId).catch(() => 0n))
-    : 0n;
-  const isInRevealPhase = source.caps.signalMap && includeRevealMeta
-    ? Boolean(await contract.isInRevealPhase(parsed.jobId).catch(() => false))
-    : false;
-
   return {
     jobId: parsed.jobId,
     client: parsed.client,
@@ -379,21 +372,99 @@ async function readSourceTasks(
   const endExclusive = source.version === "archive" ? count + 1 : count;
   const range = Array.from({ length: Math.max(endExclusive - start, 0) }, (_, i) => start + i);
   const scopedRange = limitLatest > 0 ? range.slice(-limitLatest) : range;
-  const results = await Promise.allSettled(
-    scopedRange.map(async (jobId) => {
-      const raw = await contract.getJob(jobId).catch(() => null);
-      if (!raw) return null;
-      return source.version === "archive"
-        ? normalizeArchiveJob(raw)
-        : await normalizeModernJob(source, contract, raw, includeRevealMeta);
-    })
-  );
+
+  // Modern sources: batch everything (jobs + reveal meta) through Multicall3,
+  // then retry any failed ids with direct calls at low concurrency.
+  if (source.version !== "archive") {
+    const requests: Array<{
+      target: string;
+      abi: InterfaceAbi;
+      functionName: string;
+      args: unknown[];
+    }> = [];
+    const jobIdOfRequest: number[] = [];
+    for (const jobId of scopedRange) {
+      requests.push({
+        target: source.address,
+        abi: source.abi as InterfaceAbi,
+        functionName: "getJob",
+        args: [jobId]
+      });
+      jobIdOfRequest.push(jobId);
+      if (includeRevealMeta && source.caps.signalMap) {
+        requests.push({
+          target: source.address,
+          abi: source.abi as InterfaceAbi,
+          functionName: "getRevealPhaseEnd",
+          args: [jobId]
+        });
+        jobIdOfRequest.push(jobId);
+        requests.push({
+          target: source.address,
+          abi: source.abi as InterfaceAbi,
+          functionName: "isInRevealPhase",
+          args: [jobId]
+        });
+        jobIdOfRequest.push(jobId);
+      }
+    }
+
+    const responses = await multicall(provider, requests);
+
+    const taskRows = new Map<number, unknown>();
+    const revealEnds = new Map<number, bigint>();
+    const revealFlags = new Map<number, boolean>();
+    const failedIds = new Set<number>();
+    responses.forEach((response, index) => {
+      const jobId = jobIdOfRequest[index];
+      const fnName = requests[index].functionName;
+      if (fnName === "getJob") {
+        if (response.ok) {
+          taskRows.set(jobId, response.value);
+        } else {
+          failedIds.add(jobId);
+        }
+      } else if (fnName === "getRevealPhaseEnd") {
+        if (response.ok) revealEnds.set(jobId, toBigInt(response.value, 0n));
+      } else if (fnName === "isInRevealPhase") {
+        if (response.ok) revealFlags.set(jobId, toBool(response.value));
+      }
+    });
+
+    if (failedIds.size > 0) {
+      const retried = await mapLimit(Array.from(failedIds), 4, async (jobId) => {
+        const raw = await contract.getJob(jobId).catch(() => null);
+        return { jobId, raw };
+      });
+      for (const { jobId, raw } of retried) {
+        if (raw) taskRows.set(jobId, raw);
+      }
+    }
+
+    const tasks: Array<Omit<UnifiedTask, "displayId" | "source" | "sourceId" | "sourceAddress" | "caps">> = [];
+    for (const [jobId, raw] of taskRows) {
+      const task = normalizeModernJob(
+        raw,
+        revealEnds.get(jobId) ?? 0n,
+        revealFlags.get(jobId) ?? false
+      );
+      if (isZeroAddress(task.client)) continue;
+      tasks.push(task);
+    }
+    return tasks;
+  }
+
+  // Archive fallback: direct calls, bounded so the RPC is not flooded.
+  const results = await mapLimit(scopedRange, 4, async (jobId) => {
+    const raw = await contract.getJob(jobId).catch(() => null);
+    if (!raw) return null;
+    return normalizeArchiveJob(raw);
+  });
 
   const tasks: Array<Omit<UnifiedTask, "displayId" | "source" | "sourceId" | "sourceAddress" | "caps">> = [];
   const seen = new Set<number>();
-  for (const result of results) {
-    if (result.status !== "fulfilled" || !result.value) continue;
-    const task = result.value;
+  for (const task of results) {
+    if (!task) continue;
     if (seen.has(task.jobId) || isZeroAddress(task.client)) continue;
     seen.add(task.jobId);
     tasks.push(task);

@@ -1,5 +1,6 @@
 import { Contract, JsonRpcProvider } from "ethers";
 import { ArchonAnalyticsData, ChartDataPoint } from "@/types/analytics";
+import { mapLimit, multicall } from "./multicall";
 import contractsJson from "./generated/contracts.json";
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
@@ -121,64 +122,92 @@ export async function fetchAnalyticsData(): Promise<ArchonAnalyticsData> {
 
   console.log(`[analytics] Scraped count bounds: jobs=${nextJobId}, agentTasks=${nextTaskId}`);
 
-  // 2. Fetch jobs & submissions in parallel batches
+  // 2. Fetch jobs & submissions via batched multicall (falls back to direct
+  // calls at low concurrency for any ids the batch could not read).
   const jobsData: RawJobResult[] = [];
   const submissionsData: Record<number, RawSubmissionResult[]> = {};
-  
-  if (nextJobId > 0) {
-    // Process in chunks of 20 to avoid RPC timeouts
-    const chunkSize = 20;
-    for (let i = 0; i < nextJobId; i += chunkSize) {
-      const chunk = Array.from({ length: Math.min(chunkSize, nextJobId - i) }, (_, idx) => i + idx);
-      
-      const results = await Promise.all(
-        chunk.map(async (id) => {
-          try {
-            const job = (await jobContract.getJob(id)) as RawJobResult;
-            let subs: RawSubmissionResult[] = [];
-            try {
-              subs = (await jobContract.getSubmissions(id)) as RawSubmissionResult[];
-            } catch (subErr) {
-              console.warn(`[analytics] Failed to fetch submissions for job ${id}:`, subErr);
-            }
-            return { id, job, subs };
-          } catch (jobErr) {
-            console.error(`[analytics] Failed to fetch job ${id}:`, jobErr);
-            return null;
-          }
-        })
-      );
 
-      for (const item of results) {
-        if (item) {
-          jobsData.push(item.job);
-          submissionsData[item.id] = item.subs;
+  if (nextJobId > 0) {
+    const jobIds = Array.from({ length: nextJobId }, (_, idx) => idx);
+    const jobAbi = jobConfig?.abi || JOB_ABI;
+    const responses = await multicall(
+      provider,
+      jobIds.flatMap((id) => [
+        { target: jobAddr, abi: jobAbi, functionName: "getJob", args: [id] },
+        { target: jobAddr, abi: jobAbi, functionName: "getSubmissions", args: [id] }
+      ])
+    );
+
+    const failedJobs: number[] = [];
+    const failedSubmissions: number[] = [];
+    responses.forEach((response, index) => {
+      const id = jobIds[Math.floor(index / 2)];
+      if (index % 2 === 0) {
+        if (response.ok) {
+          jobsData.push(response.value as RawJobResult);
+        } else {
+          failedJobs.push(id);
         }
+      } else if (response.ok) {
+        submissionsData[id] = (response.value as RawSubmissionResult[]) ?? [];
+      } else {
+        failedSubmissions.push(id);
+      }
+    });
+
+    if (failedJobs.length > 0) {
+      console.warn(`[analytics] retrying ${failedJobs.length} job(s) via direct calls`);
+      const retried = await mapLimit(failedJobs, 4, async (jobId) => ({
+        jobId,
+        job: await jobContract.getJob(jobId).catch(() => null)
+      }));
+      for (const { job } of retried) {
+        if (job) jobsData.push(job as RawJobResult);
+      }
+    }
+    if (failedSubmissions.length > 0) {
+      const retried = await mapLimit(failedSubmissions, 4, async (id) => ({
+        id,
+        subs: await jobContract.getSubmissions(id).catch(() => [] as RawSubmissionResult[])
+      }));
+      for (const { id, subs } of retried) {
+        submissionsData[id] = subs;
       }
     }
   }
 
-  // 3. Fetch agent tasks in parallel batches
+  // 3. Fetch agent tasks via batched multicall with the same retry pattern.
   const agentTasksData: RawAgentTaskResult[] = [];
   if (nextTaskId > 0) {
-    const chunkSize = 20;
-    for (let i = 0; i < nextTaskId; i += chunkSize) {
-      const chunk = Array.from({ length: Math.min(chunkSize, nextTaskId - i) }, (_, idx) => i + idx);
-      
-      const results = await Promise.all(
-        chunk.map(async (id) => {
-          try {
-            return (await agentTaskContract.tasks(id)) as RawAgentTaskResult;
-          } catch (taskErr) {
-            console.error(`[analytics] Failed to fetch agent task ${id}:`, taskErr);
-            return null;
-          }
-        })
-      );
+    const taskIds = Array.from({ length: nextTaskId }, (_, idx) => idx);
+    const responses = await multicall(
+      provider,
+      taskIds.map((id) => ({
+        target: agentTaskAddr,
+        abi: agentTaskConfig?.abi || AGENT_TASK_ABI,
+        functionName: "tasks",
+        args: [id]
+      }))
+    );
 
-      for (const item of results) {
-        if (item && item.taskPoster && item.taskPoster !== ZERO_ADDRESS) {
-          agentTasksData.push(item);
+    const failedTasks: number[] = [];
+    responses.forEach((response, index) => {
+      const task = response.value as RawAgentTaskResult | null;
+      if (response.ok && task && task.taskPoster && task.taskPoster !== ZERO_ADDRESS) {
+        agentTasksData.push(task);
+      } else if (!response.ok) {
+        failedTasks.push(taskIds[index]);
+      }
+    });
+
+    if (failedTasks.length > 0) {
+      const retried = await mapLimit(failedTasks, 4, async (id) => ({
+        id,
+        task: await agentTaskContract.tasks(id).catch(() => null)
+      }));
+      for (const { task } of retried) {
+        if (task && task.taskPoster && task.taskPoster !== ZERO_ADDRESS) {
+          agentTasksData.push(task as RawAgentTaskResult);
         }
       }
     }

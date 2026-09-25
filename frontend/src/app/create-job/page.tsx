@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
   approveUSDC,
+  getChainTime,
   contractAddresses,
   expectedChainId,
   fetchUsdcAllowance,
@@ -22,6 +23,30 @@ import { ARC_TOKEN_CONFIG } from "../../../config";
 import { getArcBalance, hasEnoughArcToPost } from "@/lib/arcToken";
 
 type EstimateState = "idle" | "loading" | "ready" | "error";
+
+/**
+ * Arc testnet contracts compile with stripped revert strings, so on-chain
+ * failures surface as opaque "missing revert data" errors. Translate the
+ * common ones into actionable guidance.
+ */
+function describeCreateError(message: string): string {
+  const lower = message.toLowerCase();
+  if (lower.includes("missing revert data") || lower.includes("call_exception")) {
+    return (
+      "The contract rejected this transaction without a readable reason. " +
+      "Most common causes: the deadline is less than 1 hour in the future on-chain, " +
+      "the USDC approval is lower than reward + interaction pool, or the reward is " +
+      "below the 5 USDC per-approval minimum. Check the deadline field and try again."
+    );
+  }
+  if (lower.includes("user rejected") || lower.includes("4001")) {
+    return "Transaction rejected in wallet.";
+  }
+  if (lower.includes("txpool is full") || lower.includes("pool is full") || lower.includes("-32603")) {
+    return "The Arc testnet transaction pool is temporarily full. Wait 30-60 seconds and try again. Do not click multiple times.";
+  }
+  return message;
+}
 
 function parseDeadline(deadlineInput: string) {
   if (!deadlineInput) return 0;
@@ -294,7 +319,13 @@ export default function CreateJobPage() {
         } catch {
           if (!active) return;
           setEstimateState("error");
-          setEstimateMessage("Unable to estimate");
+          // Stripped reverts make gas estimation failures opaque; call out the
+          // most likely cause (contract requires deadline >= now + 1h).
+          setEstimateMessage(
+            deadline <= Math.floor(Date.now() / 1000) + 3600
+              ? "Cannot estimate: deadline must be at least 1 hour in the future."
+              : "Unable to estimate — check reward (min 5 USDC per approval), deadline, and USDC approval."
+          );
           setEstimatedUnits("");
           setEstimatedCost("");
         }
@@ -336,8 +367,25 @@ export default function CreateJobPage() {
       setError("Description must be 500 characters or fewer.");
       return;
     }
-    if (!deadlineInput || deadline <= Math.floor(Date.now() / 1000)) {
-      setError("Set a future deadline for this task.");
+    if (!deadlineInput) {
+      setError("Set a deadline for this task.");
+      return;
+    }
+    // The contract enforces deadline >= block.timestamp + 1h and compiles with
+    // stripped revert strings, so validate here against chain time to give a
+    // readable error instead of an opaque on-chain revert.
+    let chainNow = Math.floor(Date.now() / 1000);
+    try {
+      const timeProvider = browserProvider ?? (await connect());
+      if (timeProvider) chainNow = await getChainTime(timeProvider);
+    } catch {
+      // Fall back to local clock.
+    }
+    const MIN_JOB_DURATION = 3600;
+    if (deadline < chainNow + MIN_JOB_DURATION) {
+      setError(
+        "Deadline must be at least 1 hour in the future (chain time). Pick a later date/time and try again."
+      );
       return;
     }
     if (maxApprovals < 1 || maxApprovals > 20) {
@@ -466,7 +514,7 @@ export default function CreateJobPage() {
       setInteractionPoolPercent(0);
       setInteractionStakeUSDC("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create task.");
+      setError(describeCreateError(err instanceof Error ? err.message : "Failed to create task."));
     } finally {
       setSubmitting(false);
     }

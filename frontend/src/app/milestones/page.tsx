@@ -358,6 +358,26 @@ export default function MilestonesPage() {
     setError("");
     if (!ethers.isAddress(freelancerWallet.trim())) return setError("Enter a valid freelancer wallet address.");
     if (drafts.length < 1 || drafts.length > 20) return setError("Milestones must be between 1 and 20.");
+    // MilestoneEscrow enforces deadline >= block.timestamp + 1h per milestone
+    // (MIN_MILESTONE_DURATION) with stripped revert strings; validate here
+    // against chain time so users get a readable error instead.
+    let chainNow = Math.floor(Date.now() / 1000);
+    try {
+      const timeProvider = await withProvider();
+      const timeBlock = await timeProvider.getBlock("latest");
+      if (timeBlock?.timestamp) chainNow = timeBlock.timestamp;
+    } catch {
+      // Fall back to local clock.
+    }
+    const MIN_MILESTONE_DURATION = 3600;
+    for (const draft of drafts) {
+      const milestoneDeadline = toUnix(draft.deadline);
+      if (milestoneDeadline < chainNow + MIN_MILESTONE_DURATION) {
+        return setError(
+          `Milestone "${draft.title || "untitled"}" needs a deadline at least 1 hour in the future (chain time).`
+        );
+      }
+    }
     setCreating(true);
     try {
       const provider = await withProvider();

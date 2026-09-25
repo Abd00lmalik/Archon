@@ -487,8 +487,13 @@ export async function approveUSDC(
   spenderAddress: string,
   amount: bigint
 ): Promise<void> {
+  ensureContractsConfigured();
+  const usdcAddress = contractAddresses.usdc;
+  if (!usdcAddress || usdcAddress === ZERO_ADDRESS) {
+    throw new Error("USDC contract is not configured.");
+  }
   const usdcContract = new ethers.Contract(
-    "0x3600000000000000000000000000000000000000",
+    usdcAddress,
     [
       "function approve(address spender, uint256 amount) returns (bool)",
       "function allowance(address owner, address spender) view returns (uint256)"
@@ -507,7 +512,31 @@ export async function approveUSDC(
   console.log("[approveUSDC] Approving:", Number(amount) / 1e6, "USDC for", spenderAddress);
   const tx = (await usdcContract.approve(spenderAddress, amount)) as ethers.TransactionResponse;
   await tx.wait();
+
+  // Verify the approval actually landed; a dropped/reorged tx must not
+  // silently let the next step fail with an opaque escrow error.
+  const confirmed = (await usdcContract.allowance(owner, spenderAddress)) as bigint;
+  if (confirmed < amount) {
+    throw new Error(
+      "USDC approval did not confirm on-chain. Check the transaction in your wallet and try again."
+    );
+  }
   console.log("[approveUSDC] Approved");
+}
+
+/**
+ * Chain time according to the latest block. Wallet clocks (and therefore
+ * `Date.now()`) can drift from the chain; deadlines must be validated against
+ * chain time or transactions revert with stripped, unreadable errors.
+ */
+export async function getChainTime(provider: ethers.Provider): Promise<number> {
+  try {
+    const block = await provider.getBlock("latest");
+    if (block?.timestamp) return block.timestamp;
+  } catch {
+    // Fall back to local time below.
+  }
+  return Math.floor(Date.now() / 1000);
 }
 
 let readProvider: ethers.JsonRpcProvider | null = null;

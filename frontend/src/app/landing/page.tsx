@@ -4,7 +4,11 @@ import Link from "next/link";
 import { motion, useInView } from "framer-motion";
 import { useEffect, useMemo, useRef, useState } from "react";
 import SignalMap from "@/components/signal-map";
-import { fetchPlatformStats, PlatformStats } from "@/lib/platform-stats";
+import {
+  fetchPlatformStats,
+  invalidatePlatformStats,
+  PlatformStats
+} from "@/lib/platform-stats";
 import { getTileColor } from "@/lib/signal-map";
 
 const STEPS = [
@@ -510,12 +514,28 @@ export default function LandingPage() {
 
   useEffect(() => {
     let active = true;
-    void fetchPlatformStats().then((result) => {
-      if (!active) return;
-      setStats(result);
-    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const refresh = async () => {
+      try {
+        const result = await fetchPlatformStats();
+        if (!active) return;
+        setStats(result);
+      } finally {
+        if (active) {
+          timer = setTimeout(refresh, 15_000);
+        }
+      }
+    };
+
+    // Remounting (e.g. navigating back to the landing page) should show fresh
+    // chain data immediately rather than a TTL-stale cache.
+    invalidatePlatformStats();
+    void refresh();
+
     return () => {
       active = false;
+      if (timer) clearTimeout(timer);
     };
   }, []);
 
