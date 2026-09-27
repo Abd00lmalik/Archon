@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
+  extractBanner,
   fetchJobsByAgent,
   formatTaskDescription,
   formatTaskTitle,
@@ -97,20 +98,30 @@ export default function SubmitWorkPage() {
           <p className="mt-3 text-sm text-[#9CA3AF]">You have not accepted any jobs yet.</p>
         ) : (
           <div className="mt-3 space-y-3">
-            {acceptedJobs.map((job) => (
-              <article key={job.jobId} className="rounded-xl border border-white/10 bg-[#111214] p-4 text-sm text-[#9CA3AF]">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="font-semibold text-[#EAEAF0]">#{job.jobId} {formatTaskTitle(job.title)}</p>
-                  <span className="rounded-full bg-white/5 px-2 py-1 text-xs">{statusLabel(job.status)}</span>
-                </div>
-                <p className="mt-2 line-clamp-2 text-xs">{formatTaskDescription(job.description)}</p>
-                <p className="mt-2 text-xs">Reward: {formatUsdc(job.rewardUSDC)} USDC</p>
-                <p className="text-xs">Deadline: {formatTimestamp(job.deadline)}</p>
-                <Link href={`/job/${job.jobId}`} className="archon-button-secondary mt-3 inline-flex px-3 py-2 text-xs">
-                  Open Job
-                </Link>
-              </article>
-            ))}
+            {acceptedJobs.map((job) => {
+              const banner = extractBanner(job.description);
+              return (
+                <article key={job.jobId} className="overflow-hidden rounded-xl border border-white/10 bg-[#111214] p-4 text-sm text-[#9CA3AF]">
+                  {banner ? (
+                    <img
+                      src={banner}
+                      alt=""
+                      className="mb-3 aspect-[3/1] w-full rounded-lg object-cover"
+                    />
+                  ) : null}
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="font-semibold text-[#EAEAF0]">#{job.jobId} {formatTaskTitle(job.title)}</p>
+                    <span className="rounded-full bg-white/5 px-2 py-1 text-xs">{statusLabel(job.status)}</span>
+                  </div>
+                  <p className="mt-2 line-clamp-2 text-xs">{formatTaskDescription(job.description)}</p>
+                  <p className="mt-2 text-xs">Reward: {formatUsdc(job.rewardUSDC)} USDC</p>
+                  <p className="text-xs">Deadline: {formatTimestamp(job.deadline)}</p>
+                  <Link href={`/job/${job.jobId}`} className="archon-button-secondary mt-3 inline-flex px-3 py-2 text-xs">
+                    Open Job
+                  </Link>
+                </article>
+              );
+            })}
           </div>
         )}
       </div>

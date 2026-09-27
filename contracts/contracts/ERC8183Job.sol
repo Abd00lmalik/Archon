@@ -169,6 +169,7 @@ contract ERC8183Job is ICredentialSource {
     );
     event JobAccepted(uint256 indexed jobId, address indexed agent);
     event DeliverableSubmitted(uint256 indexed jobId, address indexed agent, string deliverableLink);
+    event DeliverableUpdated(uint256 indexed jobId, address indexed agent, string deliverableLink);
     event SubmissionApproved(
         uint256 indexed jobId,
         address indexed agent,
@@ -410,6 +411,7 @@ contract ERC8183Job is ICredentialSource {
         Job storage job = _getExistingJob(jobId);
         require(block.timestamp <= job.deadline, "job deadline passed");
         require(msg.sender != job.client, "client cannot accept own job");
+        require(!isJudge[jobId][msg.sender], "judge cannot participate");
         require(!isAccepted[jobId][msg.sender], "already accepted");
         require(
             uint8(job.status) == uint8(JobStatus.Open) ||
@@ -430,6 +432,8 @@ contract ERC8183Job is ICredentialSource {
     function submitDeliverable(uint256 jobId, string calldata deliverableLink) external {
         Job storage job = _getExistingJob(jobId);
         require(block.timestamp <= job.deadline, "job deadline passed");
+        require(msg.sender != job.client, "client cannot submit");
+        require(!isJudge[jobId][msg.sender], "judge cannot participate");
         require(isAccepted[jobId][msg.sender], "accept job first");
         require(bytes(deliverableLink).length > 0, "deliverable link required");
         require(
@@ -476,6 +480,7 @@ contract ERC8183Job is ICredentialSource {
         Job storage job = _getExistingJob(jobId);
 
         require(msg.sender != job.client, "creator cannot submit");
+        require(!isJudge[jobId][msg.sender], "judge cannot participate");
         require(
             uint8(job.status) == uint8(JobStatus.Open) ||
                 uint8(job.status) == uint8(JobStatus.InProgress) ||
@@ -521,6 +526,36 @@ contract ERC8183Job is ICredentialSource {
         }
 
         emit DeliverableSubmitted(jobId, msg.sender, deliverableLink);
+    }
+
+    /**
+     * @dev Lets the original submitter edit their deliverable link until the
+     * job deadline. Review marks are cleared so the client and judges
+     * re-review the edited submission.
+     */
+    function updateDeliverable(uint256 jobId, string calldata deliverableLink) external {
+        Job storage job = _getExistingJob(jobId);
+        require(block.timestamp <= job.deadline, "deadline passed");
+        require(bytes(deliverableLink).length > 0, "link required");
+        require(msg.sender != job.client, "client cannot submit");
+        require(!isJudge[jobId][msg.sender], "judge cannot participate");
+
+        Submission storage submission = submissions[jobId][msg.sender];
+        require(submission.agent == msg.sender, "no submission");
+        require(submission.status != SubmissionStatus.Approved, "submission already approved");
+        require(!submission.credentialClaimed, "credential already claimed");
+
+        submission.deliverableLink = deliverableLink;
+        submission.submittedAt = block.timestamp;
+
+        uint256 sid = submission.submissionId;
+        isReviewed[jobId][sid][job.client] = false;
+        address[] storage judges = taskJudges[jobId];
+        for (uint256 i = 0; i < judges.length; i++) {
+            isReviewed[jobId][sid][judges[i]] = false;
+        }
+
+        emit DeliverableUpdated(jobId, msg.sender, deliverableLink);
     }
 
     /**

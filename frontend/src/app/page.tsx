@@ -10,6 +10,7 @@ import { ActivityEvent, subscribeToActivity } from "@/lib/activity";
 import {
   CredentialRecord,
   deriveDisplayStatus,
+  extractBanner,
   formatTaskDescription,
   formatTaskTitle,
   formatUsdc,
@@ -292,6 +293,7 @@ export default function HomePage() {
                   task.revealPhaseEnd,
                   task.submissionCount
                 );
+                const banner = extractBanner(task.description);
                 return (
                   <Link
                     key={`task-${task.displayId}`}
@@ -300,6 +302,12 @@ export default function HomePage() {
                     style={{ transition: "border-color 0.2s, box-shadow 0.2s" }}
                   >
                     <div className="task-status-accent" style={{ height: 2, background: displayStatus.color }} />
+
+                    {banner ? (
+                      <div className="relative w-full overflow-hidden" style={{ aspectRatio: "3 / 1", background: "#0a0c10" }}>
+                        <img src={banner} alt="" className="h-full w-full object-cover" />
+                      </div>
+                    ) : null}
 
                     <div style={{ padding: "16px 20px 20px" }}>
                       <div className="mb-3 flex items-center justify-between">

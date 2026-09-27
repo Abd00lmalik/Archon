@@ -544,6 +544,11 @@ export default function JobDetailsPage() {
   const [submitState, setSubmitState] = useState<"idle" | "confirming" | "pending" | "success" | "error">("idle");
   const [submitTxHash, setSubmitTxHash] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [showEditForm, setShowEditForm] = useState(false);
+  const [editLink, setEditLink] = useState("");
+  const [editState, setEditState] = useState<"idle" | "confirming" | "pending" | "success" | "error">("idle");
+  const [editTxHash, setEditTxHash] = useState<string | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
   const [revealStarting, setRevealStarting] = useState(false);
   const [revealTxHash, setRevealTxHash] = useState<string | null>(null);
   const [revealError, setRevealError] = useState<string | null>(null);
@@ -1004,6 +1009,41 @@ export default function JobDetailsPage() {
     }
   };
 
+  const handleEditSubmission = async (event: FormEvent) => {
+    event.preventDefault();
+    if (txInFlight) return;
+    setTxInFlight(true);
+    setEditError(null);
+    setEditTxHash(null);
+    setEditState("confirming");
+    try {
+      setBusyAction("edit");
+      const contract = await getTaskWriteContract();
+      if (
+        typeof contract.interface.hasFunction !== "function" ||
+        !contract.interface.hasFunction("updateDeliverable")
+      ) {
+        throw new Error("Editing submissions is not supported on this deployment yet.");
+      }
+      const tx = await contract.updateDeliverable(BigInt(jobId), editLink.trim());
+      setEditState("pending");
+      setEditTxHash(tx.hash);
+      setStatusMessage(`Edit tx: ${tx.hash}`);
+      await tx.wait();
+      setEditState("success");
+      void loadTaskSecondary();
+      void loadWalletState();
+    } catch (error) {
+      const message = humanizeError(error);
+      setEditState("error");
+      setEditError(message);
+      setErrorMessage(message);
+    } finally {
+      setBusyAction("");
+      setTxInFlight(false);
+    }
+  };
+
   const handleRespond = async () => {
     if (!selectedSubmission) return;
     const nowSeconds = Math.floor(Date.now() / 1000);
@@ -1223,24 +1263,32 @@ export default function JobDetailsPage() {
     }
     if (!task || !isCreator) return;
 
-    const parts =
-      overrideList ??
-      judgeInput
-        .split(/[\s,;]+/)
-        .map((entry) => entry.trim())
-        .filter(Boolean);
-    if (parts.length > 10) {
-      setJudgeError("A task can have at most 10 judges.");
-      return;
-    }
-    const invalid = parts.filter((entry) => !/^0x[0-9a-fA-F]{40}$/.test(entry));
+    const parsed = judgeInput
+      .split(/[\s,;]+/)
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+
+    const invalid = parsed.filter((entry) => !/^0x[0-9a-fA-F]{40}$/.test(entry));
     if (invalid.length > 0) {
       setJudgeError(`Invalid address: ${invalid[0]}`);
       return;
     }
-    const unique = Array.from(new Set(parts.map((entry) => entry.toLowerCase()))).filter(
+
+    if (overrideList === undefined && parsed.length === 0) {
+      setJudgeError("Paste at least one address to add.");
+      return;
+    }
+
+    // Saving without an explicit list appends to the current judges; the Remove
+    // button passes the exact remaining list instead.
+    const merged = overrideList ?? [...taskJudges, ...parsed];
+    const unique = Array.from(new Set(merged.map((entry) => entry.toLowerCase()))).filter(
       (entry) => entry !== job?.client.toLowerCase()
     );
+    if (unique.length > 10) {
+      setJudgeError(`A task can have at most 10 judges (this would be ${unique.length}).`);
+      return;
+    }
 
     try {
       setJudgeSaving(true);
@@ -1259,7 +1307,11 @@ export default function JobDetailsPage() {
       const list = await fetchTaskJudges(jobId);
       setTaskJudges(list);
       setIsJudge(unique.includes(account.toLowerCase()));
-      setStatusMessage(`Judges updated: ${unique.length} address${unique.length === 1 ? "" : "es"}.`);
+      setStatusMessage(
+        overrideList
+          ? `Judge removed: ${unique.length} remaining.`
+          : `Judges updated: ${unique.length} address${unique.length === 1 ? "" : "es"}.`
+      );
     } catch (error) {
       setJudgeError(errorText(error, "Failed to update judges"));
     } finally {
@@ -1505,6 +1557,7 @@ export default function JobDetailsPage() {
       displayStatus?.label === "Open" &&
       isConnected &&
       !viewerIsCreator &&
+      !isJudge &&
       !viewerHasSubmitted
   );
   const showAcceptAction = Boolean(canSubmitToTask && !isAccepted);
@@ -1514,7 +1567,18 @@ export default function JobDetailsPage() {
       isRevealActive &&
       isConnected &&
       !viewerIsCreator &&
+      !isJudge &&
       job?.status === 4
+  );
+  const canEditSubmission = Boolean(
+    isConnected &&
+      viewerHasSubmitted &&
+      mySubmission &&
+      mySubmission.status !== 2 &&
+      !isClaimed &&
+      !viewerIsCreator &&
+      !isJudge &&
+      !submissionDeadlinePassed
   );
   const finalistInteractionPool = safeSubmissions.filter((submission) =>
     finalistSet.has(submission.agent.toLowerCase())
@@ -1661,7 +1725,7 @@ export default function JobDetailsPage() {
           <img
             src={bannerUrl}
             alt={`${job.title} banner`}
-            className="h-40 w-full object-cover md:h-56"
+            className="aspect-[3/1] w-full object-cover"
           />
         </div>
       ) : null}
@@ -1701,7 +1765,7 @@ export default function JobDetailsPage() {
         <div className="mt-4 flex flex-wrap items-center gap-6 border-t border-[var(--border)] pt-4">
           <div className="flex items-center gap-2"><span className="text-label">BY</span><UserDisplay address={job.client} showAvatar={true} avatarSize={24} /></div>
           <div className="flex items-center gap-2"><span className="text-label">DEADLINE</span><DeadlineCountdown deadline={job.deadline} /></div>
-          <div className="flex items-center gap-2"><span className="text-label">SUBMISSIONS</span><span className="text-data">{job.submissionCount}</span></div>
+          <div className="flex items-center gap-2"><span className="text-label">SUBMISSIONS</span><span className="text-data">{Math.max(job.submissionCount, safeSubmissions.length)}</span></div>
           <div className="flex items-center gap-2"><span className="text-label">MAX WINNERS</span><span className="text-data">{maxApprovals}</span></div>
         </div>
       </div>
@@ -2256,6 +2320,94 @@ export default function JobDetailsPage() {
                 </form>
               ) : null}
 
+              {canEditSubmission && !showEditForm ? (
+                <button
+                  type="button"
+                  className="btn-ghost w-full"
+                  onClick={() => {
+                    setEditLink(mySubmission?.deliverableLink ?? "");
+                    setEditError(null);
+                    setEditState("idle");
+                    setShowEditForm(true);
+                  }}
+                >
+                  Edit your submission
+                </button>
+              ) : null}
+
+              {canEditSubmission && showEditForm ? (
+                <form className="space-y-3" onSubmit={handleEditSubmission}>
+                  <div className="text-[11px] font-mono uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                    Edit deliverable link - deadline applies
+                  </div>
+                  <input
+                    type="url"
+                    className="input-field"
+                    placeholder="https://github.com/... or ipfs://..."
+                    value={editLink}
+                    onChange={(event) => setEditLink(event.target.value)}
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      type="submit"
+                      className="btn-primary flex-1"
+                      disabled={
+                        txInFlight ||
+                        busyAction === "edit" ||
+                        !editLink.trim() ||
+                        editState === "success"
+                      }
+                    >
+                      {editState === "confirming"
+                        ? "Confirm in wallet..."
+                        : editState === "pending"
+                          ? "Transaction pending..."
+                          : editState === "success"
+                            ? "Saved"
+                            : "Save Changes"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      disabled={txInFlight}
+                      onClick={() => {
+                        setShowEditForm(false);
+                        setEditError(null);
+                        setEditState("idle");
+                      }}
+                    >
+                      {editState === "success" ? "Close" : "Cancel"}
+                    </button>
+                  </div>
+                  {editState === "success" ? (
+                    <div className="text-xs text-[var(--pulse)]">
+                      Deliverable updated. Previous review marks were reset so reviewers
+                      re-review the new link.
+                    </div>
+                  ) : null}
+                  {editTxHash ? (
+                    <div className="text-[11px] font-mono text-[var(--arc)] break-all">
+                      Tx: {editTxHash}
+                    </div>
+                  ) : null}
+                  {editError ? (
+                    <div className="text-xs text-[var(--danger)]">
+                      {editError}{" "}
+                      <button
+                        type="button"
+                        className="underline text-[11px] text-[var(--text-muted)]"
+                        onClick={() => {
+                          setEditError(null);
+                          setEditState("idle");
+                        }}
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  ) : null}
+                </form>
+              ) : null}
+
               {canClaim ? (
                 <button
                   type="button"
@@ -2430,7 +2582,8 @@ export default function JobDetailsPage() {
               <div className="section-header">JUDGES</div>
               <div className="text-[11px] leading-relaxed text-[var(--text-secondary)]">
                 Paste wallet addresses (comma or newline separated) to let them review submissions, mark them
-                reviewed, and help start the 5-day reveal phase.
+                reviewed, and help start the 5-day reveal phase. New addresses are added to the current list;
+                judges cannot submit work to this task.
               </div>
               <textarea
                 aria-label="Judge wallet addresses"

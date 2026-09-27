@@ -377,7 +377,8 @@ const JOB_FALLBACK_ABI = [
   "function isJudge(uint256 jobId,address judge) view returns (bool)",
   "function setReviewed(uint256 jobId,uint256 submissionId,bool reviewed)",
   "function isReviewed(uint256 jobId,uint256 submissionId,address reviewer) view returns (bool)",
-  "function hasResponded(uint256 submissionId,address responder) view returns (bool)"
+  "function hasResponded(uint256 submissionId,address responder) view returns (bool)",
+  "function updateDeliverable(uint256 jobId,string deliverableLink)"
 ] as const;
 
 if (resolvedJobContract?.abi) {
@@ -1667,6 +1668,15 @@ export async function fetchIsJudge(jobId: number, account: string): Promise<bool
   }
 }
 
+// Multicall unwraps array outputs but leaves scalar outputs inside a Result
+// wrapper; a Result is array-like and therefore always truthy. Read booleans
+// strictly so `false` never counts as "yes".
+function multicallBool(result: { ok: boolean; value: unknown }): boolean {
+  if (!result.ok) return false;
+  const value = Array.isArray(result.value) ? result.value[0] : result.value;
+  return value === true;
+}
+
 export async function fetchReviewedByViewer(
   jobId: number,
   submissionIds: Array<number | bigint>,
@@ -1685,7 +1695,7 @@ export async function fetchReviewedByViewer(
     }));
     const results = await multicall(getReadProvider(), requests);
     results.forEach((result, index) => {
-      if (result.ok && result.value) reviewed.add(Number(submissionIds[index]));
+      if (multicallBool(result)) reviewed.add(Number(submissionIds[index]));
     });
   } catch {
     // Ignore: reviewed marks are cosmetic.
@@ -1710,7 +1720,7 @@ export async function fetchHasRespondedMap(
     }));
     const results = await multicall(getReadProvider(), requests);
     results.forEach((result, index) => {
-      if (result.ok && result.value) responded.add(Number(submissionIds[index]));
+      if (multicallBool(result)) responded.add(Number(submissionIds[index]));
     });
   } catch {
     // Ignore: the contract still enforces the one-response rule.
@@ -2541,6 +2551,23 @@ export async function txSetReviewed(
 ): Promise<string> {
   const contract = getJobContract(signer);
   const tx = await contract.setReviewed(jobId, BigInt(submissionId), reviewed);
+  await tx.wait();
+  return tx.hash as string;
+}
+
+export async function txUpdateDeliverable(
+  signer: ethers.JsonRpcSigner,
+  jobId: bigint,
+  deliverableLink: string
+): Promise<string> {
+  const contract = getJobContract(signer);
+  if (
+    typeof contract.interface.hasFunction !== "function" ||
+    !contract.interface.hasFunction("updateDeliverable")
+  ) {
+    throw new Error("This deployment does not support editing submissions yet.");
+  }
+  const tx = await contract.updateDeliverable(jobId, deliverableLink);
   await tx.wait();
   return tx.hash as string;
 }

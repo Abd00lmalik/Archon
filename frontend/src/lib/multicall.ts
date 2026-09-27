@@ -164,8 +164,10 @@ export async function multicall<T = unknown>(
     }
   });
 
-  // Decode after collection; single-tuple outputs arrive wrapped in an outer
-  // Result, so unwrap to keep call sites uniform.
+  // Decode after collection. Single-output calls are unwrapped to the value
+  // itself (arrays/structs/scalars alike) so callers never see a Result
+  // wrapper — a Result is array-like and therefore always truthy, which
+  // silently broke boolean reads (e.g. isReviewed, hasResponded, isInRevealPhase).
   for (const index of callIndices) {
     const result = results[index];
     const request = encoded[index];
@@ -175,8 +177,7 @@ export async function multicall<T = unknown>(
         requests[index].functionName,
         result.returnData
       );
-      const inner =
-        decoded.length === 1 && Array.isArray(decoded[0]) ? decoded[0] : decoded;
+      const inner = decoded.length === 1 ? decoded[0] : decoded;
       result.value = inner as T;
     } catch {
       result.ok = false;

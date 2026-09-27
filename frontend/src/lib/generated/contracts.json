@@ -1,7 +1,7 @@
 {
   "network": "arc_testnet",
   "chainId": 5042002,
-  "deployedAt": "2026-09-27T11:02:16.386Z",
+  "deployedAt": "2026-09-27T13:00:07.051Z",
   "rpcUrl": "https://rpc.testnet.arc.network",
   "usdcAddress": "0x3600000000000000000000000000000000000000",
   "platformTreasury": "0x25265b9dBEb6c653b0CA281110Bb0697a9685107",
@@ -12,7 +12,7 @@
   },
   "contracts": {
     "sourceRegistry": {
-      "address": "0x61c04Ed9Af7F896422B1C227550CdbC8c0c5EAC2",
+      "address": "0xE32ACA01a208A52203b368e3C489230bB592FA75",
       "abi": [
         {
           "inputs": [],
@@ -337,7 +337,7 @@
       ]
     },
     "validationRegistry": {
-      "address": "0xd66579439488755f35c64932f5c8943543e2247f",
+      "address": "0x935fD5fC964593a42b5e2a72d93E141f6e130Cf3",
       "abi": [
         {
           "inputs": [],
@@ -798,7 +798,7 @@
       ]
     },
     "credentialHook": {
-      "address": "0x27DF6bFE2c68aCf67ef5960279F918aEcE6239d2",
+      "address": "0x082A03c20e1F1a1aabfD1E4e0166EeeEd691842A",
       "abi": [
         {
           "inputs": [
@@ -1148,7 +1148,7 @@
       ]
     },
     "jobContract": {
-      "address": "0x1078E135eB404E6b99EFA1Cb89B2d76B79e93eB6",
+      "address": "0x077E29c621Ea7C6527f7F0c5B18caAf483D4A07b",
       "abi": [
         {
           "inputs": [
@@ -1260,6 +1260,31 @@
             }
           ],
           "name": "DeliverableSubmitted",
+          "type": "event"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            },
+            {
+              "indexed": true,
+              "internalType": "address",
+              "name": "agent",
+              "type": "address"
+            },
+            {
+              "indexed": false,
+              "internalType": "string",
+              "name": "deliverableLink",
+              "type": "string"
+            }
+          ],
+          "name": "DeliverableUpdated",
           "type": "event"
         },
         {
@@ -3433,6 +3458,24 @@
             }
           ],
           "name": "transferOwnership",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            },
+            {
+              "internalType": "string",
+              "name": "deliverableLink",
+              "type": "string"
+            }
+          ],
+          "name": "updateDeliverable",
           "outputs": [],
           "stateMutability": "nonpayable",
           "type": "function"
@@ -3466,7 +3509,7 @@
       ]
     },
     "job": {
-      "address": "0x1078E135eB404E6b99EFA1Cb89B2d76B79e93eB6",
+      "address": "0x077E29c621Ea7C6527f7F0c5B18caAf483D4A07b",
       "abi": [
         {
           "inputs": [
@@ -3578,6 +3621,31 @@
             }
           ],
           "name": "DeliverableSubmitted",
+          "type": "event"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            },
+            {
+              "indexed": true,
+              "internalType": "address",
+              "name": "agent",
+              "type": "address"
+            },
+            {
+              "indexed": false,
+              "internalType": "string",
+              "name": "deliverableLink",
+              "type": "string"
+            }
+          ],
+          "name": "DeliverableUpdated",
           "type": "event"
         },
         {
@@ -5756,6 +5824,24 @@
           "type": "function"
         },
         {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            },
+            {
+              "internalType": "string",
+              "name": "deliverableLink",
+              "type": "string"
+            }
+          ],
+          "name": "updateDeliverable",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
           "inputs": [],
           "name": "usdc",
           "outputs": [
@@ -5784,7 +5870,7 @@
       ]
     },
     "githubSource": {
-      "address": "0x5fF5500a8fC120AD020698BC7ba1376Bba40A316",
+      "address": "0xC136EA5B215508167550007a7D2F35eA3fBD932C",
       "abi": [
         {
           "inputs": [
@@ -6335,7 +6421,7 @@
       ]
     },
     "communitySource": {
-      "address": "0x3d9552c9748b9CAe5F3277CE49630306595EB748",
+      "address": "0x5638b94C176b75DA828c0aa2Cdf9952d83F74313",
       "abi": [
         {
           "inputs": [
@@ -7325,7 +7411,7 @@
       ]
     },
     "agentTaskSource": {
-      "address": "0x6ce909a2BA9EF1C95bC36753B3eff15F7bF615F3",
+      "address": "0x86AaC1a6b78c0A5898f82C17534A362FA301f541",
       "abi": [
         {
           "inputs": [
@@ -8070,7 +8156,7 @@
       ]
     },
     "milestoneEscrow": {
-      "address": "0x476580c2859C331DA8a380Fd05372a3EadED5B7E",
+      "address": "0x90dC7172b5a771A51AfA6dF0De09022Df674Ab5d",
       "abi": [
         {
           "inputs": [
@@ -9127,7 +9213,7 @@
       ]
     },
     "peerAttestationSource": {
-      "address": "0x6D882663e4788cAb84f4E8Fb5eB54ff12af9f1de",
+      "address": "0x6d4513A78411978F1AfB77E4b81D60111DE6Dcb2",
       "abi": [
         {
           "inputs": [
@@ -9547,7 +9633,7 @@
       ]
     },
     "daoGovernanceSource": {
-      "address": "0xEe4b3c05372003978D54f893C6261b611123AdDd",
+      "address": "0x3671770a943028e9e38a1Fa33347B04DCC407fD7",
       "abi": [
         {
           "inputs": [
