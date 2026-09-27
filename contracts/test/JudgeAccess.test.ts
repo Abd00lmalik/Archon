@@ -1,4 +1,5 @@
 import { expect } from "chai";
+import { acceptAndPromote } from "./helpers/reviewFlow";
 import { ethers } from "hardhat";
 import { time } from "@nomicfoundation/hardhat-network-helpers";
 
@@ -123,6 +124,7 @@ describe("Judge Access + Reviewed Flags", function () {
       .to.be.reverted;
 
     await job.connect(client).setJudges(0, [judgeA.address]);
+    await acceptAndPromote(job, client, 0, [agentA.address]);
     await job.connect(judgeA).selectFinalists(0, [agentA.address]);
 
     expect(await job.isFinalist(0, agentA.address)).to.equal(true);
@@ -180,6 +182,7 @@ describe("Judge Access + Reviewed Flags", function () {
     const submissionId = await submit(job, agentA, "https://example.com/a");
     const submissionB = await submit(job, stranger, "https://example.com/b");
     await job.connect(client).setJudges(0, [judgeA.address]);
+    await acceptAndPromote(job, client, 0, [agentA.address, stranger.address]);
     await job.connect(judgeA).selectFinalists(0, [agentA.address, stranger.address]);
 
     await job.connect(agentB).respondToSubmission(submissionId, 1, "ipfs://critique-1");

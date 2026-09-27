@@ -378,7 +378,13 @@ const JOB_FALLBACK_ABI = [
   "function setReviewed(uint256 jobId,uint256 submissionId,bool reviewed)",
   "function isReviewed(uint256 jobId,uint256 submissionId,address reviewer) view returns (bool)",
   "function hasResponded(uint256 submissionId,address responder) view returns (bool)",
-  "function updateDeliverable(uint256 jobId,string deliverableLink)"
+  "function updateDeliverable(uint256 jobId,string deliverableLink)",
+  "function setReviewVerdict(uint256 jobId,uint256 submissionId,uint8 verdict)",
+  "function reviewVerdict(uint256 jobId,uint256 submissionId,address reviewer) view returns (uint8)",
+  "function setPromoted(uint256 jobId,address agent,bool promote)",
+  "function isPromoted(uint256 jobId,address agent) view returns (bool)",
+  "function acceptCount(uint256 jobId,uint256 submissionId) view returns (uint256)",
+  "function rejectCount(uint256 jobId,uint256 submissionId) view returns (uint256)"
 ] as const;
 
 if (resolvedJobContract?.abi) {
@@ -1726,6 +1732,81 @@ export async function fetchHasRespondedMap(
     // Ignore: the contract still enforces the one-response rule.
   }
   return responded;
+}
+
+export interface TriageSnapshot {
+  /** submissionId -> reviewer address (lowercase) -> verdict (0 none, 1 accept, 2 reject). */
+  verdicts: Map<number, Record<string, number>>;
+  /** Promoted agent addresses (lowercase) currently in the reveal shortlist. */
+  promoted: Set<string>;
+}
+
+/**
+ * One batched read of the judge triage state: per-reviewer verdicts for every
+ * submission plus the promotion shortlist. Reads are best-effort — a failed or
+ * unsupported call leaves the verdict absent (treated as "no verdict yet").
+ */
+export async function fetchTriageState(
+  jobId: number,
+  submissions: Array<{ submissionId: number; agent: string }>,
+  reviewers: string[]
+): Promise<TriageSnapshot> {
+  const state: TriageSnapshot = { verdicts: new Map(), promoted: new Set() };
+  if (!Number.isInteger(jobId) || jobId < 0 || submissions.length === 0) return state;
+  try {
+    const job = resolvedJobContract;
+    if (!job?.address) return state;
+    const abi = job.abi as ethers.InterfaceAbi;
+    type Key =
+      | { kind: "verdict"; sid: number; reviewer: string }
+      | { kind: "promoted"; agent: string };
+    const requests: Array<{
+      target: string;
+      abi: ethers.InterfaceAbi;
+      functionName: string;
+      args: unknown[];
+    }> = [];
+    const keys: Key[] = [];
+    const reviewerList = reviewers.filter(
+      (reviewer): reviewer is string => Boolean(reviewer) && ethers.isAddress(reviewer)
+    );
+    for (const submission of submissions) {
+      for (const reviewer of reviewerList) {
+        requests.push({
+          target: job.address,
+          abi,
+          functionName: "reviewVerdict",
+          args: [jobId, submission.submissionId, reviewer]
+        });
+        keys.push({ kind: "verdict", sid: submission.submissionId, reviewer: reviewer.toLowerCase() });
+      }
+      requests.push({
+        target: job.address,
+        abi,
+        functionName: "isPromoted",
+        args: [jobId, submission.agent]
+      });
+      keys.push({ kind: "promoted", agent: submission.agent.toLowerCase() });
+    }
+    const results = await multicall(getReadProvider(), requests);
+    results.forEach((result, index) => {
+      const key = keys[index];
+      if (!key || !result.ok) return;
+      const raw = Array.isArray(result.value) ? result.value[0] : result.value;
+      if (key.kind === "verdict") {
+        const verdict = Number(raw ?? 0);
+        if (!Number.isFinite(verdict)) return;
+        const row = state.verdicts.get(key.sid) ?? {};
+        row[key.reviewer] = verdict;
+        state.verdicts.set(key.sid, row);
+      } else if (raw === true) {
+        state.promoted.add(key.agent);
+      }
+    });
+  } catch {
+    // Cosmetic reads only; the contract re-validates every triage action.
+  }
+  return state;
 }
 
 export async function fetchRevealPhaseEnd(jobId: number): Promise<number> {

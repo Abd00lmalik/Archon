@@ -1,4 +1,5 @@
 import { expect } from "chai";
+import { acceptAndPromote } from "./helpers/reviewFlow";
 import { ethers } from "hardhat";
 import { time } from "@nomicfoundation/hardhat-network-helpers";
 import { anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
@@ -65,6 +66,12 @@ describe("Archon Hook + ERC8183Job", function () {
     await job.connect(agentB).submitDirect(0, "https://github.com/b");
     await job.connect(other).submitDirect(0, "https://github.com/c");
     await job.connect(fourth).submitDirect(0, "https://github.com/d");
+    await acceptAndPromote(job, client, 0, [
+      agentA.address,
+      agentB.address,
+      other.address,
+      fourth.address
+    ]);
     await job.connect(client).selectFinalists(0, [agentA.address, agentB.address, other.address, fourth.address]);
     await time.increase(5 * 24 * 60 * 60 + 1);
 
@@ -89,6 +96,7 @@ describe("Archon Hook + ERC8183Job", function () {
     await createJob(job, client);
 
     await job.connect(agentA).submitDirect(0, "https://github.com/work");
+    await acceptAndPromote(job, client, 0, [agentA.address]);
     await job.connect(client).selectFinalists(0, [agentA.address]);
     await time.increase(5 * 24 * 60 * 60 + 1);
     await job.connect(client).finalizeWinners(0, [agentA.address], [ethers.parseUnits("100", 6)]);

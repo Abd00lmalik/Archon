@@ -1,4 +1,5 @@
 import { expect } from "chai";
+import { acceptAndPromote } from "./helpers/reviewFlow";
 import { ethers } from "hardhat";
 import { time } from "@nomicfoundation/hardhat-network-helpers";
 
@@ -125,6 +126,7 @@ describe("MultiSource Integration", function () {
       .connect(client)
       .createJob("Landing", "Build page", jobDeadline, ethers.parseUnits("300", 6), 3);
     await job.connect(agent).submitDirect(0, "https://github.com/org/repo/pull/1");
+    await acceptAndPromote(job, client, 0, [agent.address]);
     await job.connect(client).selectFinalists(0, [agent.address]);
     await time.increase(5 * 24 * 60 * 60 + 1);
     await job.connect(client).finalizeWinners(0, [agent.address], [ethers.parseUnits("100", 6)]);

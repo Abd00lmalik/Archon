@@ -15,8 +15,8 @@ import {
   fetchJobCredentialCooldownSeconds,
   fetchLastJobCredentialClaim,
   fetchPendingReleases,
-  fetchReviewedByViewer,
   fetchTaskJudges,
+  fetchTriageState,
   formatTaskDescription,
   formatTaskTitle,
   formatTimestamp,
@@ -185,8 +185,8 @@ function PhaseBanner({
   const phases = [
     { status: 0, label: "OPEN", desc: "Accepting submissions", color: "var(--pulse)" },
     { status: 1, label: "IN PROGRESS", desc: "Work underway", color: "var(--arc)" },
-    { status: 2, label: "SUBMITTED", desc: "Creator reviewing submissions", color: "var(--warn)" },
-    { status: 3, label: "SELECTION", desc: "Creator selecting finalists", color: "var(--warn)" },
+    { status: 2, label: "SUBMITTED", desc: "Judges reviewing submissions", color: "var(--warn)" },
+    { status: 3, label: "SELECTION", desc: "Promoting submissions for reveal", color: "var(--warn)" },
     { status: 4, label: "REVEAL PHASE", desc: "Critique and build-on window open", color: "var(--arc)" },
     { status: 5, label: "CLOSED", desc: "Task closed", color: "var(--text-muted)" },
     { status: 6, label: "CLOSED", desc: "Task closed", color: "var(--text-muted)" }
@@ -197,7 +197,7 @@ function PhaseBanner({
   const revealEnded = job.status === 4 && revealEnd > 0 && Math.floor(Date.now() / 1000) > revealEnd;
   const label = displayStatus.label.toUpperCase();
   const description = awaitingSelection
-    ? "Submission deadline passed - awaiting creator finalist selection"
+    ? "Submission deadline passed - awaiting creator to begin the reveal"
     : revealEnded
       ? "Reveal window closed - awaiting winner finalization"
       : displayStatus.label === "Closed"
@@ -374,20 +374,22 @@ function FinalistSelectionPanel({
 
   return (
     <div className="space-y-4">
-      <div className="section-header">SELECT FINALISTS</div>
+      <div className="section-header">PROMOTED FOR REVEAL</div>
       <div className="border border-[#162334] px-3 py-2 text-xs text-[#7A9BB5]">
-        Choose up to {maxFinalists} submissions to advance to the 5-day reveal phase. Only finalists will be visible
-        for critique and build-ons.
+        These accepted submissions are shortlisted for the 5-day reveal phase. Click one to remove
+        it from the shortlist. Only promoted submissions will be visible for critique and
+        build-ons.
         <br />
         <strong style={{ color: "#00E5FF" }}>
-          Selected: {selected.length} / {maxFinalists}
+          Promoted: {selected.length} / {maxFinalists}
         </strong>
       </div>
 
       <div className="space-y-2">
         {submissions.length === 0 ? (
           <div className="border border-[var(--border)] p-3 text-xs text-[var(--text-muted)]">
-            No valid submissions available for finalist selection.
+            No promoted submissions yet. Accept a submission, then promote it to shortlist it for
+            the reveal.
           </div>
         ) : null}
         {submissions.map((submission, index) => {
@@ -519,9 +521,11 @@ export default function JobDetailsPage() {
   const [judgeError, setJudgeError] = useState("");
   const [visibleCount, setVisibleCount] = useState(LIST_PAGE_SIZE);
   const [expandedSubmissionId, setExpandedSubmissionId] = useState<number | null>(null);
-  const [stagedAgents, setStagedAgents] = useState<string[]>([]);
-  const [reviewedByViewer, setReviewedByViewer] = useState<Set<number>>(new Set());
-  const [showReviewed, setShowReviewed] = useState(false);
+  const [verdictsBySid, setVerdictsBySid] = useState<Map<number, Record<string, number>>>(
+    new Map()
+  );
+  const [promotedAgents, setPromotedAgents] = useState<Set<string>>(new Set());
+  const [rejectConfirmId, setRejectConfirmId] = useState<number | null>(null);
   const [respondedIds, setRespondedIds] = useState<Set<number>>(new Set());
   const [reviewBusyId, setReviewBusyId] = useState<number | null>(null);
   const [reviewError, setReviewError] = useState("");
@@ -562,6 +566,7 @@ export default function JobDetailsPage() {
   const isConnected = Boolean(account);
   const isCreator = Boolean(account && job && account.toLowerCase() === job.client.toLowerCase());
   const canReview = Boolean(isCreator || isJudge);
+  const clientAddress = job?.client ?? "";
   const bannerUrl = useMemo(() => extractBanner(job?.description ?? ""), [job?.description]);
   const jobLoading = coreLoading;
   const taskJobId = task?.jobId ?? -1;
@@ -609,19 +614,22 @@ export default function JobDetailsPage() {
     [selectedFinalists]
   );
 
-  const stagedAgentSet = useMemo(
-    () => new Set(stagedAgents.map((agent) => agent.toLowerCase())),
-    [stagedAgents]
-  );
+  const verdictRow = (submissionId: number): Record<string, number> =>
+    verdictsBySid.get(submissionId) ?? {};
+  const acceptCountFor = (submissionId: number): number =>
+    Object.values(verdictRow(submissionId)).filter((verdict) => verdict === 1).length;
+  const isRejectedSubmission = (submissionId: number): boolean =>
+    Object.values(verdictRow(submissionId)).some((verdict) => verdict === 2);
+  const isPromotedAgent = (agent: string): boolean => promotedAgents.has(agent.toLowerCase());
 
   const reviewQueueSubmissions = useMemo(
     () =>
       filteredListSubmissions.filter((submission) => {
-        if (stagedAgentSet.has(submission.agent.toLowerCase())) return false;
-        if (!showReviewed && reviewedByViewer.has(submission.submissionId)) return false;
+        if (promotedAgents.has(submission.agent.toLowerCase())) return false;
+        if (isRejectedSubmission(submission.submissionId)) return false;
         return true;
       }),
-    [filteredListSubmissions, reviewedByViewer, showReviewed, stagedAgentSet]
+    [filteredListSubmissions, verdictsBySid, promotedAgents] // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   const visibleReviewSubmissions = useMemo(
@@ -629,19 +637,49 @@ export default function JobDetailsPage() {
     [reviewQueueSubmissions, visibleCount]
   );
 
-  const hiddenReviewedCount = useMemo(
+  const acceptedCount = useMemo(
     () =>
-      filteredListSubmissions.filter((submission) => reviewedByViewer.has(submission.submissionId))
-        .length,
-    [filteredListSubmissions, reviewedByViewer]
+      filteredListSubmissions.filter((submission) => {
+        const row = verdictsBySid.get(submission.submissionId);
+        return Boolean(
+          row &&
+            !promotedAgents.has(submission.agent.toLowerCase()) &&
+            Object.values(row).some((verdict) => verdict === 1)
+        );
+      }).length,
+    [filteredListSubmissions, verdictsBySid, promotedAgents]
   );
 
-  const hiddenStagedCount = useMemo(
+  const promotedCount = useMemo(
     () =>
       filteredListSubmissions.filter((submission) =>
-        stagedAgentSet.has(submission.agent.toLowerCase())
+        promotedAgents.has(submission.agent.toLowerCase())
       ).length,
-    [filteredListSubmissions, stagedAgentSet]
+    [filteredListSubmissions, promotedAgents]
+  );
+
+  const rejectedCount = useMemo(
+    () =>
+      filteredListSubmissions.filter((submission) => {
+        const row = verdictsBySid.get(submission.submissionId);
+        return Boolean(row && Object.values(row).some((verdict) => verdict === 2));
+      }).length,
+    [filteredListSubmissions, verdictsBySid]
+  );
+
+  const promotedSubmissions = useMemo(
+    () =>
+      safeSubmissions.filter((submission) => promotedAgents.has(submission.agent.toLowerCase())),
+    [safeSubmissions, promotedAgents]
+  );
+
+  const timelineSubmissions = useMemo(
+    () =>
+      safeSubmissions.filter((submission) => {
+        const row = verdictsBySid.get(submission.submissionId);
+        return !(row && Object.values(row).some((verdict) => verdict === 2));
+      }),
+    [safeSubmissions, verdictsBySid]
   );
 
   useEffect(() => {
@@ -1207,48 +1245,88 @@ export default function JobDetailsPage() {
     }
   };
 
-  const toggleStagedAgent = (agent: string) => {
-    setStagedAgents((previous) => {
-      const key = agent.toLowerCase();
-      if (previous.some((entry) => entry.toLowerCase() === key)) {
-        return previous.filter((entry) => entry.toLowerCase() !== key);
-      }
-      const limit = Number(maxApprovals || 1) + 5;
-      if (previous.length >= limit) return previous;
-      return [...previous, agent];
-    });
-  };
-
-  const handleToggleReviewed = async (submission: SubmissionRecord) => {
+  const handleSetVerdict = async (submission: SubmissionRecord, verdict: 1 | 2) => {
     if (!signer || !account) {
-      setReviewError("Connect a wallet to mark submissions reviewed.");
+      setReviewError("Connect a wallet to review submissions.");
       return;
     }
-    const wasReviewed = reviewedByViewer.has(submission.submissionId);
     try {
       setReviewBusyId(submission.submissionId);
       setReviewError("");
+      setRejectConfirmId(null);
       await withProvider();
       const contract = await getTaskWriteContract();
       const hasFlag =
         typeof contract.interface.hasFunction === "function" &&
-        contract.interface.hasFunction("setReviewed(uint256,uint256,bool)");
+        contract.interface.hasFunction("setReviewVerdict(uint256,uint256,uint8)");
       if (!hasFlag) {
-        throw new Error("This contract deployment does not support review flags yet.");
+        throw new Error("This contract deployment does not support review verdicts yet.");
       }
-      const tx = await contract.setReviewed(
+      const tx = await contract.setReviewVerdict(
         BigInt(jobId),
         BigInt(submission.submissionId),
-        !wasReviewed
+        verdict
       );
       await tx.wait();
-      setReviewedByViewer((previous) => {
-        const next = new Set(previous);
-        if (wasReviewed) next.delete(submission.submissionId);
-        else next.add(submission.submissionId);
+      setVerdictsBySid((previous) => {
+        const next = new Map(previous);
+        const row = { ...next.get(submission.submissionId) };
+        row[account.toLowerCase()] = verdict;
+        next.set(submission.submissionId, row);
         return next;
       });
-      setStatusMessage(wasReviewed ? "Review flag cleared." : "Marked as reviewed.");
+      setStatusMessage(
+        verdict === 1
+          ? "Submission accepted - promote it to move it toward the reveal."
+          : "Submission rejected - removed from the queue and timeline."
+      );
+    } catch (error) {
+      setReviewError(humanizeError(error));
+    } finally {
+      setReviewBusyId(null);
+    }
+  };
+
+  const handleRejectClick = (submission: SubmissionRecord) => {
+    if (rejectConfirmId !== submission.submissionId) {
+      setRejectConfirmId(submission.submissionId);
+      return;
+    }
+    void handleSetVerdict(submission, 2);
+  };
+
+  const handleTogglePromote = async (submission: SubmissionRecord) => {
+    if (!signer || !account) {
+      setReviewError("Connect a wallet to manage the reveal shortlist.");
+      return;
+    }
+    const agentKey = submission.agent.toLowerCase();
+    const promoting = !promotedAgents.has(agentKey);
+    try {
+      setReviewBusyId(submission.submissionId);
+      setReviewError("");
+      setRejectConfirmId(null);
+      await withProvider();
+      const contract = await getTaskWriteContract();
+      const hasFlag =
+        typeof contract.interface.hasFunction === "function" &&
+        contract.interface.hasFunction("setPromoted(uint256,address,bool)");
+      if (!hasFlag) {
+        throw new Error("This contract deployment does not support promotion yet.");
+      }
+      const tx = await contract.setPromoted(BigInt(jobId), submission.agent, promoting);
+      await tx.wait();
+      setPromotedAgents((previous) => {
+        const next = new Set(previous);
+        if (promoting) next.add(agentKey);
+        else next.delete(agentKey);
+        return next;
+      });
+      setStatusMessage(
+        promoting
+          ? "Promoted - it will be revealed when the reveal phase begins."
+          : "Removed from the reveal shortlist."
+      );
     } catch (error) {
       setReviewError(humanizeError(error));
     } finally {
@@ -1341,8 +1419,7 @@ export default function JobDetailsPage() {
       const tx = await contract.selectFinalists(BigInt(jobId), unique);
       await tx.wait();
       const txHash = tx.hash as string;
-      setStatusMessage(`Finalists tx: ${txHash}`);
-      setStagedAgents([]);
+      setStatusMessage(`Reveal phase tx: ${txHash}`);
       clearTaskCaches();
       await loadTask();
       await loadHeatmap();
@@ -1635,20 +1712,31 @@ export default function JobDetailsPage() {
 
   useEffect(() => {
     let active = true;
-    const ids = safeSubmissions.map((submission) => submission.submissionId);
-    if (!account || !canReview || ids.length === 0 || !Number.isInteger(jobId) || jobId < 0) {
-      setReviewedByViewer(new Set());
+    if (safeSubmissions.length === 0 || !Number.isInteger(jobId) || jobId < 0) {
+      setVerdictsBySid(new Map());
+      setPromotedAgents(new Set());
       return () => {
         active = false;
       };
     }
-    void fetchReviewedByViewer(jobId, ids, account).then((marks) => {
-      if (active) setReviewedByViewer(marks);
+    const reviewers = clientAddress ? [clientAddress, ...taskJudges] : [];
+    void fetchTriageState(
+      jobId,
+      safeSubmissions.map((submission) => ({
+        submissionId: submission.submissionId,
+        agent: submission.agent
+      })),
+      reviewers
+    ).then((state) => {
+      if (active) {
+        setVerdictsBySid(state.verdicts);
+        setPromotedAgents(state.promoted);
+      }
     });
     return () => {
       active = false;
     };
-  }, [account, canReview, jobId, safeSubmissions]);
+  }, [jobId, safeSubmissions, taskJudges, clientAddress]);
 
   useEffect(() => {
     let active = true;
@@ -1920,12 +2008,13 @@ export default function JobDetailsPage() {
                 <div className="mb-3 font-mono text-2xl text-[var(--arc)]">?</div>
                 <div className="font-heading mb-2 text-base font-semibold">Submissions are sealed</div>
                 <div className="max-w-xs text-sm text-[var(--text-secondary)]">
-                  Submissions are hidden until the creator selects finalists and opens the 5-day reveal phase. This
-                  prevents copying and ensures independent solutions.
+                  Submissions are hidden until accepted submissions are promoted and the creator
+                  begins the 5-day reveal phase. This prevents copying and ensures independent
+                  solutions.
                 </div>
                 {submissionDeadlinePassed ? (
                   <div className="mt-3 text-xs font-mono text-[var(--warn)]">
-                    Submission deadline passed - Awaiting creator to select finalists
+                    Submission deadline passed - Awaiting creator to begin the reveal phase
                   </div>
                 ) : null}
               </div>
@@ -1951,18 +2040,10 @@ export default function JobDetailsPage() {
                   <div className="flex flex-wrap items-center justify-between gap-2 border border-[var(--border)] px-3 py-2 text-[11px]">
                     <span className="font-mono text-[var(--text-secondary)]">
                       {reviewQueueSubmissions.length} in review queue
-                      {hiddenReviewedCount > 0 ? ` · ${hiddenReviewedCount} reviewed` : ""}
-                      {hiddenStagedCount > 0 ? ` · ${hiddenStagedCount} approved` : ""}
+                      {acceptedCount > 0 ? ` · ${acceptedCount} accepted` : ""}
+                      {promotedCount > 0 ? ` · ${promotedCount} promoted` : ""}
+                      {rejectedCount > 0 ? ` · ${rejectedCount} rejected (hidden)` : ""}
                     </span>
-                    {hiddenReviewedCount > 0 ? (
-                      <button
-                        type="button"
-                        className="btn-ghost px-2 py-1 text-[10px]"
-                        onClick={() => setShowReviewed((previous) => !previous)}
-                      >
-                        {showReviewed ? "Hide reviewed" : `Show reviewed (${hiddenReviewedCount})`}
-                      </button>
-                    ) : null}
                   </div>
                 ) : null}
 
@@ -1979,11 +2060,18 @@ export default function JobDetailsPage() {
                 ) : (
                   visibleReviewSubmissions.map((submission) => {
                     const isExpanded = expandedSubmissionId === submission.submissionId;
-                    const isReviewed = reviewedByViewer.has(submission.submissionId);
-                    const isStaged = stagedAgentSet.has(submission.agent.toLowerCase());
+                    const isPromoted = isPromotedAgent(submission.agent);
+                    const verdictRowForSubmission = verdictRow(submission.submissionId);
+                    const acceptedBy = Object.keys(verdictRowForSubmission).filter(
+                      (reviewer) => verdictRowForSubmission[reviewer] === 1
+                    );
+                    const isAcceptedBySomeone = acceptedBy.length > 0;
                     const alreadyResponded = respondedIds.has(submission.submissionId);
-                    const reviewActionsVisible = canReview && canStageFinalists;
+                    const triageVisible = Boolean(job && canReview && job.status <= 3);
                     const finalistLimit = Number(maxApprovals || 1) + 5;
+                    const promoteFull =
+                      !isPromoted && promotedAgents.size >= finalistLimit;
+                    const busy = reviewBusyId === submission.submissionId;
                     return (
                       <article
                         key={`${submission.agent}-${submission.submissionId}`}
@@ -2003,12 +2091,12 @@ export default function JobDetailsPage() {
                             className="min-w-0"
                           />
                           <span className="flex shrink-0 items-center gap-1.5">
-                            {isReviewed ? (
+                            {isAcceptedBySomeone && !isPromoted ? (
                               <span className="badge" style={{ color: "#7A9BB5" }}>
-                                REVIEWED
+                                ACCEPTED ({acceptedBy.length})
                               </span>
                             ) : null}
-                            {isStaged ? <span className="badge badge-arc">APPROVED</span> : null}
+                            {isPromoted ? <span className="badge badge-arc">PROMOTED</span> : null}
                             <span className="badge badge-arc">
                               {submission.status === 2
                                 ? "APPROVED"
@@ -2059,40 +2147,73 @@ export default function JobDetailsPage() {
                           )
                         ) : null}
 
-                        {isExpanded && reviewActionsVisible ? (
+                        {isExpanded && acceptedBy.length > 0 ? (
+                          <div className="border border-[var(--border)] px-2 py-1.5 text-[11px] text-[var(--text-secondary)]">
+                            Accepted by:{" "}
+                            {acceptedBy.map((reviewer, index) => (
+                              <span key={reviewer}>
+                                {index > 0 ? " · " : ""}
+                                <span className="font-mono">
+                                  {shortAddress(reviewer)}
+                                </span>
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+
+                        {triageVisible ? (
                           <div className="flex gap-2 border-t border-[var(--border)] pt-3">
-                            <button
-                              type="button"
-                              className="btn-ghost flex-1 text-xs"
-                              disabled={reviewBusyId === submission.submissionId}
-                              onClick={() => void handleToggleReviewed(submission)}
-                            >
-                              {reviewBusyId === submission.submissionId
-                                ? "Working..."
-                                : isReviewed
-                                  ? "Reviewed (undo)"
-                                  : "Reviewed"}
-                            </button>
-                            <button
-                              type="button"
-                              className="btn-primary flex-1 text-xs"
-                              disabled={
-                                isStaged ||
-                                stagedAgentSet.size >= finalistLimit ||
-                                stagedAgents.length >= finalistLimit
-                              }
-                              onClick={() => {
-                                if (isStaged) return;
-                                toggleStagedAgent(submission.agent);
-                                setExpandedSubmissionId(null);
-                              }}
-                            >
-                              {isStaged
-                                ? "Approved"
-                                : stagedAgentSet.size >= finalistLimit
-                                  ? "Slots full"
-                                  : "Approved (move to reveal)"}
-                            </button>
+                            {isPromoted ? (
+                              <button
+                                type="button"
+                                className="btn-ghost flex-1 text-xs"
+                                disabled={busy}
+                                onClick={() => void handleTogglePromote(submission)}
+                              >
+                                {busy ? "Working..." : "Promoted ✓ (un-promote)"}
+                              </button>
+                            ) : isAcceptedBySomeone ? (
+                              <button
+                                type="button"
+                                className="btn-primary flex-1 text-xs"
+                                disabled={busy || promoteFull}
+                                onClick={() => void handleTogglePromote(submission)}
+                              >
+                                {busy
+                                  ? "Working..."
+                                  : promoteFull
+                                    ? `Slots full (${finalistLimit})`
+                                    : "Promote"}
+                              </button>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  className="btn-ghost flex-1 text-xs"
+                                  disabled={busy}
+                                  onClick={() => void handleSetVerdict(submission, 1)}
+                                >
+                                  {busy ? "Working..." : "Accept"}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-ghost flex-1 text-xs"
+                                  style={
+                                    rejectConfirmId === submission.submissionId
+                                      ? { borderColor: "var(--danger)", color: "var(--danger)" }
+                                      : undefined
+                                  }
+                                  disabled={busy}
+                                  onClick={() => handleRejectClick(submission)}
+                                >
+                                  {busy
+                                    ? "Working..."
+                                    : rejectConfirmId === submission.submissionId
+                                      ? "Confirm reject?"
+                                      : "Reject"}
+                                </button>
+                              </>
+                            )}
                           </div>
                         ) : null}
                       </article>
@@ -2115,15 +2236,89 @@ export default function JobDetailsPage() {
 
           {viewMode === "timeline" ? (
             <div className="panel space-y-2">
-              {safeSubmissions.map((submission) => (
-                <div
-                  key={`timeline-${submission.submissionId}`}
-                  className="card-sharp flex items-center justify-between px-3 py-2 text-xs gap-3"
-                >
-                  <UserDisplay address={submission.agent} showAvatar={true} avatarSize={24} />
-                  <span className="font-mono text-[var(--text-muted)]">{formatTimestamp(submission.submittedAt)}</span>
+              {timelineSubmissions.length === 0 ? (
+                <div className="p-4 text-xs font-mono text-[var(--text-muted)]">
+                  No submissions to display
                 </div>
-              ))}
+              ) : (
+                timelineSubmissions.map((submission) => {
+                  const isPromoted = isPromotedAgent(submission.agent);
+                  const acceptedCountForRow = acceptCountFor(submission.submissionId);
+                  const finalistLimit = Number(maxApprovals || 1) + 5;
+                  const promoteFull =
+                    !isPromoted && promotedAgents.size >= finalistLimit;
+                  const busy = reviewBusyId === submission.submissionId;
+                  const triageVisible = Boolean(job && canReview && job.status <= 3);
+                  return (
+                    <div
+                      key={`timeline-${submission.submissionId}`}
+                      className="card-sharp flex items-center justify-between px-3 py-2 text-xs gap-3"
+                    >
+                      <UserDisplay address={submission.agent} showAvatar={true} avatarSize={24} />
+                      <span className="flex min-w-0 items-center gap-2">
+                        {acceptedCountForRow > 0 && !isPromoted ? (
+                          <span className="badge" style={{ color: "#7A9BB5" }}>
+                            ACCEPTED ({acceptedCountForRow})
+                          </span>
+                        ) : null}
+                        {isPromoted ? <span className="badge badge-arc">PROMOTED</span> : null}
+                        {triageVisible ? (
+                          isPromoted ? (
+                            <button
+                              type="button"
+                              className="btn-ghost px-2 py-1 text-[10px]"
+                              disabled={busy}
+                              onClick={() => void handleTogglePromote(submission)}
+                            >
+                              {busy ? "..." : "Un-promote"}
+                            </button>
+                          ) : acceptedCountForRow > 0 ? (
+                            <button
+                              type="button"
+                              className="btn-primary px-2 py-1 text-[10px]"
+                              disabled={busy || promoteFull}
+                              onClick={() => void handleTogglePromote(submission)}
+                            >
+                              {busy ? "..." : promoteFull ? "Slots full" : "Promote"}
+                            </button>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                className="btn-ghost px-2 py-1 text-[10px]"
+                                disabled={busy}
+                                onClick={() => void handleSetVerdict(submission, 1)}
+                              >
+                                {busy ? "..." : "Accept"}
+                              </button>
+                              <button
+                                type="button"
+                                className="btn-ghost px-2 py-1 text-[10px]"
+                                style={
+                                  rejectConfirmId === submission.submissionId
+                                    ? { borderColor: "var(--danger)", color: "var(--danger)" }
+                                    : undefined
+                                }
+                                disabled={busy}
+                                onClick={() => handleRejectClick(submission)}
+                              >
+                                {busy
+                                  ? "..."
+                                  : rejectConfirmId === submission.submissionId
+                                    ? "Confirm?"
+                                    : "Reject"}
+                              </button>
+                            </>
+                          )
+                        ) : null}
+                        <span className="shrink-0 font-mono text-[var(--text-muted)]">
+                          {formatTimestamp(submission.submittedAt)}
+                        </span>
+                      </span>
+                    </div>
+                  );
+                })
+              )}
             </div>
           ) : null}
         </div>
@@ -2167,8 +2362,8 @@ export default function JobDetailsPage() {
                   }}
                 >
                 This task has {submittedCountForReveal} submitted submission{submittedCountForReveal !== 1 ? "s" : ""} - under
-                the {finalistThreshold} finalist threshold. Anyone can trigger reveal phase automatically and promote
-                every valid submission to finalist status.
+                the {finalistThreshold} finalist threshold. Anyone can trigger the reveal phase automatically, selecting
+                every non-rejected submission for the reveal.
                 </div>
               <button
                 type="button"
@@ -2581,9 +2776,9 @@ export default function JobDetailsPage() {
             <div className="space-y-3 border-b border-[var(--border)] pb-4">
               <div className="section-header">JUDGES</div>
               <div className="text-[11px] leading-relaxed text-[var(--text-secondary)]">
-                Paste wallet addresses (comma or newline separated) to let them review submissions, mark them
-                reviewed, and help start the 5-day reveal phase. New addresses are added to the current list;
-                judges cannot submit work to this task.
+                Paste wallet addresses (comma or newline separated) to let them accept or reject
+                submissions, promote accepted submissions, and begin the 5-day reveal phase. New
+                addresses are added to the current list; judges cannot submit work to this task.
               </div>
               <textarea
                 aria-label="Judge wallet addresses"
@@ -2632,16 +2827,22 @@ export default function JobDetailsPage() {
             </div>
           ) : null}
 
-          {canStageFinalists && (submissionDeadlinePassed || stagedAgents.length > 0) ? (
+          {canStageFinalists && promotedSubmissions.length > 0 ? (
             <FinalistSelectionPanel
-              submissions={pendingSubmissions}
+              submissions={promotedSubmissions}
               maxApprovals={maxApprovals}
-              selected={stagedAgents}
-              onToggle={toggleStagedAgent}
+              selected={promotedSubmissions.map((submission) => submission.agent)}
+              onToggle={(agent) => {
+                const submission = safeSubmissions.find(
+                  (entry) => entry.agent.toLowerCase() === agent.toLowerCase()
+                );
+                if (submission) void handleTogglePromote(submission);
+              }}
               submitting={finalistSelecting}
               error={finalistError}
               disabled={!submissionDeadlinePassed}
-              disabledHint="Approvals are staged - the reveal phase can start once the submission deadline passes."
+              disabledHint="The reveal can begin once the submission deadline passes."
+              submitLabel="Begin reveal phase"
               onSubmit={(agents) => void handleSelectFinalists(agents)}
             />
           ) : null}

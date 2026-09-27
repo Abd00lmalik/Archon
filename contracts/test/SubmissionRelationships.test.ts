@@ -1,4 +1,5 @@
 import { expect } from "chai";
+import { acceptAndPromote } from "./helpers/reviewFlow";
 import { ethers } from "hardhat";
 import { time } from "@nomicfoundation/hardhat-network-helpers";
 
@@ -61,6 +62,7 @@ describe("Submission Relationships", function () {
   }
 
   async function enterRevealPhase(job: any, client: any, finalists: string[]) {
+    await acceptAndPromote(job, client, 0, finalists);
     await job.connect(client).selectFinalists(0, finalists);
   }
 
@@ -77,6 +79,7 @@ describe("Submission Relationships", function () {
     await createJob(job, client);
     await submitBaseSubmission(job, agentA);
     await job.connect(agentB).acceptJob(0);
+    await acceptAndPromote(job, client, 0, [agentA.address]);
 
     await expect(job.connect(client).selectFinalists(0, [agentA.address, agentB.address])).to.be.reverted;
   });

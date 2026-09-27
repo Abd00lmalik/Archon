@@ -118,6 +118,8 @@ contract ERC8183Job is ICredentialSource {
     uint256 public constant DEFAULT_INTERACTION_STAKE = 2_000_000; // 2 USDC
     uint256 public constant RESPONSE_STAKE = DEFAULT_INTERACTION_STAKE; // backwards-compatible alias
     uint256 public constant MAX_INTERACTION_POOL_RATIO = 3_000; // 30%
+    uint8 private constant VERDICT_ACCEPT = 1;
+    uint8 private constant VERDICT_REJECT = 2;
 
     address public owner;
     uint256 public nextJobId;
@@ -150,6 +152,14 @@ contract ERC8183Job is ICredentialSource {
     mapping(uint256 => mapping(address => bool)) public isJudge;
     mapping(uint256 => address[]) private taskJudges;
     mapping(uint256 => mapping(uint256 => mapping(address => bool))) public isReviewed;
+    // Judge triage: per-reviewer verdict (0 = none, 1 = accept, 2 = reject)
+    // with maintained per-submission counts, plus the shared promoted set
+    // that feeds the reveal phase.
+    mapping(uint256 => mapping(uint256 => mapping(address => uint8))) public reviewVerdict;
+    mapping(uint256 => mapping(uint256 => uint32)) public acceptCount;
+    mapping(uint256 => mapping(uint256 => uint32)) public rejectCount;
+    mapping(uint256 => mapping(address => bool)) public isPromoted;
+    mapping(uint256 => address[]) public promotedAgents;
     mapping(uint256 => TaskEconomyConfig) public taskEconomy;
     mapping(uint256 => uint256) public interactionPoolUsed;
 
@@ -222,6 +232,14 @@ contract ERC8183Job is ICredentialSource {
         address indexed reviewer,
         bool reviewed
     );
+    event ReviewVerdictSet(
+        uint256 indexed jobId,
+        uint256 indexed submissionId,
+        address indexed reviewer,
+        uint8 verdict
+    );
+    event SubmissionPromoted(uint256 indexed jobId, address indexed agent, address indexed by);
+    event SubmissionUnpromoted(uint256 indexed jobId, address indexed agent, address indexed by);
 
     modifier onlyOwner() {
         require(msg.sender == owner, "only owner");
@@ -615,6 +633,98 @@ contract ERC8183Job is ICredentialSource {
         emit ReviewedSet(jobId, submissionId, msg.sender, reviewed);
     }
 
+    /**
+     * @dev Records the caller's triage verdict (0 none / 1 accept / 2 reject)
+     * on a submission. Verdicts are shared across the review team. The first
+     * accept locks the submission into the accepted pool, and a reject is
+     * terminal: once anything is rejected the submission is gone from the
+     * working views for good, so accept and reject can never conflict.
+     */
+    function setReviewVerdict(uint256 jobId, uint256 submissionId, uint8 verdict) external {
+        Job storage job = _getExistingJob(jobId);
+        require(
+            msg.sender == job.client || isJudge[jobId][msg.sender],
+            "only client or judge"
+        );
+        require(
+            submissionIdToAgent[submissionId] != address(0) &&
+                submissionIdToTaskId[submissionId] == jobId,
+            "submission not in task"
+        );
+        require(verdict <= uint8(2), "invalid verdict");
+
+        uint8 previous = reviewVerdict[jobId][submissionId][msg.sender];
+        if (previous == verdict) return;
+
+        if (verdict == VERDICT_ACCEPT) {
+            require(rejectCount[jobId][submissionId] == 0, "already rejected");
+        } else if (verdict == VERDICT_REJECT) {
+            require(acceptCount[jobId][submissionId] == 0, "already accepted");
+        } else {
+            require(previous != VERDICT_REJECT, "reject is final");
+        }
+
+        if (previous == VERDICT_ACCEPT) {
+            acceptCount[jobId][submissionId] -= 1;
+        } else if (previous == VERDICT_REJECT) {
+            rejectCount[jobId][submissionId] -= 1;
+        }
+        if (verdict == VERDICT_ACCEPT) {
+            acceptCount[jobId][submissionId] += 1;
+        } else if (verdict == VERDICT_REJECT) {
+            rejectCount[jobId][submissionId] += 1;
+        }
+
+        reviewVerdict[jobId][submissionId][msg.sender] = verdict;
+        emit ReviewVerdictSet(jobId, submissionId, msg.sender, verdict);
+    }
+
+    /**
+     * @dev Marks a submission as promoted (or not) for the reveal phase.
+     * Promotion requires at least one accept and zero rejects; the shared
+     * promoted set is capped at maxApprovals + 5 and can be adjusted freely
+     * until the reveal phase starts.
+     */
+    function setPromoted(uint256 jobId, address agent, bool promoted) external {
+        Job storage job = _getExistingJob(jobId);
+        require(
+            msg.sender == job.client || isJudge[jobId][msg.sender],
+            "only client or judge"
+        );
+        require(selectedFinalists[jobId].length == 0, "reveal already started");
+
+        Submission storage submission = submissions[jobId][agent];
+        require(
+            submission.agent == agent && submission.status == SubmissionStatus.Submitted,
+            "no submission"
+        );
+
+        if (promoted) {
+            require(acceptCount[jobId][submission.submissionId] > 0, "not accepted yet");
+            require(rejectCount[jobId][submission.submissionId] == 0, "rejected");
+            require(!isPromoted[jobId][agent], "already promoted");
+            require(
+                promotedAgents[jobId].length < job.maxApprovals + 5,
+                "promotion limit reached"
+            );
+            isPromoted[jobId][agent] = true;
+            promotedAgents[jobId].push(agent);
+            emit SubmissionPromoted(jobId, agent, msg.sender);
+        } else {
+            require(isPromoted[jobId][agent], "not promoted");
+            isPromoted[jobId][agent] = false;
+            address[] storage list = promotedAgents[jobId];
+            for (uint256 i = 0; i < list.length; i++) {
+                if (list[i] == agent) {
+                    list[i] = list[list.length - 1];
+                    list.pop();
+                    break;
+                }
+            }
+            emit SubmissionUnpromoted(jobId, agent, msg.sender);
+        }
+    }
+
     function selectFinalists(uint256 jobId, address[] calldata agents) external {
         Job storage job = _getExistingJob(jobId);
         require(
@@ -645,6 +755,7 @@ contract ERC8183Job is ICredentialSource {
                 submissions[jobId][finalist].status == SubmissionStatus.Submitted,
                 "agent did not submit"
             );
+            require(isPromoted[jobId][finalist], "not promoted");
             isFinalist[jobId][finalist] = true;
         }
 
@@ -676,14 +787,29 @@ contract ERC8183Job is ICredentialSource {
         address[] memory valid = new address[](submitters.length);
         uint256 actualCount = 0;
 
-        for (uint256 i = 0; i < submitters.length; i++) {
-            address agent = submitters[i];
-            if (
-                agent != address(0) &&
-                submissions[jobId][agent].status == SubmissionStatus.Submitted
-            ) {
-                valid[actualCount] = agent;
-                actualCount += 1;
+        address[] storage promoted = promotedAgents[jobId];
+        if (promoted.length > 0) {
+            // Judges promoted a shortlist: reveal exactly that set.
+            for (uint256 i = 0; i < promoted.length; i++) {
+                address finalist = promoted[i];
+                if (submissions[jobId][finalist].status == SubmissionStatus.Submitted) {
+                    valid[actualCount] = finalist;
+                    actualCount += 1;
+                }
+            }
+        } else {
+            // Fallback for tasks that never used promotion: every submission
+            // that was not triaged out by a reject.
+            for (uint256 i = 0; i < submitters.length; i++) {
+                address agent = submitters[i];
+                if (
+                    agent != address(0) &&
+                    submissions[jobId][agent].status == SubmissionStatus.Submitted &&
+                    rejectCount[jobId][submissions[jobId][agent].submissionId] == 0
+                ) {
+                    valid[actualCount] = agent;
+                    actualCount += 1;
+                }
             }
         }
 

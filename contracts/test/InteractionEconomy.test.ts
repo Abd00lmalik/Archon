@@ -1,4 +1,5 @@
 import { expect } from "chai";
+import { acceptAndPromote } from "./helpers/reviewFlow";
 import { ethers } from "hardhat";
 import { time } from "@nomicfoundation/hardhat-network-helpers";
 
@@ -96,6 +97,7 @@ describe("Interaction Economy", function () {
   }
 
   async function enterReveal(job: any, client: any, finalists: string[]) {
+    await acceptAndPromote(job, client, 0, finalists);
     await job.connect(client).selectFinalists(0, finalists);
   }
 
@@ -370,6 +372,7 @@ describe("Interaction Economy", function () {
     await createClassicJob(job, client);
     await submit(job, agentA, "https://example.com/a");
 
+    await acceptAndPromote(job, client, 0, [agentA.address]);
     await expect(job.connect(client).selectFinalists(0, [agentA.address])).to.emit(job, "FinalistsSelected");
     expect(await job.isInRevealPhase(0)).to.equal(true);
   });
