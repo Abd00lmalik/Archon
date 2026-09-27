@@ -1,4 +1,4 @@
-import { BrowserProvider, JsonRpcProvider } from "ethers";
+import { BrowserProvider, InterfaceAbi, JsonRpcProvider, Provider } from "ethers";
 import {
   getReadProvider,
   isValidSubmission,
@@ -6,6 +6,7 @@ import {
   ZERO_ADDRESS
 } from "@/lib/contracts";
 import { decodeInteractionContent, DecodedInteraction } from "@/lib/content-decoder";
+import { mapLimit, MulticallRequest, multicall } from "@/lib/multicall";
 import { getContractForSource } from "@/lib/task-adapter";
 import { fetchUserProfile } from "@/lib/user-profiles";
 
@@ -125,20 +126,116 @@ async function loadResponseIds(
   return ids;
 }
 
+type ResponseRow = Record<string, unknown> & unknown[];
+
+type JobContractShape = {
+  getSubmissions?: (taskId: number) => Promise<unknown[]>;
+  submittedAgents?: (taskId: number, index: number) => Promise<string>;
+  getSubmission?: (taskId: number, agent: string) => Promise<unknown>;
+  submissions?: (taskId: number, agent: string) => Promise<unknown>;
+  getSelectedFinalists?: (taskId: number) => Promise<string[]>;
+  getResponses?: (submissionId: bigint | number) => Promise<unknown[]>;
+  getSubmissionResponses?: (submissionId: bigint | number) => Promise<Array<bigint | number>>;
+  submissionResponses?: (submissionId: bigint | number, index: bigint | number) => Promise<bigint | number>;
+  submissionResponseCount?: (submissionId: bigint | number) => Promise<bigint | number>;
+  getResponse?: (responseId: bigint | number) => Promise<unknown>;
+};
+
+type BatchContext = { provider: Provider; target: string; abi: InterfaceAbi };
+
+type SubmissionResponseData = { rows: ResponseRow[]; count: number | null };
+
+async function fallbackLoadResponses(
+  jobContract: JobContractShape,
+  map: Map<string, SubmissionResponseData>,
+  submissionIds: bigint[]
+): Promise<void> {
+  await mapLimit(submissionIds, 6, async (sid) => {
+    const key = sid.toString();
+    const existing = map.get(key);
+    if (existing && existing.rows.length > 0) return;
+    try {
+      let rows: ResponseRow[] = [];
+      if (jobContract.getResponses) {
+        const raw = await jobContract.getResponses(sid).catch(() => null);
+        if (Array.isArray(raw)) rows = raw as ResponseRow[];
+      }
+      if (rows.length === 0) {
+        const ids = await loadResponseIds(jobContract, sid).catch(() => []);
+        const fetched = await Promise.all(
+          ids.map(async (rid) => {
+            const raw = await jobContract.getResponse?.(rid).catch(() => null);
+            return raw ? (raw as ResponseRow) : null;
+          })
+        );
+        rows = fetched.filter((row): row is ResponseRow => row !== null);
+      }
+      map.set(key, { rows, count: existing?.count ?? null });
+    } catch {
+      map.set(key, { rows: [], count: existing?.count ?? null });
+    }
+  });
+}
+
+async function collectResponses(
+  jobContract: JobContractShape,
+  submissionIds: bigint[],
+  batch?: BatchContext
+): Promise<Map<string, SubmissionResponseData>> {
+  const map = new Map<string, SubmissionResponseData>();
+  for (const sid of submissionIds) map.set(sid.toString(), { rows: [], count: null });
+  if (submissionIds.length === 0) return map;
+
+  if (batch) {
+    const requests: MulticallRequest[] = submissionIds.flatMap((sid) => [
+      { target: batch.target, abi: batch.abi, functionName: "getResponses", args: [sid] },
+      { target: batch.target, abi: batch.abi, functionName: "submissionResponseCount", args: [sid] }
+    ]);
+
+    try {
+      const results = await multicall(batch.provider, requests);
+      const unresolved: bigint[] = [];
+      submissionIds.forEach((sid, index) => {
+        const key = sid.toString();
+        const rowsResult = results[index * 2];
+        const countResult = results[index * 2 + 1];
+
+        const rows =
+          rowsResult?.ok && Array.isArray(rowsResult.value)
+            ? (Array.from(rowsResult.value as ArrayLike<unknown>) as ResponseRow[])
+            : null;
+
+        const rawCount =
+          countResult?.ok && countResult.value !== null && countResult.value !== undefined
+            ? Array.isArray(countResult.value)
+              ? countResult.value[0]
+              : countResult.value
+            : null;
+        const count = rawCount === null ? null : Number(rawCount);
+
+        const settled = (rows !== null && rows.length > 0) || count === 0;
+        if (settled) {
+          map.set(key, { rows: rows ?? [], count });
+        } else {
+          if (count !== null) map.set(key, { rows: [], count });
+          unresolved.push(sid);
+        }
+      });
+      if (unresolved.length) await fallbackLoadResponses(jobContract, map, unresolved);
+      return map;
+    } catch {
+      // Multicall unavailable or rejected - fall through to direct reads.
+    }
+  }
+
+  await fallbackLoadResponses(jobContract, map, submissionIds);
+  return map;
+}
+
 export async function buildSignalMapData(
-  jobContract: {
-    getSubmissions?: (taskId: number) => Promise<unknown[]>;
-    submittedAgents?: (taskId: number, index: number) => Promise<string>;
-    getSubmission?: (taskId: number, agent: string) => Promise<unknown>;
-    submissions?: (taskId: number, agent: string) => Promise<unknown>;
-    getSelectedFinalists?: (taskId: number) => Promise<string[]>;
-    getResponses?: (submissionId: bigint | number) => Promise<unknown[]>;
-    getSubmissionResponses?: (submissionId: bigint | number) => Promise<Array<bigint | number>>;
-    submissionResponses?: (submissionId: bigint | number, index: bigint | number) => Promise<bigint | number>;
-    submissionResponseCount?: (submissionId: bigint | number) => Promise<bigint | number>;
-    getResponse?: (responseId: bigint | number) => Promise<unknown>;
-  },
-  jobId: number
+  jobContract: JobContractShape,
+  jobId: number,
+  batch?: BatchContext
 ): Promise<SignalTile[]> {
   let rawSubmissions: unknown[] = [];
   try {
@@ -173,38 +270,17 @@ export async function buildSignalMapData(
     finalists = [];
   }
 
+  const submissionIds = validSubmissions.map((submission) => BigInt(submission.submissionId));
+  const responseData = await collectResponses(jobContract, submissionIds, batch);
+
   const eligibleSet = new Set<string>(finalists.map((address) => address.toLowerCase()));
 
   if (eligibleSet.size === 0) {
     for (const submission of validSubmissions) {
-      const sid = BigInt(submission.submissionId);
-      let hasInteractions = false;
-      if (jobContract.getResponses) {
-        try {
-          const directResponses = await jobContract.getResponses(sid);
-          hasInteractions = Array.from(directResponses).length > 0;
-        } catch {
-          hasInteractions = false;
-        }
-      }
-      try {
-        if (!hasInteractions) {
-          const count = Number((await jobContract.submissionResponseCount?.(sid)) ?? 0n);
-          hasInteractions = count > 0;
-        }
-      } catch {
-        hasInteractions = false;
-      }
-
-      if (!hasInteractions) {
-        try {
-          const ids = await loadResponseIds(jobContract, sid);
-          hasInteractions = ids.length > 0;
-        } catch {
-          hasInteractions = false;
-        }
-      }
-
+      const data = responseData.get(String(submission.submissionId));
+      const hasInteractions = Boolean(
+        data && (data.rows.length > 0 || (data.count !== null && data.count > 0))
+      );
       if (hasInteractions) {
         eligibleSet.add(submission.agent.toLowerCase());
       }
@@ -224,30 +300,11 @@ export async function buildSignalMapData(
     const agent = String(sub.agent ?? "");
     if (!submissionId || !agent || !eligibleSet.has(agent.toLowerCase())) continue;
 
-    const responseIds = await loadResponseIds(jobContract, BigInt(submissionId)).catch(() => []);
     const responses: SignalResponse[] = [];
     let critiquesReceived = 0;
     let buildOnsReceived = 0;
 
-    let responseRows: Array<Record<string, unknown> & unknown[]> = [];
-    if (jobContract.getResponses) {
-      try {
-        responseRows = Array.from(await jobContract.getResponses(BigInt(submissionId))) as Array<
-          Record<string, unknown> & unknown[]
-        >;
-      } catch {
-        responseRows = [];
-      }
-    }
-
-    if (responseRows.length === 0) {
-      for (const rid of responseIds) {
-        const raw = (await jobContract.getResponse?.(rid).catch(() => null)) as
-          | (Record<string, unknown> & unknown[])
-          | null;
-        if (raw) responseRows.push(raw);
-      }
-    }
+    const responseRows: ResponseRow[] = responseData.get(submissionId)?.rows ?? [];
 
     for (const raw of responseRows) {
       const rid = raw.responseId ?? raw[0] ?? 0n;
@@ -337,7 +394,8 @@ export async function buildTaskHeatmap(
   sourceId = "current"
 ): Promise<TaskHeatmap> {
   const readProvider = provider ?? getReadProvider();
-  const contract = getContractForSource(sourceId, readProvider) as unknown as {
+  const contractInstance = getContractForSource(sourceId, readProvider);
+  const contract = contractInstance as unknown as {
     getRevealPhaseEnd?: (taskId: number) => Promise<bigint | number>;
     isInRevealPhase?: (taskId: number) => Promise<boolean>;
     getSubmissions?: (taskId: number) => Promise<unknown[]>;
@@ -371,7 +429,15 @@ export async function buildTaskHeatmap(
     };
   }
 
-  const tiles = await buildSignalMapData(contract, taskId);
+  const contractTarget =
+    typeof contractInstance.target === "string"
+      ? contractInstance.target
+      : await contractInstance.target.getAddress();
+  const tiles = await buildSignalMapData(contract, taskId, {
+    provider: readProvider,
+    target: contractTarget,
+    abi: contractInstance.interface.fragments
+  });
   const weighted = computeTileWeights(tiles);
 
   const people: SignalTileWithWeight[] = weighted.map((tile) => ({

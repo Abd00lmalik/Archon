@@ -13,6 +13,7 @@
     "@fontsource/jetbrains-mono": "^5.2.8",
     "@fontsource/space-grotesk": "^5.2.10",
     "@types/d3": "^7.4.3",
+    "@vercel/blob": "^2.8.0",
     "d3": "^7.9.0",
     "ethers": "^6.13.5",
     "framer-motion": "^12.38.0",

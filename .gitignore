@@ -19,3 +19,4 @@ frontend/tsconfig.tsbuildinfo
 .env.local
 verifyme/
 verifyme-work/
+frontend/.uploads/

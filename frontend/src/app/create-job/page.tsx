@@ -2,7 +2,7 @@
 
 import { ethers } from "ethers";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import {
   approveUSDC,
   getChainTime,
@@ -14,13 +14,15 @@ import {
   formatUsdc,
   getJobReadContract,
   getJobWriteContract,
-  parseUSDC
+  parseUSDC,
+  withBanner
 } from "@/lib/contracts";
 import { invalidateTaskCache } from "@/lib/task-adapter";
 import { getCurrentTaskDisplayId } from "@/lib/task-id";
 import { useWallet } from "@/lib/wallet-context";
 import { ARC_TOKEN_CONFIG } from "../../../config";
 import { getArcBalance, hasEnoughArcToPost } from "@/lib/arcToken";
+import { MAX_BANNER_BYTES, uploadBanner } from "@/lib/uploads";
 
 type EstimateState = "idle" | "loading" | "ready" | "error";
 
@@ -98,6 +100,10 @@ export default function CreateJobPage() {
   const [currentUsdcAllowance, setCurrentUsdcAllowance] = useState<bigint>(0n);
   const [insufficientUsdcBalance, setInsufficientUsdcBalance] = useState(false);
   const [approvingUsdc, setApprovingUsdc] = useState(false);
+  const [bannerFile, setBannerFile] = useState<File | null>(null);
+  const [bannerPreview, setBannerPreview] = useState("");
+  const [bannerDragOver, setBannerDragOver] = useState(false);
+  const bannerInputRef = useRef<HTMLInputElement>(null);
 
   const gateEnabled = ARC_TOKEN_CONFIG.tokenAddress !== "0x0000000000000000000000000000000000000000";
   const costSymbol = expectedChainId === 5042002 ? "USDC" : "ETH";
@@ -349,6 +355,39 @@ export default function CreateJobPage() {
     rewardUnits
   ]);
 
+  const handleBannerFile = (file: File | undefined | null) => {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setError("Banner must be an image file (JPG, PNG, GIF or WEBP).");
+      return;
+    }
+    if (file.size > MAX_BANNER_BYTES) {
+      setError("Banner image must be 2MB or smaller.");
+      return;
+    }
+    setError("");
+    setBannerFile(file);
+    const reader = new FileReader();
+    reader.onload = (event) => setBannerPreview(String(event.target?.result ?? ""));
+    reader.readAsDataURL(file);
+  };
+
+  const handleBannerInputChange = (event: ChangeEvent<HTMLInputElement>) => {
+    handleBannerFile(event.target.files?.[0]);
+    event.target.value = "";
+  };
+
+  const handleBannerDrop = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setBannerDragOver(false);
+    handleBannerFile(event.dataTransfer.files?.[0]);
+  };
+
+  const clearBanner = () => {
+    setBannerFile(null);
+    setBannerPreview("");
+  };
+
   const handleCreate = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError("");
@@ -460,6 +499,13 @@ export default function CreateJobPage() {
         throw new Error("Step 1 required: approve USDC before posting this task.");
       }
 
+      let bannerUrl: string | null = null;
+      if (bannerFile) {
+        setStatus("Uploading banner image...");
+        bannerUrl = await uploadBanner(bannerFile);
+      }
+      const descriptionWithBanner = withBanner(trimmedDescription, bannerUrl);
+
       const taskContract = await getJobWriteContract(provider);
       const predictedJobId = Number(await taskContract.nextJobId());
 
@@ -469,11 +515,12 @@ export default function CreateJobPage() {
         rewardUSDC: rewardUnitsValue.toString(),
         maxApprovals,
         interactionStakeOverride: (interactionStakeUnits ?? 0n).toString(),
-        interactionPoolPercent: interactionPoolBps
+        interactionPoolPercent: interactionPoolBps,
+        banner: bannerUrl ?? "none"
       });
       const tx = (await taskContract["createJob(string,string,uint256,uint256,uint256,uint256,uint256)"](
         trimmedTitle,
-        trimmedDescription,
+        descriptionWithBanner,
         deadline,
         rewardUnitsValue,
         maxApprovals,
@@ -513,6 +560,7 @@ export default function CreateJobPage() {
       setMaxApprovalsInput("5");
       setInteractionPoolPercent(0);
       setInteractionStakeUSDC("");
+      clearBanner();
     } catch (err) {
       setError(describeCreateError(err instanceof Error ? err.message : "Failed to create task."));
     } finally {
@@ -634,6 +682,66 @@ export default function CreateJobPage() {
               required
             />
           </label>
+
+          <div className="block">
+            <span className="mb-1.5 block text-sm font-medium text-[#EAEAF0]">
+              Banner Image <span className="text-[#9CA3AF]">(optional)</span>
+            </span>
+            <div
+              className={`cursor-pointer border-2 border-dashed p-4 text-center transition-colors ${
+                bannerDragOver
+                  ? "border-[#00E5FF] bg-[#00E5FF]/5"
+                  : "border-[#1E3347] hover:border-[#3D5A73]"
+              }`}
+              onDragOver={(event) => {
+                event.preventDefault();
+                setBannerDragOver(true);
+              }}
+              onDragLeave={() => setBannerDragOver(false)}
+              onDrop={handleBannerDrop}
+              onClick={() => bannerInputRef.current?.click()}
+            >
+              <input
+                ref={bannerInputRef}
+                type="file"
+                aria-label="Task banner image"
+                accept="image/jpeg,image/png,image/gif,image/webp"
+                className="hidden"
+                onChange={handleBannerInputChange}
+              />
+              {bannerPreview ? (
+                <div className="space-y-2">
+                  <img
+                    src={bannerPreview}
+                    alt="Banner preview"
+                    className="mx-auto h-32 w-full max-w-md border border-[#1E3347] object-cover"
+                  />
+                  <div className="flex items-center justify-center gap-3 text-xs">
+                    <span className="font-mono text-[#9CA3AF]">{bannerFile?.name}</span>
+                    <button
+                      type="button"
+                      className="text-rose-400 hover:underline"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        clearBanner();
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="font-mono text-xs text-[#9CA3AF]">
+                    Drop a banner here or click to upload
+                  </div>
+                  <div className="mt-1 text-[10px] text-[#9CA3AF]">
+                    JPG, PNG, GIF, WEBP &middot; Max 2MB &middot; recommended 1200&times;400
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
 
           <label className="block">
             <span className="mb-1.5 block text-sm font-medium text-[#EAEAF0]">Deadline (date and time)</span>

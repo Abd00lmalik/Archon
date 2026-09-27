@@ -147,6 +147,9 @@ contract ERC8183Job is ICredentialSource {
     mapping(uint256 => mapping(address => bool)) public isFinalist;
     mapping(uint256 => uint256) public revealPhaseStart;
     mapping(uint256 => uint256) public revealPhaseEnd;
+    mapping(uint256 => mapping(address => bool)) public isJudge;
+    mapping(uint256 => address[]) private taskJudges;
+    mapping(uint256 => mapping(uint256 => mapping(address => bool))) public isReviewed;
     mapping(uint256 => TaskEconomyConfig) public taskEconomy;
     mapping(uint256 => uint256) public interactionPoolUsed;
 
@@ -211,6 +214,13 @@ contract ERC8183Job is ICredentialSource {
         uint256 amount
     );
     event RevealPhaseSettled(uint256 indexed jobId, uint256 settledAt);
+    event JudgesUpdated(uint256 indexed jobId, address[] judges);
+    event ReviewedSet(
+        uint256 indexed jobId,
+        uint256 indexed submissionId,
+        address indexed reviewer,
+        bool reviewed
+    );
 
     modifier onlyOwner() {
         require(msg.sender == owner, "only owner");
@@ -513,9 +523,69 @@ contract ERC8183Job is ICredentialSource {
         emit DeliverableSubmitted(jobId, msg.sender, deliverableLink);
     }
 
-    function selectFinalists(uint256 jobId, address[] calldata agents) external {
+    /**
+     * @dev Replaces the full judge list for a task. Only the task creator
+     * (client) can manage judges. Judges can view submissions in the UI and
+     * select finalists to open the reveal phase.
+     */
+    function setJudges(uint256 jobId, address[] calldata addrs) external {
         Job storage job = _getExistingJob(jobId);
         require(msg.sender == job.client, "only client");
+
+        address[] storage existing = taskJudges[jobId];
+        for (uint256 i = 0; i < existing.length; i++) {
+            isJudge[jobId][existing[i]] = false;
+        }
+        delete taskJudges[jobId];
+
+        require(addrs.length <= 10, "too many judges");
+        for (uint256 i = 0; i < addrs.length; i++) {
+            address judge = addrs[i];
+            require(judge != address(0), "invalid judge");
+            require(judge != job.client, "client is not a judge");
+
+            for (uint256 j = i + 1; j < addrs.length; j++) {
+                require(addrs[j] != judge, "duplicate judge");
+            }
+
+            isJudge[jobId][judge] = true;
+            taskJudges[jobId].push(judge);
+        }
+
+        emit JudgesUpdated(jobId, taskJudges[jobId]);
+    }
+
+    function getJudges(uint256 jobId) external view returns (address[] memory) {
+        return taskJudges[jobId];
+    }
+
+    /**
+     * @dev Marks a submission as reviewed by the caller (creator or judge).
+     * Purely a bookkeeping flag used to drop reviewed items from the caller's
+     * review list; passing false un-reviews it.
+     */
+    function setReviewed(uint256 jobId, uint256 submissionId, bool reviewed) external {
+        Job storage job = _getExistingJob(jobId);
+        require(
+            msg.sender == job.client || isJudge[jobId][msg.sender],
+            "only client or judge"
+        );
+        require(
+            submissionIdToAgent[submissionId] != address(0) &&
+                submissionIdToTaskId[submissionId] == jobId,
+            "submission not in task"
+        );
+
+        isReviewed[jobId][submissionId][msg.sender] = reviewed;
+        emit ReviewedSet(jobId, submissionId, msg.sender, reviewed);
+    }
+
+    function selectFinalists(uint256 jobId, address[] calldata agents) external {
+        Job storage job = _getExistingJob(jobId);
+        require(
+            msg.sender == job.client || isJudge[jobId][msg.sender],
+            "only client or judge"
+        );
         require(
             uint8(job.status) == uint8(JobStatus.Submitted) ||
                 uint8(job.status) == uint8(JobStatus.InProgress),

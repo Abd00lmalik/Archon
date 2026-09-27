@@ -2,7 +2,7 @@
 
 import { BrowserProvider, JsonRpcProvider } from "ethers";
 import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { UserDisplay } from "@/components/ui/user-display";
 import { getTileColor, PersonSignal, SignalResponse, TaskHeatmap } from "@/lib/signal-map";
 
@@ -22,8 +22,6 @@ type TreemapNode = {
 interface Props {
   heatmap: TaskHeatmap;
   loading?: boolean;
-  containerWidth?: number;
-  containerHeight?: number;
   taskId?: number;
   sourceId?: string;
   provider?: BrowserProvider | JsonRpcProvider | null;
@@ -306,27 +304,36 @@ function ResponseThread({
   );
 }
 
-function MosaicTile({
+const MosaicTile = memo(function MosaicTile({
   node,
   isSelected,
-  onClick,
+  onSelect,
   containerW,
   containerH
 }: {
   node: TreemapNode;
   isSelected: boolean;
-  onClick: () => void;
+  onSelect: (person: PersonSignal) => void;
   containerW: number;
   containerH: number;
 }) {
   const { person, rect } = node;
   const tileColor = getTileColor(person.critiquesReceived, person.buildOnsReceived);
   const displayName = person.username ?? shortAddr(person.agent);
-  
+
   const leftPct = (rect.x / containerW) * 100;
   const topPct = (rect.y / containerH) * 100;
   const widthPct = (rect.w / containerW) * 100;
   const heightPct = (rect.h / containerH) * 100;
+
+  const pxW = rect.w;
+  const pxH = rect.h;
+  const pad = pxH >= 64 ? 8 : 4;
+  const showName = pxH >= 40 && pxW >= 64;
+  const showPercent = pxH >= 30;
+  const showStats = pxH >= 92 && pxW >= 110;
+  const percentSize = pxH >= 120 ? 26 : pxH >= 84 ? 20 : pxH >= 56 ? 15 : 12;
+  const stack = showName && showStats ? "between" : "center";
 
   return (
     <div
@@ -343,7 +350,7 @@ function MosaicTile({
     >
       <button
         type="button"
-        onClick={onClick}
+        onClick={() => onSelect(person)}
         style={{
           backgroundColor: tileColor,
           border: isSelected ? "2px solid #FFFFFF" : "1px solid rgba(13, 17, 23, 0.4)",
@@ -353,34 +360,35 @@ function MosaicTile({
           minWidth: 0,
           minHeight: 0,
           boxSizing: "border-box",
-          padding: "8px",
+          padding: pad
         }}
-        className="relative flex flex-col justify-between overflow-hidden text-left transition-all hover:brightness-110"
+        className={`relative flex w-full min-w-0 flex-col overflow-hidden text-left transition-all hover:brightness-110 ${
+          stack === "between" ? "justify-between" : "justify-center gap-1"
+        }`}
         title={`${displayName} (${person.percentage.toFixed(1)}%)`}
       >
-        <div className="flex w-full items-center gap-2 overflow-hidden">
-          {widthPct * containerW > 120 && heightPct * containerH > 40 ? (
-            <TileAvatar address={person.agent} size={20} />
-          ) : null}
-          <span
-            className="truncate text-xs font-semibold text-[#E8F4FF]"
-            style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-          >
-            {displayName}
-          </span>
-        </div>
+        {showName ? (
+          <div className="flex w-full min-w-0 items-center gap-2 overflow-hidden">
+            {pxW > 110 ? <TileAvatar address={person.agent} size={20} /> : null}
+            <span
+              className="truncate text-xs font-semibold text-[#E8F4FF]"
+              style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}
+            >
+              {displayName}
+            </span>
+          </div>
+        ) : null}
 
-        <div className="my-1 flex w-full items-center justify-center overflow-hidden">
-          <span
-            className="font-bold text-white"
-            style={{ fontSize: heightPct * containerH > 100 ? 24 : 16 }}
-          >
-            {person.percentage.toFixed(1)}%
-          </span>
-        </div>
+        {showPercent ? (
+          <div className="flex w-full items-center justify-center overflow-hidden">
+            <span className="font-bold leading-none text-white" style={{ fontSize: percentSize }}>
+              {person.percentage.toFixed(1)}%
+            </span>
+          </div>
+        ) : null}
 
-        {heightPct * containerH > 80 && widthPct * containerW > 100 ? (
-          <div className="flex w-full flex-wrap items-center justify-center gap-4 text-[10px] text-white/80 overflow-hidden">
+        {showStats ? (
+          <div className="flex w-full flex-wrap items-center justify-center gap-x-3 gap-y-0.5 overflow-hidden text-[10px] text-white/80">
             <span className="flex items-center gap-1">🔴 {person.critiquesReceived}</span>
             <span className="flex items-center gap-1">🟢 {person.buildOnsReceived}</span>
           </div>
@@ -388,7 +396,7 @@ function MosaicTile({
       </button>
     </div>
   );
-}
+});
 
 function DetailPanel({
   selected,
@@ -502,34 +510,41 @@ export default function SignalMap(props: Props) {
   const {
     heatmap,
     loading = false,
-    containerWidth,
-    containerHeight,
     isCreator = false,
     onViewSubmissions,
     onSlashResponse
   } = props;
 
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [dims, setDims] = useState({ w: 800, h: 400 });
+  const boardRef = useRef<HTMLDivElement>(null);
+  const [dims, setDims] = useState({ w: 800, h: 360 });
   const [selected, setSelected] = useState<PersonSignal | null>(null);
 
   useEffect(() => {
-    if (!containerRef.current) return;
-    const rect = containerRef.current.getBoundingClientRect();
-    if (rect.width > 0 && rect.height > 0) {
-      setDims({ w: Math.floor(rect.width), h: Math.floor(rect.height) });
-    }
+    const node = boardRef.current;
+    if (!node) return;
+    const apply = (w: number, h: number) => {
+      if (w <= 0 || h <= 0) return;
+      const nextW = Math.floor(w);
+      const nextH = Math.floor(h);
+      setDims((prev) => (prev.w === nextW && prev.h === nextH ? prev : { w: nextW, h: nextH }));
+    };
+    const initial = node.getBoundingClientRect();
+    apply(initial.width, initial.height);
     const ro = new ResizeObserver((entries) => {
-      const e = entries[0];
-      if (e && e.contentRect.width > 0) {
-        setDims({ w: Math.floor(e.contentRect.width), h: Math.floor(e.contentRect.height) });
-      }
+      const entry = entries[0];
+      if (entry) apply(entry.contentRect.width, entry.contentRect.height);
     });
-    ro.observe(containerRef.current);
+    ro.observe(node);
     return () => ro.disconnect();
   }, []);
 
   const resolvedWidth = Math.max(300, dims.w);
+  const resolvedHeight = Math.max(240, dims.h);
+
+  const handleSelect = useCallback((person: PersonSignal) => {
+    if (person.submissionId === "aggregate-others") return;
+    setSelected(person);
+  }, []);
 
   const topPeople = useMemo(() => {
     const sorted = [...heatmap.people].sort((a, b) => b.weight - a.weight);
@@ -558,8 +573,6 @@ export default function SignalMap(props: Props) {
     return [...top, aggregate];
   }, [heatmap.people]);
 
-  const resolvedHeight = Math.max(320, Math.min(600, 240 + topPeople.length * 30));
-
   const nodes = useMemo(() => {
     return squarify(topPeople, 0, 0, resolvedWidth, resolvedHeight);
   }, [resolvedHeight, resolvedWidth, topPeople]);
@@ -571,89 +584,70 @@ export default function SignalMap(props: Props) {
     });
   }, [heatmap.people]);
 
-  if (loading) {
-    return (
-      <div
-        ref={containerRef}
-        className="flex w-full items-center justify-center"
-        style={{ minHeight: resolvedHeight, background: "var(--surface)" }}
-      >
-        <span style={{ color: "var(--text-muted)", fontFamily: "JetBrains Mono, monospace", fontSize: 12 }}>
-          Loading signal map...
-        </span>
+  const boardContent = loading ? (
+    <div className="flex h-full w-full items-center justify-center">
+      <span style={{ color: "var(--text-muted)", fontFamily: "JetBrains Mono, monospace", fontSize: 12 }}>
+        Loading signal map...
+      </span>
+    </div>
+  ) : !heatmap.people.length ? (
+    <div className="flex h-full w-full flex-col items-center justify-center p-8 text-center">
+      <div style={{ color: "var(--text-muted)", fontFamily: "JetBrains Mono, monospace", fontSize: 12, marginBottom: 8 }}>
+        NO SIGNALS YET
       </div>
-    );
-  }
-
-  if (!heatmap.people.length) {
-    return (
-      <div
-        ref={containerRef}
-        className="flex w-full flex-col items-center justify-center p-8 text-center"
-        style={{ minHeight: resolvedHeight, background: "var(--surface)", border: "1px solid var(--border)" }}
-      >
-        <div style={{ color: "var(--text-muted)", fontFamily: "JetBrains Mono, monospace", fontSize: 12, marginBottom: 8 }}>
-          NO SIGNALS YET
-        </div>
-        <div style={{ color: "var(--text-muted)", fontSize: 11, maxWidth: 300 }}>
-          The signal map activates during the reveal phase when participants begin building on and critiquing finalist
-          submissions.
-        </div>
+      <div style={{ color: "var(--text-muted)", fontSize: 11, maxWidth: 300 }}>
+        The signal map activates during the reveal phase when participants begin building on and critiquing finalist
+        submissions.
       </div>
-    );
-  }
+    </div>
+  ) : (
+    nodes.map((node) => (
+      <MosaicTile
+        key={node.person.submissionId}
+        node={node}
+        isSelected={selected?.submissionId === node.person.submissionId}
+        onSelect={handleSelect}
+        containerW={resolvedWidth}
+        containerH={resolvedHeight}
+      />
+    ))
+  );
 
   return (
-    <div className="signal-map-wrapper flex gap-0 overflow-hidden" style={{ minHeight: resolvedHeight }}>
-      <div className="flex-1">
-        <div
-          className="mb-2 flex items-center gap-4 px-1"
-          style={{ fontSize: 10, fontFamily: "JetBrains Mono, monospace", color: "var(--text-muted)" }}
-        >
-          <div className="flex items-center gap-1.5">
-            <div style={{ width: 10, height: 10, background: getTileColor(0, 4) }} />
-            BUILD-ONS
-          </div>
-          <div className="flex items-center gap-1.5">
-            <div style={{ width: 10, height: 10, background: getTileColor(4, 0) }} />
-            CRITIQUES
-          </div>
-          <div className="flex items-center gap-1.5">
-            <div style={{ width: 10, height: 10, background: "#F5A623" }} />
-            MIXED
-          </div>
-          <span className="ml-auto">
-            {heatmap.totalActivity} interactions - {heatmap.people.length} submissions
-          </span>
+    <div className="flex h-full w-full min-h-0 flex-col overflow-hidden">
+      <div
+        className="mb-2 flex shrink-0 items-center gap-4 px-1"
+        style={{ fontSize: 10, fontFamily: "JetBrains Mono, monospace", color: "var(--text-muted)" }}
+      >
+        <div className="flex items-center gap-1.5">
+          <div style={{ width: 10, height: 10, background: getTileColor(0, 4) }} />
+          BUILD-ONS
         </div>
+        <div className="flex items-center gap-1.5">
+          <div style={{ width: 10, height: 10, background: getTileColor(4, 0) }} />
+          CRITIQUES
+        </div>
+        <div className="flex items-center gap-1.5">
+          <div style={{ width: 10, height: 10, background: "#F5A623" }} />
+          MIXED
+        </div>
+        <span className="ml-auto">
+          {heatmap.totalActivity} interactions - {heatmap.people.length} submissions
+        </span>
+      </div>
 
-        <div
-          ref={containerRef}
-          style={{
-            position: "relative",
-            width: "100%",
-            height: resolvedHeight,
-            backgroundColor: "#0D1117",
-            borderRadius: 8,
-            border: "1px solid var(--border)",
-            overflow: "hidden"
-          }}
-        >
-          {nodes.map((node) => (
-            <MosaicTile
-              key={node.person.submissionId}
-              node={node}
-              isSelected={selected?.submissionId === node.person.submissionId}
-              onClick={() => {
-                if (node.person.submissionId !== "aggregate-others") {
-                  setSelected(node.person);
-                }
-              }}
-              containerW={resolvedWidth}
-              containerH={resolvedHeight}
-            />
-          ))}
-        </div>
+      <div
+        ref={boardRef}
+        className="min-h-0 w-full flex-1"
+        style={{
+          position: "relative",
+          backgroundColor: "#0D1117",
+          borderRadius: 8,
+          border: "1px solid var(--border)",
+          overflow: "hidden"
+        }}
+      >
+        {boardContent}
       </div>
 
       <AnimatePresence>

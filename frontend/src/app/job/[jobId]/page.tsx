@@ -9,9 +9,14 @@ import { buildTaskHeatmap, TaskHeatmap } from "@/lib/signal-map";
 import {
   deriveDisplayStatus,
   expectedChainId,
+  extractBanner,
+  fetchHasRespondedMap,
+  fetchIsJudge,
   fetchJobCredentialCooldownSeconds,
   fetchLastJobCredentialClaim,
   fetchPendingReleases,
+  fetchReviewedByViewer,
+  fetchTaskJudges,
   formatTaskDescription,
   formatTaskTitle,
   formatTimestamp,
@@ -19,6 +24,7 @@ import {
   getReadProvider,
   isValidSubmission,
   parseSubmission,
+  shortAddress,
   JobRecord,
   PendingReleaseRecord,
   RESPONSE_TYPE,
@@ -41,6 +47,8 @@ import { getDisplayId, parseTaskUrl } from "@/lib/task-id";
 import { useWallet } from "@/lib/wallet-context";
 
 type ViewMode = "signal" | "list" | "timeline";
+
+const LIST_PAGE_SIZE = 5;
 
 function errorText(error: unknown, fallback: string) {
   const message =
@@ -72,6 +80,8 @@ function humanizeError(error: unknown): string {
   if (normalized.includes("user rejected")) return "Transaction cancelled.";
   if (normalized.includes("insufficient funds")) return "Insufficient USDC balance.";
   if (normalized.includes("already submitted")) return "You have already submitted to this task.";
+  if (normalized.includes("already responded"))
+    return "You already responded to this submission - each wallet can respond to a submission only once.";
   if (normalized.includes("deadline")) return "This task's deadline has passed.";
   if (normalized.includes("network")) return "Network error - check your connection and retry.";
   return raw.slice(0, 120);
@@ -339,30 +349,28 @@ function FinalistCard({
 function FinalistSelectionPanel({
   submissions,
   maxApprovals,
+  selected,
+  onToggle,
   submitting,
   error,
+  disabled,
+  disabledHint,
+  submitLabel,
   onSubmit
 }: {
   submissions: SubmissionRecord[];
   maxApprovals: number;
+  selected: string[];
+  onToggle: (agent: string) => void;
   submitting: boolean;
   error: string | null;
+  disabled?: boolean;
+  disabledHint?: string;
+  submitLabel?: string;
   onSubmit: (agents: string[]) => void;
 }) {
-  const [selected, setSelected] = useState<Set<string>>(new Set());
   const maxFinalists = maxApprovals + 5;
-
-  const toggle = (agent: string) => {
-    setSelected((previous) => {
-      const next = new Set(previous);
-      if (next.has(agent)) {
-        next.delete(agent);
-      } else if (next.size < maxFinalists) {
-        next.add(agent);
-      }
-      return next;
-    });
-  };
+  const selectedKeys = useMemo(() => new Set(selected.map((agent) => agent.toLowerCase())), [selected]);
 
   return (
     <div className="space-y-4">
@@ -372,7 +380,7 @@ function FinalistSelectionPanel({
         for critique and build-ons.
         <br />
         <strong style={{ color: "#00E5FF" }}>
-          Selected: {selected.size} / {maxFinalists}
+          Selected: {selected.length} / {maxFinalists}
         </strong>
       </div>
 
@@ -384,11 +392,11 @@ function FinalistSelectionPanel({
         ) : null}
         {submissions.map((submission, index) => {
           const agent = submission.agent ?? "";
-          const chosen = selected.has(agent);
+          const chosen = selectedKeys.has(agent.toLowerCase());
           return (
             <div
               key={`${agent}-${index}`}
-              onClick={() => toggle(agent)}
+              onClick={() => onToggle(agent)}
               className="cursor-pointer border p-3 transition-all"
               style={{
                 borderColor: chosen ? "#00E5FF" : "#1E3347",
@@ -434,13 +442,17 @@ function FinalistSelectionPanel({
       <button
         type="button"
         className="btn-primary w-full"
-        onClick={() => onSubmit(Array.from(selected))}
-        disabled={selected.size === 0 || submitting}
+        onClick={() => onSubmit(selected)}
+        disabled={selected.length === 0 || submitting || disabled}
       >
         {submitting
           ? "Starting Reveal Phase..."
-          : `Start Reveal Phase with ${selected.size} Finalist${selected.size === 1 ? "" : "s"}`}
+          : submitLabel ??
+            `Start Reveal Phase with ${selected.length} Finalist${selected.length === 1 ? "" : "s"}`}
       </button>
+      {disabled && disabledHint ? (
+        <div className="text-center text-[11px] text-[var(--text-muted)]">{disabledHint}</div>
+      ) : null}
     </div>
   );
 }
@@ -499,9 +511,22 @@ export default function JobDetailsPage() {
   const [finalistSubmissions, setFinalistSubmissions] = useState<Record<string, SubmissionRecord | null>>({});
   const [viewMode, setViewMode] = useState<ViewMode>("signal");
   const [submissionFilterAddress, setSubmissionFilterAddress] = useState("");
-  const mapContainerRef = useRef<HTMLDivElement>(null);
+
+  const [isJudge, setIsJudge] = useState(false);
+  const [taskJudges, setTaskJudges] = useState<string[]>([]);
+  const [judgeInput, setJudgeInput] = useState("");
+  const [judgeSaving, setJudgeSaving] = useState(false);
+  const [judgeError, setJudgeError] = useState("");
+  const [visibleCount, setVisibleCount] = useState(LIST_PAGE_SIZE);
+  const [expandedSubmissionId, setExpandedSubmissionId] = useState<number | null>(null);
+  const [stagedAgents, setStagedAgents] = useState<string[]>([]);
+  const [reviewedByViewer, setReviewedByViewer] = useState<Set<number>>(new Set());
+  const [showReviewed, setShowReviewed] = useState(false);
+  const [respondedIds, setRespondedIds] = useState<Set<number>>(new Set());
+  const [reviewBusyId, setReviewBusyId] = useState<number | null>(null);
+  const [reviewError, setReviewError] = useState("");
+
   const taskRef = useRef<UnifiedTask | null>(null);
-  const [mapDimensions, setMapDimensions] = useState({ w: 640, h: 380 });
 
   const [deliverableLink, setDeliverableLink] = useState("");
   const [responseType, setResponseType] = useState<number>(RESPONSE_TYPE.BuildsOn);
@@ -531,6 +556,8 @@ export default function JobDetailsPage() {
 
   const isConnected = Boolean(account);
   const isCreator = Boolean(account && job && account.toLowerCase() === job.client.toLowerCase());
+  const canReview = Boolean(isCreator || isJudge);
+  const bannerUrl = useMemo(() => extractBanner(job?.description ?? ""), [job?.description]);
   const jobLoading = coreLoading;
   const taskJobId = task?.jobId ?? -1;
   const taskSourceId = task?.sourceId ?? "";
@@ -576,6 +603,46 @@ export default function JobDetailsPage() {
     () => new Set(selectedFinalists.map((address) => address.toLowerCase())),
     [selectedFinalists]
   );
+
+  const stagedAgentSet = useMemo(
+    () => new Set(stagedAgents.map((agent) => agent.toLowerCase())),
+    [stagedAgents]
+  );
+
+  const reviewQueueSubmissions = useMemo(
+    () =>
+      filteredListSubmissions.filter((submission) => {
+        if (stagedAgentSet.has(submission.agent.toLowerCase())) return false;
+        if (!showReviewed && reviewedByViewer.has(submission.submissionId)) return false;
+        return true;
+      }),
+    [filteredListSubmissions, reviewedByViewer, showReviewed, stagedAgentSet]
+  );
+
+  const visibleReviewSubmissions = useMemo(
+    () => reviewQueueSubmissions.slice(0, Math.max(LIST_PAGE_SIZE, visibleCount)),
+    [reviewQueueSubmissions, visibleCount]
+  );
+
+  const hiddenReviewedCount = useMemo(
+    () =>
+      filteredListSubmissions.filter((submission) => reviewedByViewer.has(submission.submissionId))
+        .length,
+    [filteredListSubmissions, reviewedByViewer]
+  );
+
+  const hiddenStagedCount = useMemo(
+    () =>
+      filteredListSubmissions.filter((submission) =>
+        stagedAgentSet.has(submission.agent.toLowerCase())
+      ).length,
+    [filteredListSubmissions, stagedAgentSet]
+  );
+
+  useEffect(() => {
+    setVisibleCount(LIST_PAGE_SIZE);
+    setExpandedSubmissionId(null);
+  }, [submissionFilterAddress]);
 
   const withProvider = async () => {
     const provider = browserProvider ?? (await connect());
@@ -774,21 +841,6 @@ export default function JobDetailsPage() {
   }, [taskHasSignalMap, taskLoaded, viewMode]);
 
   useEffect(() => {
-    const element = mapContainerRef.current;
-    if (!element) return;
-    const observer = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      if (!entry) return;
-      setMapDimensions({
-        w: Math.max(320, Math.floor(entry.contentRect.width)),
-        h: Math.max(320, Math.floor(entry.contentRect.height))
-      });
-    });
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
-
-  useEffect(() => {
     if (!claimReadyAt) return;
     const update = () => setClaimCountdown(Math.max(0, claimReadyAt - Math.floor(Date.now() / 1000)));
     update();
@@ -980,6 +1032,10 @@ export default function JobDetailsPage() {
       alert("Response content too short");
       return;
     }
+    if (respondedIds.has(selectedSubmission.submissionId)) {
+      setErrorMessage("You already responded to this submission - each wallet can respond only once.");
+      return;
+    }
 
     try {
       setBusyAction("respond");
@@ -1001,6 +1057,7 @@ export default function JobDetailsPage() {
       setStatusMessage(`Response tx: ${txHash}`);
       setResponseContent("");
       setShowResponsePanel(false);
+      setRespondedIds((previous) => new Set(previous).add(selectedSubmission.submissionId));
       clearTaskCaches();
       await loadHeatmap();
       await loadTask();
@@ -1110,6 +1167,106 @@ export default function JobDetailsPage() {
     }
   };
 
+  const toggleStagedAgent = (agent: string) => {
+    setStagedAgents((previous) => {
+      const key = agent.toLowerCase();
+      if (previous.some((entry) => entry.toLowerCase() === key)) {
+        return previous.filter((entry) => entry.toLowerCase() !== key);
+      }
+      const limit = Number(maxApprovals || 1) + 5;
+      if (previous.length >= limit) return previous;
+      return [...previous, agent];
+    });
+  };
+
+  const handleToggleReviewed = async (submission: SubmissionRecord) => {
+    if (!signer || !account) {
+      setReviewError("Connect a wallet to mark submissions reviewed.");
+      return;
+    }
+    const wasReviewed = reviewedByViewer.has(submission.submissionId);
+    try {
+      setReviewBusyId(submission.submissionId);
+      setReviewError("");
+      await withProvider();
+      const contract = await getTaskWriteContract();
+      const hasFlag =
+        typeof contract.interface.hasFunction === "function" &&
+        contract.interface.hasFunction("setReviewed(uint256,uint256,bool)");
+      if (!hasFlag) {
+        throw new Error("This contract deployment does not support review flags yet.");
+      }
+      const tx = await contract.setReviewed(
+        BigInt(jobId),
+        BigInt(submission.submissionId),
+        !wasReviewed
+      );
+      await tx.wait();
+      setReviewedByViewer((previous) => {
+        const next = new Set(previous);
+        if (wasReviewed) next.delete(submission.submissionId);
+        else next.add(submission.submissionId);
+        return next;
+      });
+      setStatusMessage(wasReviewed ? "Review flag cleared." : "Marked as reviewed.");
+    } catch (error) {
+      setReviewError(humanizeError(error));
+    } finally {
+      setReviewBusyId(null);
+    }
+  };
+
+  const handleSaveJudges = async (overrideList?: string[]) => {
+    if (!signer || !account) {
+      setJudgeError("Connect your wallet to manage judges.");
+      return;
+    }
+    if (!task || !isCreator) return;
+
+    const parts =
+      overrideList ??
+      judgeInput
+        .split(/[\s,;]+/)
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+    if (parts.length > 10) {
+      setJudgeError("A task can have at most 10 judges.");
+      return;
+    }
+    const invalid = parts.filter((entry) => !/^0x[0-9a-fA-F]{40}$/.test(entry));
+    if (invalid.length > 0) {
+      setJudgeError(`Invalid address: ${invalid[0]}`);
+      return;
+    }
+    const unique = Array.from(new Set(parts.map((entry) => entry.toLowerCase()))).filter(
+      (entry) => entry !== job?.client.toLowerCase()
+    );
+
+    try {
+      setJudgeSaving(true);
+      setJudgeError("");
+      await withProvider();
+      const contract = await getTaskWriteContract();
+      const hasFlag =
+        typeof contract.interface.hasFunction === "function" &&
+        contract.interface.hasFunction("setJudges(uint256,address[])");
+      if (!hasFlag) {
+        throw new Error("This contract deployment does not support judges yet.");
+      }
+      const tx = await contract.setJudges(BigInt(jobId), unique);
+      await tx.wait();
+      setJudgeInput("");
+      const list = await fetchTaskJudges(jobId);
+      setTaskJudges(list);
+      setIsJudge(unique.includes(account.toLowerCase()));
+      setStatusMessage(`Judges updated: ${unique.length} address${unique.length === 1 ? "" : "es"}.`);
+    } catch (error) {
+      setJudgeError(errorText(error, "Failed to update judges"));
+    } finally {
+      setJudgeSaving(false);
+    }
+  };
+
   const handleSelectFinalists = async (agents: string[]) => {
     if (!agents.length) return;
     if (finalistSelecting) return;
@@ -1133,6 +1290,7 @@ export default function JobDetailsPage() {
       await tx.wait();
       const txHash = tx.hash as string;
       setStatusMessage(`Finalists tx: ${txHash}`);
+      setStagedAgents([]);
       clearTaskCaches();
       await loadTask();
       await loadHeatmap();
@@ -1326,12 +1484,12 @@ export default function JobDetailsPage() {
       submittedCountForReveal > 0 &&
       submittedCountForReveal <= finalistThreshold
   );
-  const canManualReveal = Boolean(
-    task?.caps.canSelectFinalists &&
+  const canStageFinalists = Boolean(
+    canReview &&
+      task?.caps.canSelectFinalists &&
       job &&
-      submissionDeadlinePassed &&
       (job.status === 1 || job.status === 2) &&
-      submittedCountForReveal > finalistThreshold
+      submittedCountForReveal > 0
   );
   const nowSeconds = Math.floor(Date.now() / 1000);
   const isRevealActive = Boolean(job?.status === 4 && revealEndValue > 0 && nowSeconds <= revealEndValue);
@@ -1358,6 +1516,16 @@ export default function JobDetailsPage() {
       !viewerIsCreator &&
       job?.status === 4
   );
+  const finalistInteractionPool = safeSubmissions.filter((submission) =>
+    finalistSet.has(submission.agent.toLowerCase())
+  );
+  const respondedFinalistCount = finalistInteractionPool.filter((submission) =>
+    respondedIds.has(submission.submissionId)
+  ).length;
+  const remainingInteractions = Math.max(0, finalistInteractionPool.length - respondedFinalistCount);
+  const selectedAlreadyResponded = Boolean(
+    selectedSubmission && respondedIds.has(selectedSubmission.submissionId)
+  );
   const canInteract = Boolean(
     task?.caps.canInteract &&
       showInteractionAction &&
@@ -1366,7 +1534,8 @@ export default function JobDetailsPage() {
       isConnected &&
       selectedSubmission &&
       isSelectedFinalist &&
-      !isOwnSelectedSubmission
+      !isOwnSelectedSubmission &&
+      !selectedAlreadyResponded
   );
   const canSettle = Boolean(
     task?.caps.canSettleRevealPhase &&
@@ -1382,6 +1551,63 @@ export default function JobDetailsPage() {
     (sum, release) => sum + release.stakeAmount + release.rewardAmount,
     0n
   );
+
+  useEffect(() => {
+    let active = true;
+    if (!Number.isInteger(jobId) || jobId < 0) return () => undefined;
+    void (async () => {
+      const [judgeFlag, list] = await Promise.all([
+        account ? fetchIsJudge(jobId, account) : Promise.resolve(false),
+        fetchTaskJudges(jobId)
+      ]);
+      if (!active) return;
+      setIsJudge(judgeFlag);
+      setTaskJudges(list);
+    })();
+    return () => {
+      active = false;
+    };
+  }, [account, jobId, job?.status]);
+
+  useEffect(() => {
+    let active = true;
+    const ids = safeSubmissions.map((submission) => submission.submissionId);
+    if (!account || !canReview || ids.length === 0 || !Number.isInteger(jobId) || jobId < 0) {
+      setReviewedByViewer(new Set());
+      return () => {
+        active = false;
+      };
+    }
+    void fetchReviewedByViewer(jobId, ids, account).then((marks) => {
+      if (active) setReviewedByViewer(marks);
+    });
+    return () => {
+      active = false;
+    };
+  }, [account, canReview, jobId, safeSubmissions]);
+
+  useEffect(() => {
+    let active = true;
+    if (!account || !isRevealActive || safeSubmissions.length === 0) {
+      setRespondedIds(new Set());
+      return () => {
+        active = false;
+      };
+    }
+    const finalists = safeSubmissions.filter((submission) =>
+      finalistSet.has(submission.agent.toLowerCase())
+    );
+    const ids = (finalists.length > 0 ? finalists : safeSubmissions).map(
+      (submission) => submission.submissionId
+    );
+    void fetchHasRespondedMap(ids, account).then((marks) => {
+      if (active) setRespondedIds(marks);
+    });
+    return () => {
+      active = false;
+    };
+  }, [account, isRevealActive, safeSubmissions, finalistSet]);
+
   useEffect(() => {
     setDisplayTaskId(task?.displayId ? `#${task.displayId}` : validRouteTask ? `#${displayId}` : `#${rawJobParam}`);
   }, [displayId, rawJobParam, task?.displayId, validRouteTask]);
@@ -1428,6 +1654,16 @@ export default function JobDetailsPage() {
       ) : null}
       {errorMessage ? (
         <div className="panel border-[var(--danger)] py-3 text-sm text-[var(--danger)]">{errorMessage}</div>
+      ) : null}
+
+      {bannerUrl ? (
+        <div className="panel overflow-hidden p-0">
+          <img
+            src={bannerUrl}
+            alt={`${job.title} banner`}
+            className="h-40 w-full object-cover md:h-56"
+          />
+        </div>
       ) : null}
 
       <PhaseBanner job={job} revealEnd={revealEndValue} awaitingSelection={awaitingSelection} />
@@ -1586,12 +1822,10 @@ export default function JobDetailsPage() {
               ) : null}
 
               {shouldShowSignalMap ? (
-                <div ref={mapContainerRef} className="signal-map-wrapper w-full overflow-hidden" style={{ height: 400, minHeight: 400 }}>
+                <div className="signal-map-wrapper w-full overflow-hidden">
                   <SignalMap
                     heatmap={heatmap}
                     loading={heatmapLoading}
-                    containerWidth={Math.max(300, mapDimensions.w - 4)}
-                    containerHeight={Math.max(320, mapDimensions.h)}
                     taskId={jobId}
                     sourceId={task?.sourceId}
                     provider={getReadProvider()}
@@ -1617,7 +1851,7 @@ export default function JobDetailsPage() {
           ) : null}
 
           {viewMode === "list" ? (
-            !task?.caps.showsSubmissionsToAll && !isCreator && !shouldShowSignalMap ? (
+            !task?.caps.showsSubmissionsToAll && !canReview && !shouldShowSignalMap ? (
               <div className="flex h-48 flex-col items-center justify-center border border-[var(--border)] p-6 text-center">
                 <div className="mb-3 font-mono text-2xl text-[var(--arc)]">?</div>
                 <div className="font-heading mb-2 text-base font-semibold">Submissions are sealed</div>
@@ -1649,55 +1883,168 @@ export default function JobDetailsPage() {
                   </div>
                 ) : null}
 
-                {filteredListSubmissions.length === 0 ? (
-                  <div className="p-4 text-xs font-mono text-[var(--text-muted)]">No submissions to display</div>
+                {canReview ? (
+                  <div className="flex flex-wrap items-center justify-between gap-2 border border-[var(--border)] px-3 py-2 text-[11px]">
+                    <span className="font-mono text-[var(--text-secondary)]">
+                      {reviewQueueSubmissions.length} in review queue
+                      {hiddenReviewedCount > 0 ? ` · ${hiddenReviewedCount} reviewed` : ""}
+                      {hiddenStagedCount > 0 ? ` · ${hiddenStagedCount} approved` : ""}
+                    </span>
+                    {hiddenReviewedCount > 0 ? (
+                      <button
+                        type="button"
+                        className="btn-ghost px-2 py-1 text-[10px]"
+                        onClick={() => setShowReviewed((previous) => !previous)}
+                      >
+                        {showReviewed ? "Hide reviewed" : `Show reviewed (${hiddenReviewedCount})`}
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {reviewError ? (
+                  <div className="border border-[var(--danger)] px-3 py-2 text-xs text-[var(--danger)]">
+                    {reviewError}
+                  </div>
+                ) : null}
+
+                {visibleReviewSubmissions.length === 0 ? (
+                  <div className="p-4 text-xs font-mono text-[var(--text-muted)]">
+                    {filteredListSubmissions.length === 0 ? "No submissions to display" : "Review queue is empty"}
+                  </div>
                 ) : (
-                  filteredListSubmissions.map((submission) => (
-                    <article key={`${submission.agent}-${submission.submissionId}`} className="card-sharp space-y-2 p-4">
-                      <div className="flex items-center justify-between gap-2">
-                        <UserDisplay address={submission.agent} showAvatar={true} avatarSize={28} className="min-w-0" />
-                        <span className="badge badge-arc">
-                          {submission.status === 2
-                            ? "APPROVED"
-                            : submission.status === 1
-                              ? "SUBMITTED"
-                              : "PENDING"}
-                        </span>
-                      </div>
-
-                      {submission.deliverableLink ? (
-                        <a
-                          href={submission.deliverableLink}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="break-all text-xs font-mono text-[var(--arc)] underline"
+                  visibleReviewSubmissions.map((submission) => {
+                    const isExpanded = expandedSubmissionId === submission.submissionId;
+                    const isReviewed = reviewedByViewer.has(submission.submissionId);
+                    const isStaged = stagedAgentSet.has(submission.agent.toLowerCase());
+                    const alreadyResponded = respondedIds.has(submission.submissionId);
+                    const reviewActionsVisible = canReview && canStageFinalists;
+                    const finalistLimit = Number(maxApprovals || 1) + 5;
+                    return (
+                      <article
+                        key={`${submission.agent}-${submission.submissionId}`}
+                        className="card-sharp space-y-2 p-4"
+                      >
+                        <button
+                          type="button"
+                          className="flex w-full items-center justify-between gap-2 text-left"
+                          onClick={() =>
+                            setExpandedSubmissionId(isExpanded ? null : submission.submissionId)
+                          }
                         >
-                          {submission.deliverableLink}
-                        </a>
-                      ) : (
-                        <div className="text-xs text-[var(--text-muted)]">No deliverable link provided</div>
-                      )}
+                          <UserDisplay
+                            address={submission.agent}
+                            showAvatar={true}
+                            avatarSize={28}
+                            className="min-w-0"
+                          />
+                          <span className="flex shrink-0 items-center gap-1.5">
+                            {isReviewed ? (
+                              <span className="badge" style={{ color: "#7A9BB5" }}>
+                                REVIEWED
+                              </span>
+                            ) : null}
+                            {isStaged ? <span className="badge badge-arc">APPROVED</span> : null}
+                            <span className="badge badge-arc">
+                              {submission.status === 2
+                                ? "APPROVED"
+                                : submission.status === 1
+                                  ? "SUBMITTED"
+                                  : "PENDING"}
+                            </span>
+                          </span>
+                        </button>
 
-                      {!isCreator && isRevealActive ? (
-                        account?.toLowerCase() === submission.agent.toLowerCase() ? (
-                          <div className="border border-[var(--border)] p-2 text-center text-xs text-[var(--text-muted)]">
-                            You cannot respond to your own submission.
-                          </div>
-                        ) : (
-                          <button
-                            type="button"
-                            className="btn-ghost w-full text-xs"
-                            onClick={() => setSelectedSubmission(submission)}
+                        {submission.deliverableLink ? (
+                          <a
+                            href={submission.deliverableLink}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="break-all text-xs font-mono text-[var(--arc)] underline"
                           >
-                            {selectedSubmission?.submissionId === submission.submissionId
-                              ? "Selected for Response"
-                              : "Select for Response"}
-                          </button>
-                        )
-                      ) : null}
-                    </article>
-                  ))
+                            {submission.deliverableLink}
+                          </a>
+                        ) : (
+                          <div className="text-xs text-[var(--text-muted)]">No deliverable link provided</div>
+                        )}
+
+                        {alreadyResponded ? (
+                          <div className="border border-[var(--border)] px-2 py-1.5 text-center text-[11px] text-[var(--text-secondary)]">
+                            You already responded to this submission - 1 response per wallet per submission.
+                          </div>
+                        ) : null}
+
+                        {!isCreator && isRevealActive ? (
+                          account?.toLowerCase() === submission.agent.toLowerCase() ? (
+                            <div className="border border-[var(--border)] p-2 text-center text-xs text-[var(--text-muted)]">
+                              You cannot respond to your own submission.
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              className="btn-ghost w-full text-xs"
+                              disabled={alreadyResponded}
+                              onClick={() => setSelectedSubmission(submission)}
+                            >
+                              {alreadyResponded
+                                ? "Already responded"
+                                : selectedSubmission?.submissionId === submission.submissionId
+                                  ? "Selected for Response"
+                                  : "Select for Response"}
+                            </button>
+                          )
+                        ) : null}
+
+                        {isExpanded && reviewActionsVisible ? (
+                          <div className="flex gap-2 border-t border-[var(--border)] pt-3">
+                            <button
+                              type="button"
+                              className="btn-ghost flex-1 text-xs"
+                              disabled={reviewBusyId === submission.submissionId}
+                              onClick={() => void handleToggleReviewed(submission)}
+                            >
+                              {reviewBusyId === submission.submissionId
+                                ? "Working..."
+                                : isReviewed
+                                  ? "Reviewed (undo)"
+                                  : "Reviewed"}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-primary flex-1 text-xs"
+                              disabled={
+                                isStaged ||
+                                stagedAgentSet.size >= finalistLimit ||
+                                stagedAgents.length >= finalistLimit
+                              }
+                              onClick={() => {
+                                if (isStaged) return;
+                                toggleStagedAgent(submission.agent);
+                                setExpandedSubmissionId(null);
+                              }}
+                            >
+                              {isStaged
+                                ? "Approved"
+                                : stagedAgentSet.size >= finalistLimit
+                                  ? "Slots full"
+                                  : "Approved (move to reveal)"}
+                            </button>
+                          </div>
+                        ) : null}
+                      </article>
+                    );
+                  })
                 )}
+
+                {reviewQueueSubmissions.length > visibleReviewSubmissions.length ? (
+                  <button
+                    type="button"
+                    className="btn-ghost w-full text-xs"
+                    onClick={() => setVisibleCount((previous) => previous + LIST_PAGE_SIZE)}
+                  >
+                    Open more ({reviewQueueSubmissions.length - visibleReviewSubmissions.length} remaining)
+                  </button>
+                ) : null}
               </div>
             )
           ) : null}
@@ -1985,13 +2332,36 @@ export default function JobDetailsPage() {
                   </div>
                 ) : (
                 <>
+                  {finalistInteractionPool.length > 0 ? (
+                    <div className="border px-3 py-2 text-[11px] text-[var(--text-secondary)]" style={{ borderColor: "var(--border)" }}>
+                      <span className="font-mono text-[var(--text-primary)]">
+                        {respondedFinalistCount}/{finalistInteractionPool.length}
+                      </span>{" "}
+                      submissions responded to -{" "}
+                      <span className="font-mono text-[var(--arc)]">{remainingInteractions} left</span> to critique or
+                      build on. Each wallet can respond to each submission only once.
+                    </div>
+                  ) : null}
+
                   <button
                     type="button"
                     className="btn-ghost w-full"
                     onClick={() => setShowResponsePanel((value) => !value)}
+                    disabled={selectedAlreadyResponded}
                   >
-                    {showResponsePanel ? "Close Response Panel" : "Respond to Selected Submission"}
+                    {selectedAlreadyResponded
+                      ? "Already responded to this submission"
+                      : showResponsePanel
+                        ? "Close Response Panel"
+                        : "Respond to Selected Submission"}
                   </button>
+
+                  {selectedAlreadyResponded ? (
+                    <div className="border border-[var(--border)] p-2 text-center text-[11px] text-[var(--text-muted)]">
+                      You already responded to this submission. Pick another finalist -{" "}
+                      {remainingInteractions} left.
+                    </div>
+                  ) : null}
 
                   {showResponsePanel ? (
                     <div className="card-sharp space-y-3 p-4">
@@ -2055,18 +2425,76 @@ export default function JobDetailsPage() {
             </>
           ) : null}
 
+          {isConnected && isCreator && job && (job.status === 0 || job.status === 1 || job.status === 2) ? (
+            <div className="space-y-3 border-b border-[var(--border)] pb-4">
+              <div className="section-header">JUDGES</div>
+              <div className="text-[11px] leading-relaxed text-[var(--text-secondary)]">
+                Paste wallet addresses (comma or newline separated) to let them review submissions, mark them
+                reviewed, and help start the 5-day reveal phase.
+              </div>
+              <textarea
+                aria-label="Judge wallet addresses"
+                className="archon-input min-h-20 w-full text-xs"
+                placeholder="0xabc..., 0xdef..."
+                value={judgeInput}
+                onChange={(event) => setJudgeInput(event.target.value)}
+                disabled={judgeSaving}
+              />
+              {judgeError ? <div className="text-xs text-[var(--danger)]">{judgeError}</div> : null}
+              <button
+                type="button"
+                className="btn-primary w-full text-xs"
+                onClick={() => void handleSaveJudges()}
+                disabled={judgeSaving || !judgeInput.trim()}
+              >
+                {judgeSaving ? "Saving judges..." : "Save judges"}
+              </button>
+              {taskJudges.length > 0 ? (
+                <div className="space-y-1">
+                  <div className="text-[10px] font-mono text-[var(--text-muted)]">
+                    CURRENT JUDGES ({taskJudges.length})
+                  </div>
+                  {taskJudges.map((address) => (
+                    <div
+                      key={address}
+                      className="flex items-center justify-between gap-2 border border-[var(--border)] px-2 py-1"
+                    >
+                      <span className="truncate font-mono text-[11px]">{shortAddress(address)}</span>
+                      <button
+                        type="button"
+                        className="shrink-0 text-[10px] text-rose-400 hover:underline"
+                        disabled={judgeSaving}
+                        onClick={() =>
+                          void handleSaveJudges(
+                            taskJudges.filter((entry) => entry.toLowerCase() !== address.toLowerCase())
+                          )
+                        }
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {canStageFinalists && (submissionDeadlinePassed || stagedAgents.length > 0) ? (
+            <FinalistSelectionPanel
+              submissions={pendingSubmissions}
+              maxApprovals={maxApprovals}
+              selected={stagedAgents}
+              onToggle={toggleStagedAgent}
+              submitting={finalistSelecting}
+              error={finalistError}
+              disabled={!submissionDeadlinePassed}
+              disabledHint="Approvals are staged - the reveal phase can start once the submission deadline passes."
+              onSubmit={(agents) => void handleSelectFinalists(agents)}
+            />
+          ) : null}
+
           {isConnected && isCreator ? (
             <>
-              {canManualReveal ? (
-                <FinalistSelectionPanel
-                  submissions={pendingSubmissions}
-                  maxApprovals={maxApprovals}
-                  submitting={finalistSelecting}
-                  error={finalistError}
-                  onSubmit={(agents) => void handleSelectFinalists(agents)}
-                />
-              ) : null}
-
               {job.status === 4 && revealEnded ? (
                 <div className="space-y-3">
                   <div className="section-header">FINALIZE WINNERS</div>

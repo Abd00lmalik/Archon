@@ -1,5 +1,6 @@
 import { ethers } from "ethers";
 import deploymentRaw from "@/lib/generated/contracts.json";
+import { multicall } from "@/lib/multicall";
 import {
   deriveDisplayStatus as deriveCanonicalDisplayStatus,
   mapRawStatusFlags,
@@ -366,6 +367,40 @@ const fallbackRpcUrl =
   "https://rpc.testnet.arc.network";
 const resolvedJobContract = deployment.contracts.jobContract ?? deployment.contracts.job;
 const resolvedUsdcAddress = deployment.usdcAddress ?? deployment.contracts.usdc?.address ?? ZERO_ADDRESS;
+
+// Fragments for judge/review functions. They are merged into the job ABI only
+// when the generated deployment file predates them, so an older deployment
+// still exposes the new read/write surface after a redeploy-less UI update.
+const JOB_FALLBACK_ABI = [
+  "function setJudges(uint256 jobId,address[] addrs)",
+  "function getJudges(uint256 jobId) view returns (address[])",
+  "function isJudge(uint256 jobId,address judge) view returns (bool)",
+  "function setReviewed(uint256 jobId,uint256 submissionId,bool reviewed)",
+  "function isReviewed(uint256 jobId,uint256 submissionId,address reviewer) view returns (bool)",
+  "function hasResponded(uint256 submissionId,address responder) view returns (bool)"
+] as const;
+
+if (resolvedJobContract?.abi) {
+  try {
+    const known = new Set(
+      new ethers.Interface(resolvedJobContract.abi as ethers.InterfaceAbi).fragments
+        .filter((fragment) => fragment.type === "function")
+        .map((fragment) => fragment.format("sighash"))
+    );
+    const missing = JOB_FALLBACK_ABI.filter((signature) => {
+      try {
+        return !known.has(ethers.FunctionFragment.from(signature).format("sighash"));
+      } catch {
+        return false;
+      }
+    });
+    if (missing.length > 0) {
+      resolvedJobContract.abi = [...resolvedJobContract.abi, ...missing];
+    }
+  } catch {
+    // Keep the deployment ABI untouched if it cannot be parsed.
+  }
+}
 const ERC20_MIN_ABI = [
   "function balanceOf(address owner) view returns (uint256)",
   "function allowance(address owner, address spender) view returns (uint256)",
@@ -630,9 +665,41 @@ export function formatTaskTitle(title: string): string {
   return title.charAt(0).toUpperCase() + title.slice(1).toLowerCase();
 }
 
+const BANNER_LINE_PATTERN = /(^|\n)[ \t]*Banner:[ \t]*(\S[^\n]*)/gi;
+
+export function hasBannerLine(description?: string | null): boolean {
+  if (!description) return false;
+  BANNER_LINE_PATTERN.lastIndex = 0;
+  return BANNER_LINE_PATTERN.test(description);
+}
+
+export function extractBanner(description?: string | null): string | null {
+  if (!description) return null;
+  BANNER_LINE_PATTERN.lastIndex = 0;
+  const match = BANNER_LINE_PATTERN.exec(description);
+  if (!match) return null;
+  const url = (match[2] ?? "").trim();
+  return /^(https?:\/\/|ipfs:\/\/)/i.test(url) ? url : null;
+}
+
+export function stripBanner(description?: string | null): string {
+  if (!description) return "";
+  return description
+    .replace(BANNER_LINE_PATTERN, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+export function withBanner(description: string, bannerUrl?: string | null): string {
+  const base = stripBanner(description ?? "");
+  if (!bannerUrl) return base;
+  return `${base}\nBanner: ${bannerUrl}`.trim();
+}
+
 export function formatTaskDescription(description: string): string {
   if (!description) return "";
-  return description.charAt(0).toUpperCase() + description.slice(1);
+  const cleaned = hasBannerLine(description) ? stripBanner(description) : description;
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
 }
 
 export function toDisplayName(address: string) {
@@ -1580,6 +1647,77 @@ export async function fetchSelectedFinalists(jobId: number): Promise<string[]> {
   }
 }
 
+export async function fetchTaskJudges(jobId: number): Promise<string[]> {
+  try {
+    const contract = getOptionalJobReadContract();
+    const judges = (await contract.getJudges(jobId)) as string[];
+    return Array.isArray(judges) ? judges : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchIsJudge(jobId: number, account: string): Promise<boolean> {
+  if (!account) return false;
+  try {
+    const contract = getOptionalJobReadContract();
+    return Boolean(await contract.isJudge(jobId, account));
+  } catch {
+    return false;
+  }
+}
+
+export async function fetchReviewedByViewer(
+  jobId: number,
+  submissionIds: Array<number | bigint>,
+  viewer: string
+): Promise<Set<number>> {
+  const reviewed = new Set<number>();
+  if (!viewer || submissionIds.length === 0) return reviewed;
+  try {
+    const job = resolvedJobContract;
+    if (!job?.address) return reviewed;
+    const requests = submissionIds.map((submissionId) => ({
+      target: job.address,
+      abi: job.abi as ethers.InterfaceAbi,
+      functionName: "isReviewed",
+      args: [jobId, submissionId, viewer]
+    }));
+    const results = await multicall(getReadProvider(), requests);
+    results.forEach((result, index) => {
+      if (result.ok && result.value) reviewed.add(Number(submissionIds[index]));
+    });
+  } catch {
+    // Ignore: reviewed marks are cosmetic.
+  }
+  return reviewed;
+}
+
+export async function fetchHasRespondedMap(
+  submissionIds: Array<number | bigint>,
+  account: string
+): Promise<Set<number>> {
+  const responded = new Set<number>();
+  if (!account || submissionIds.length === 0) return responded;
+  try {
+    const job = resolvedJobContract;
+    if (!job?.address) return responded;
+    const requests = submissionIds.map((submissionId) => ({
+      target: job.address,
+      abi: job.abi as ethers.InterfaceAbi,
+      functionName: "hasResponded",
+      args: [submissionId, account]
+    }));
+    const results = await multicall(getReadProvider(), requests);
+    results.forEach((result, index) => {
+      if (result.ok && result.value) responded.add(Number(submissionIds[index]));
+    });
+  } catch {
+    // Ignore: the contract still enforces the one-response rule.
+  }
+  return responded;
+}
+
 export async function fetchRevealPhaseEnd(jobId: number): Promise<number> {
   try {
     const contract = getOptionalJobReadContract();
@@ -2380,6 +2518,29 @@ export async function txSelectFinalists(
 ) : Promise<string> {
   const contract = getJobContract(signer);
   const tx = await contract.selectFinalists(jobId, agents);
+  await tx.wait();
+  return tx.hash as string;
+}
+
+export async function txSetJudges(
+  signer: ethers.JsonRpcSigner,
+  jobId: bigint,
+  judges: string[]
+): Promise<string> {
+  const contract = getJobContract(signer);
+  const tx = await contract.setJudges(jobId, judges);
+  await tx.wait();
+  return tx.hash as string;
+}
+
+export async function txSetReviewed(
+  signer: ethers.JsonRpcSigner,
+  jobId: bigint,
+  submissionId: number | bigint,
+  reviewed: boolean
+): Promise<string> {
+  const contract = getJobContract(signer);
+  const tx = await contract.setReviewed(jobId, BigInt(submissionId), reviewed);
   await tx.wait();
   return tx.hash as string;
 }
