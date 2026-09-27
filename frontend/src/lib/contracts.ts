@@ -1739,19 +1739,25 @@ export interface TriageSnapshot {
   verdicts: Map<number, Record<string, number>>;
   /** Promoted agent addresses (lowercase) currently in the reveal shortlist. */
   promoted: Set<string>;
+  /**
+   * False when a required partition of reads failed entirely (so the caller
+   * must NOT overwrite good state with the empty maps returned on failure).
+   */
+  ok: boolean;
 }
 
 /**
  * One batched read of the judge triage state: per-reviewer verdicts for every
- * submission plus the promotion shortlist. Reads are best-effort — a failed or
- * unsupported call leaves the verdict absent (treated as "no verdict yet").
+ * submission plus the promotion shortlist. `ok` reports whether the expected
+ * requests actually succeeded — callers keep previous state and retry when it
+ * is false, instead of rendering the unfiltered submission list.
  */
 export async function fetchTriageState(
   jobId: number,
   submissions: Array<{ submissionId: number; agent: string }>,
   reviewers: string[]
 ): Promise<TriageSnapshot> {
-  const state: TriageSnapshot = { verdicts: new Map(), promoted: new Set() };
+  const state: TriageSnapshot = { verdicts: new Map(), promoted: new Set(), ok: false };
   if (!Number.isInteger(jobId) || jobId < 0 || submissions.length === 0) return state;
   try {
     const job = resolvedJobContract;
@@ -1789,6 +1795,8 @@ export async function fetchTriageState(
       keys.push({ kind: "promoted", agent: submission.agent.toLowerCase() });
     }
     const results = await multicall(getReadProvider(), requests);
+    let verdictSuccesses = 0;
+    let promotedSuccesses = 0;
     results.forEach((result, index) => {
       const key = keys[index];
       if (!key || !result.ok) return;
@@ -1799,12 +1807,19 @@ export async function fetchTriageState(
         const row = state.verdicts.get(key.sid) ?? {};
         row[key.reviewer] = verdict;
         state.verdicts.set(key.sid, row);
-      } else if (raw === true) {
-        state.promoted.add(key.agent);
+        verdictSuccesses += 1;
+      } else {
+        promotedSuccesses += 1;
+        if (raw === true) state.promoted.add(key.agent);
       }
     });
+    // Require EVERY expected read: one missed verdict could re-surface a
+    // rejected submission, so a partial batch counts as a failure.
+    state.ok =
+      verdictSuccesses >= reviewerList.length * submissions.length &&
+      promotedSuccesses >= submissions.length;
   } catch {
-    // Cosmetic reads only; the contract re-validates every triage action.
+    state.ok = false;
   }
   return state;
 }

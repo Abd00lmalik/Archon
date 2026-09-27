@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import SignalMap from "@/components/signal-map";
 import { UserDisplay } from "@/components/ui/user-display";
 import { buildTaskHeatmap, TaskHeatmap } from "@/lib/signal-map";
+import { withRetry } from "@/lib/multicall";
 import {
   deriveDisplayStatus,
   expectedChainId,
@@ -510,6 +511,7 @@ export default function JobDetailsPage() {
     isRevealPhase: false
   });
   const [heatmapLoading, setHeatmapLoading] = useState(true);
+  const [heatmapError, setHeatmapError] = useState(false);
   const [finalistSubmissions, setFinalistSubmissions] = useState<Record<string, SubmissionRecord | null>>({});
   const [viewMode, setViewMode] = useState<ViewMode>("signal");
   const [submissionFilterAddress, setSubmissionFilterAddress] = useState("");
@@ -529,6 +531,9 @@ export default function JobDetailsPage() {
   const [respondedIds, setRespondedIds] = useState<Set<number>>(new Set());
   const [reviewBusyId, setReviewBusyId] = useState<number | null>(null);
   const [reviewError, setReviewError] = useState("");
+  const [triageReady, setTriageReady] = useState(false);
+  const [triageError, setTriageError] = useState("");
+  const [judgesLoaded, setJudgesLoaded] = useState(false);
 
   const taskRef = useRef<UnifiedTask | null>(null);
 
@@ -621,15 +626,27 @@ export default function JobDetailsPage() {
   const isRejectedSubmission = (submissionId: number): boolean =>
     Object.values(verdictRow(submissionId)).some((verdict) => verdict === 2);
   const isPromotedAgent = (agent: string): boolean => promotedAgents.has(agent.toLowerCase());
+  const revealStarted = Boolean(job && job.status >= 4);
+  const triageGateReady = triageReady && judgesLoaded;
+  const triageBlocked = !revealStarted && safeSubmissions.length > 0 && !triageGateReady;
 
   const reviewQueueSubmissions = useMemo(
-    () =>
-      filteredListSubmissions.filter((submission) => {
+    () => {
+      // During/after reveal the list shows exactly the revealed finalists for
+      // every viewer; rejected submissions can never be finalists, so they are
+      // excluded automatically. Pre-reveal it is the reviewers' working queue.
+      if (revealStarted) {
+        return filteredListSubmissions.filter((submission) =>
+          finalistSet.has(submission.agent.toLowerCase())
+        );
+      }
+      return filteredListSubmissions.filter((submission) => {
         if (promotedAgents.has(submission.agent.toLowerCase())) return false;
         if (isRejectedSubmission(submission.submissionId)) return false;
         return true;
-      }),
-    [filteredListSubmissions, verdictsBySid, promotedAgents] // eslint-disable-line react-hooks/exhaustive-deps
+      });
+    },
+    [filteredListSubmissions, verdictsBySid, promotedAgents, revealStarted, finalistSet] // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   const visibleReviewSubmissions = useMemo(
@@ -765,15 +782,18 @@ export default function JobDetailsPage() {
     if (shouldLoadInteractions) {
       try {
         const [finalRows, revealEndRaw, revealOpenRaw, economyRaw, poolRemainingRaw] = await Promise.all([
-          readContract.getSelectedFinalists(task.jobId).catch(() => []),
+          // Retry the finalist read: a transient failure here used to degrade
+          // silently to [] (interaction pool / finalize list fell back to ALL
+          // submissions). null means "failed" - keep the previous value.
+          withRetry(() => readContract.getSelectedFinalists(task.jobId)).catch(() => null),
           readContract.getRevealPhaseEnd(task.jobId).catch(() => task.revealPhaseEnd),
           readContract.isInRevealPhase(task.jobId).catch(() => task.isInRevealPhase),
           readContract.getTaskEconomy(task.jobId).catch(() => null),
           readContract.getInteractionPoolRemaining(task.jobId).catch(() => 0n)
         ]);
-        const finals = Array.from(finalRows as string[]);
+        const finals = finalRows === null ? [] : Array.from(finalRows as string[]);
         const revealEnd = Number(revealEndRaw);
-        setSelectedFinalists(finals);
+        if (finalRows !== null) setSelectedFinalists(finals);
         setRevealPhaseEnd(revealEnd);
         setIsRevealPhase(Boolean(revealOpenRaw));
 
@@ -848,12 +868,15 @@ export default function JobDetailsPage() {
       return;
     }
     setHeatmapLoading(true);
+    setHeatmapError(false);
     try {
       const data = await buildTaskHeatmap(getReadProvider(), Number(taskJobId), taskSourceId);
       setHeatmap(data);
     } catch (error) {
       console.warn("[heatmap] load error:", error);
-      setHeatmap({ people: [], totalActivity: 0, revealPhaseEnd: 0, isRevealPhase: false });
+      // Keep the last good heatmap; surface an error + retry instead of
+      // silently blanking the signal map.
+      setHeatmapError(true);
     } finally {
       setHeatmapLoading(false);
     }
@@ -1420,6 +1443,10 @@ export default function JobDetailsPage() {
       await tx.wait();
       const txHash = tx.hash as string;
       setStatusMessage(`Reveal phase tx: ${txHash}`);
+      // Seed the revealed set optimistically so the list/signal map render the
+      // promoted finalists immediately, without waiting on a fresh (possibly
+      // flaky) getSelectedFinalists read.
+      setSelectedFinalists(unique);
       clearTaskCaches();
       await loadTask();
       await loadHeatmap();
@@ -1704,39 +1731,78 @@ export default function JobDetailsPage() {
       if (!active) return;
       setIsJudge(judgeFlag);
       setTaskJudges(list);
+      setJudgesLoaded(true);
     })();
     return () => {
       active = false;
     };
   }, [account, jobId, job?.status]);
 
+  // Triage state is job-scoped: reset on job change so stale verdicts never
+  // bleed across tasks, and so the queue stays gated until new data arrives
+  // (clearing on transient empty submission lists used to flash the
+  // unfiltered list).
+  useEffect(() => {
+    setTriageReady(false);
+    setTriageError("");
+    setJudgesLoaded(false);
+    setVerdictsBySid(new Map());
+    setPromotedAgents(new Set());
+  }, [jobId]);
+
   useEffect(() => {
     let active = true;
-    if (safeSubmissions.length === 0 || !Number.isInteger(jobId) || jobId < 0) {
-      setVerdictsBySid(new Map());
-      setPromotedAgents(new Set());
+    let attempt = 0;
+    const submissionsForTriage = safeSubmissions.map((submission) => ({
+      submissionId: submission.submissionId,
+      agent: submission.agent
+    }));
+    if (
+      !Number.isInteger(jobId) ||
+      jobId < 0 ||
+      submissionsForTriage.length === 0 ||
+      !clientAddress ||
+      !taskSourceId
+    ) {
       return () => {
         active = false;
       };
     }
-    const reviewers = clientAddress ? [clientAddress, ...taskJudges] : [];
-    void fetchTriageState(
-      jobId,
-      safeSubmissions.map((submission) => ({
-        submissionId: submission.submissionId,
-        agent: submission.agent
-      })),
-      reviewers
-    ).then((state) => {
-      if (active) {
-        setVerdictsBySid(state.verdicts);
-        setPromotedAgents(state.promoted);
+    if (taskSourceId !== "current") {
+      // Legacy/archived sources predate the triage contract surface; there
+      // are no verdicts to apply, so render them unfiltered.
+      setTriageReady(true);
+      return () => {
+        active = false;
+      };
+    }
+    const reviewers = [clientAddress, ...taskJudges];
+    void (async () => {
+      while (active && attempt < 3) {
+        attempt += 1;
+        const state = await fetchTriageState(jobId, submissionsForTriage, reviewers);
+        if (!active) return;
+        if (state.ok) {
+          // Only overwrite state on success - a failed fetch returning empty
+          // maps would re-surface rejected submissions.
+          setVerdictsBySid(state.verdicts);
+          setPromotedAgents(state.promoted);
+          setTriageReady(true);
+          setTriageError("");
+          return;
+        }
+        if (attempt < 3) {
+          await new Promise((resolve) => setTimeout(resolve, 800 * attempt));
+        }
       }
-    });
+      if (active) {
+        setTriageError("Could not load review state (network error). Refresh to retry.");
+      }
+    })();
     return () => {
       active = false;
     };
-  }, [jobId, safeSubmissions, taskJudges, clientAddress]);
+  }, [jobId, safeSubmissions, taskJudges, clientAddress, taskSourceId]);
 
   useEffect(() => {
     let active = true;
@@ -1973,6 +2039,19 @@ export default function JobDetailsPage() {
                 </div>
               ) : null}
 
+              {heatmapError ? (
+                <div className="mb-3 flex items-center justify-between gap-3 border border-[var(--danger)] px-3 py-2 text-xs text-[var(--danger)]">
+                  <span>Failed to load signal data - showing {heatmap.people.length > 0 ? "last loaded data" : "nothing yet"}.</span>
+                  <button
+                    type="button"
+                    className="btn-ghost px-2 py-1 text-[10px]"
+                    onClick={() => void loadHeatmap()}
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : null}
+
               {shouldShowSignalMap ? (
                 <div className="signal-map-wrapper w-full overflow-hidden">
                   <SignalMap
@@ -1994,7 +2073,7 @@ export default function JobDetailsPage() {
                   <div>
                     <div className="text-2xl mb-3 opacity-20">?</div>
                     Signal map is only available during the reveal phase.
-                    {job?.status === 2 ? " Creator is selecting finalists." : ""}
+                    {job?.status === 2 ? " Creator is promoting submissions for the reveal." : ""}
                     {job?.status === 0 ? " Task is still accepting submissions." : ""}
                   </div>
                 </div>
@@ -2039,7 +2118,9 @@ export default function JobDetailsPage() {
                 {canReview ? (
                   <div className="flex flex-wrap items-center justify-between gap-2 border border-[var(--border)] px-3 py-2 text-[11px]">
                     <span className="font-mono text-[var(--text-secondary)]">
-                      {reviewQueueSubmissions.length} in review queue
+                      {revealStarted
+                        ? `${reviewQueueSubmissions.length} revealed submission${reviewQueueSubmissions.length === 1 ? "" : "s"}`
+                        : `${reviewQueueSubmissions.length} in review queue`}
                       {acceptedCount > 0 ? ` · ${acceptedCount} accepted` : ""}
                       {promotedCount > 0 ? ` · ${promotedCount} promoted` : ""}
                       {rejectedCount > 0 ? ` · ${rejectedCount} rejected (hidden)` : ""}
@@ -2052,10 +2133,19 @@ export default function JobDetailsPage() {
                     {reviewError}
                   </div>
                 ) : null}
+                {triageError && triageGateReady ? (
+                  <div className="border border-[var(--danger)] px-3 py-2 text-xs text-[var(--danger)]">
+                    {triageError}
+                  </div>
+                ) : null}
 
-                {visibleReviewSubmissions.length === 0 ? (
+                {triageBlocked ? (
                   <div className="p-4 text-xs font-mono text-[var(--text-muted)]">
-                    {filteredListSubmissions.length === 0 ? "No submissions to display" : "Review queue is empty"}
+                    {triageError || "Loading review state..."}
+                  </div>
+                ) : visibleReviewSubmissions.length === 0 ? (
+                  <div className="p-4 text-xs font-mono text-[var(--text-muted)]">
+                    {filteredListSubmissions.length === 0 ? "No submissions to display" : revealStarted ? "No revealed submissions" : "Review queue is empty"}
                   </div>
                 ) : (
                   visibleReviewSubmissions.map((submission) => {
@@ -2666,7 +2756,7 @@ export default function JobDetailsPage() {
                     ? "Submission deadline has passed. Awaiting creator to select finalists."
                     : ""}
                   {job.status === 2 ? "Creator is reviewing submissions" : ""}
-                  {job.status === 3 ? "Creator is selecting finalists" : ""}
+                  {job.status === 3 ? "Promoting submissions for reveal" : ""}
                   {job.status === 5 ? "Task is closed" : ""}
                   {job.status === 6 ? "Task is closed" : ""}
                 </div>

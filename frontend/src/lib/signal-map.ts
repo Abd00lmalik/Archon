@@ -6,7 +6,7 @@ import {
   ZERO_ADDRESS
 } from "@/lib/contracts";
 import { decodeInteractionContent, DecodedInteraction } from "@/lib/content-decoder";
-import { mapLimit, MulticallRequest, multicall } from "@/lib/multicall";
+import { mapLimit, MulticallRequest, multicall, withRetry } from "@/lib/multicall";
 import { getContractForSource } from "@/lib/task-adapter";
 import { fetchUserProfile } from "@/lib/user-profiles";
 
@@ -237,11 +237,20 @@ export async function buildSignalMapData(
   jobId: number,
   batch?: BatchContext
 ): Promise<SignalTile[]> {
+  // Load submissions: retry the batched getter, then fall back to enumerating
+  // submittedAgents. If both paths yield nothing the read itself is broken —
+  // during a reveal there is always at least one submission — so throw instead
+  // of silently producing an empty (or fallback-expanded) tile set.
   let rawSubmissions: unknown[] = [];
-  try {
-    if (!jobContract.getSubmissions) throw new Error("getSubmissions unavailable");
-    rawSubmissions = Array.from((await jobContract.getSubmissions(jobId).catch(() => [])) ?? []);
-  } catch {
+  if (jobContract.getSubmissions) {
+    try {
+      const rows = await withRetry(() => jobContract.getSubmissions!(jobId));
+      rawSubmissions = Array.from(rows ?? []);
+    } catch {
+      rawSubmissions = [];
+    }
+  }
+  if (rawSubmissions.length === 0) {
     for (let idx = 0; idx < 100; idx += 1) {
       try {
         const agent = await jobContract.submittedAgents?.(jobId, idx);
@@ -261,13 +270,20 @@ export async function buildSignalMapData(
     .map((row) => parseSubmission(row))
     .filter((row) => row.agent && !isZeroAddress(row.agent));
 
+  if (validSubmissions.length === 0) {
+    throw new Error("Signal map could not load submissions (RPC read failed).");
+  }
+
+  // The finalist read is the source of truth for which tiles are shown.
+  // NEVER degrade to "all submissions" on a read failure: that leaked rejected
+  // submissions onto the map. Legacy sources without the getter keep the
+  // interaction-based fallback below.
   let finalists: string[] = [];
-  try {
-    finalists = Array.from((await jobContract.getSelectedFinalists?.(jobId)) ?? [])
+  if (jobContract.getSelectedFinalists) {
+    const rows = await withRetry(() => jobContract.getSelectedFinalists!(jobId));
+    finalists = Array.from(rows ?? [])
       .map((address) => String(address))
       .filter((address) => !isZeroAddress(address));
-  } catch {
-    finalists = [];
   }
 
   const submissionIds = validSubmissions.map((submission) => BigInt(submission.submissionId));
@@ -410,14 +426,18 @@ export async function buildTaskHeatmap(
     getResponse?: (responseId: bigint | number) => Promise<unknown>;
   };
 
+  // Retry reveal-state reads. A transient failure here used to be swallowed
+  // into "not in reveal", returning an empty map — so the signal map flipped
+  // between empty and populated across refreshes. Only a genuinely-false
+  // on-chain value may mean "no reveal"; a persistent read failure now
+  // propagates so the caller can show an error with a retry.
   let revealPhaseEnd = 0;
+  if (contract.getRevealPhaseEnd) {
+    revealPhaseEnd = Number(await withRetry(() => contract.getRevealPhaseEnd!(taskId)));
+  }
   let isRevealPhase = false;
-  try {
-    revealPhaseEnd = Number((await contract.getRevealPhaseEnd?.(taskId)) ?? 0);
-    isRevealPhase = Boolean((await contract.isInRevealPhase?.(taskId)) ?? false);
-  } catch {
-    revealPhaseEnd = 0;
-    isRevealPhase = false;
+  if (contract.isInRevealPhase) {
+    isRevealPhase = Boolean(await withRetry(() => contract.isInRevealPhase!(taskId)));
   }
 
   if (!isRevealPhase) {

@@ -70,16 +70,52 @@ function getInterface(abi: InterfaceAbi): Interface {
   return iface;
 }
 
-/** True when Multicall3 has deployed code on the current network. */
+/**
+ * Retry an async operation a few times with linear backoff.
+ * Used for RPC reads that intermittently fail on rate-limited nodes.
+ */
+export async function withRetry<T>(
+  fn: () => Promise<T>,
+  attempts = 3,
+  baseDelayMs = 250
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, baseDelayMs * (attempt + 1)));
+      }
+    }
+  }
+  throw lastError;
+}
+
+/**
+ * True when Multicall3 has deployed code on the current network.
+ *
+ * Only DEFINITIVE answers are cached. A transient RPC error during the probe
+ * returns false for this call but leaves the cache unset — caching it would
+ * silently disable every batched read for the rest of the session (there was
+ * no caller of resetMulticallSupport), which emptied verdict/finalist data
+ * and made the UI flip between filtered and unfiltered states per refresh.
+ */
 export async function isMulticallSupported(provider: Provider): Promise<boolean> {
   if (multicallSupported !== null) return multicallSupported;
-  try {
-    const code = await provider.getCode(MULTICALL3_ADDRESS);
-    multicallSupported = Boolean(code) && code !== "0x";
-  } catch {
-    multicallSupported = false;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const code = await provider.getCode(MULTICALL3_ADDRESS);
+      const supported = Boolean(code) && code !== "0x";
+      multicallSupported = supported;
+      return supported;
+    } catch {
+      // Transient failure: brief backoff, then retry without caching.
+      await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
+    }
   }
-  return multicallSupported;
+  return false;
 }
 
 /** Forget the cached support probe (e.g. after a network switch). */
