@@ -614,9 +614,22 @@ export default function JobDetailsPage() {
     );
   }, [safeSubmissions, submissionFilterAddress]);
 
+  const revealStarted = Boolean(job && job.status >= 4);
+
+  // The on-chain getSelectedFinalists read can transiently fail (or have
+  // failed on first load and been kept empty). Once reveal has started the
+  // promoted set is frozen on-chain (setPromoted reverts) and mirrors the
+  // revealed set, so fall back to it instead of rendering an empty list or
+  // disabling every interaction ("Submit Response" needs an active finalist).
+  const revealedFinalists = useMemo(() => {
+    if (selectedFinalists.length > 0) return selectedFinalists;
+    if (revealStarted && promotedAgents.size > 0) return Array.from(promotedAgents);
+    return selectedFinalists;
+  }, [selectedFinalists, revealStarted, promotedAgents]);
+
   const finalistSet = useMemo(
-    () => new Set(selectedFinalists.map((address) => address.toLowerCase())),
-    [selectedFinalists]
+    () => new Set(revealedFinalists.map((address) => address.toLowerCase())),
+    [revealedFinalists]
   );
 
   const verdictRow = (submissionId: number): Record<string, number> =>
@@ -626,7 +639,6 @@ export default function JobDetailsPage() {
   const isRejectedSubmission = (submissionId: number): boolean =>
     Object.values(verdictRow(submissionId)).some((verdict) => verdict === 2);
   const isPromotedAgent = (agent: string): boolean => promotedAgents.has(agent.toLowerCase());
-  const revealStarted = Boolean(job && job.status >= 4);
   const triageGateReady = triageReady && judgesLoaded;
   const triageBlocked = !revealStarted && safeSubmissions.length > 0 && !triageGateReady;
 
@@ -768,10 +780,20 @@ export default function JobDetailsPage() {
     setSubsError(null);
     try {
       perf.start("task-submissions-load");
-      const rawSubmissions = await withTimeout(loadTaskSubmissions(task, readProvider), 5_000, []);
+      // A 5s timeout used to resolve silently to [] and blank the list until
+      // the next refresh. Retry with a longer timeout, and on failure keep the
+      // previous list and surface an error (retry button) instead.
+      const rawSubmissions = await withRetry(async () => {
+        const rows = await withTimeout<SubmissionRecord[] | null>(
+          loadTaskSubmissions(task, readProvider),
+          8_000,
+          null
+        );
+        if (rows === null) throw new Error("Submission read timed out.");
+        return rows;
+      }, 2, 600);
       setSubmissions(rawSubmissions);
     } catch {
-      setSubmissions([]);
       setSubsError("Failed to load submissions.");
     } finally {
       perf.end("task-submissions-load");
@@ -788,42 +810,52 @@ export default function JobDetailsPage() {
           withRetry(() => readContract.getSelectedFinalists(task.jobId)).catch(() => null),
           readContract.getRevealPhaseEnd(task.jobId).catch(() => task.revealPhaseEnd),
           readContract.isInRevealPhase(task.jobId).catch(() => task.isInRevealPhase),
-          readContract.getTaskEconomy(task.jobId).catch(() => null),
-          readContract.getInteractionPoolRemaining(task.jobId).catch(() => 0n)
+          withRetry(() => readContract.getTaskEconomy(task.jobId)).catch(() => null),
+          withRetry(() => readContract.getInteractionPoolRemaining(task.jobId)).catch(() => null)
         ]);
-        const finals = finalRows === null ? [] : Array.from(finalRows as string[]);
+        const finals = finalRows === null ? null : Array.from(finalRows as string[]);
         const revealEnd = Number(revealEndRaw);
-        if (finalRows !== null) setSelectedFinalists(finals);
+        if (finals) setSelectedFinalists(finals);
         setRevealPhaseEnd(revealEnd);
         setIsRevealPhase(Boolean(revealOpenRaw));
 
-        if (economyRaw) {
-          const raw = economyRaw as Record<string, unknown> & unknown[];
-          setTaskEconomy({
-            interactionStake: coerceBigInt(raw.interactionStake ?? raw[0] ?? 2_000_000n, 2_000_000n),
-            interactionReward: coerceBigInt(raw.interactionReward ?? raw[1] ?? 0n),
-            interactionPool: coerceBigInt(raw.interactionPool ?? raw[2] ?? 0n),
-            interactionPoolFunded: Boolean(raw.interactionPoolFunded ?? raw[3] ?? false),
-            poolRemaining: coerceBigInt(poolRemainingRaw)
-          });
-        }
+        // Economy and pool reads are independent: apply each field only when
+        // its own read succeeded and keep the previous value otherwise (a
+        // failed pool read used to land as 0n and flip the panel to "No pool"
+        // until the next refresh).
+        setTaskEconomy((previous) => {
+          const next = { ...previous };
+          if (economyRaw) {
+            const raw = economyRaw as Record<string, unknown> & unknown[];
+            next.interactionStake = coerceBigInt(raw.interactionStake ?? raw[0] ?? 2_000_000n, 2_000_000n);
+            next.interactionReward = coerceBigInt(raw.interactionReward ?? raw[1] ?? 0n);
+            next.interactionPool = coerceBigInt(raw.interactionPool ?? raw[2] ?? 0n);
+            next.interactionPoolFunded = Boolean(raw.interactionPoolFunded ?? raw[3] ?? false);
+          }
+          if (poolRemainingRaw !== null) {
+            next.poolRemaining = coerceBigInt(poolRemainingRaw);
+          }
+          return next;
+        });
 
-        const parentEntries = await Promise.all(
-          finals.map(async (finalist) => {
-            try {
-              const parent = String(await readContract.buildOnParentByResponder(task.jobId, finalist));
-              return [finalist.toLowerCase(), parent] as const;
-            } catch {
-              return [finalist.toLowerCase(), ZERO_ADDRESS] as const;
-            }
-          })
-        );
-        setBuildOnParents(
-          parentEntries.reduce<Record<string, string>>((acc, [key, value]) => {
-            acc[key] = value;
-            return acc;
-          }, {})
-        );
+        if (finals) {
+          const parentEntries = await Promise.all(
+            finals.map(async (finalist) => {
+              try {
+                const parent = String(await readContract.buildOnParentByResponder(task.jobId, finalist));
+                return [finalist.toLowerCase(), parent] as const;
+              } catch {
+                return [finalist.toLowerCase(), ZERO_ADDRESS] as const;
+              }
+            })
+          );
+          setBuildOnParents(
+            parentEntries.reduce<Record<string, string>>((acc, [key, value]) => {
+              acc[key] = value;
+              return acc;
+            }, {})
+          );
+        }
 
       } catch {
         // keep page usable if interaction data fails
@@ -931,7 +963,7 @@ export default function JobDetailsPage() {
 
   useEffect(() => {
     void refreshPendingReleases();
-  }, [refreshPendingReleases, job?.status, revealPhaseEnd, selectedFinalists.length]);
+  }, [refreshPendingReleases, job?.status, revealPhaseEnd, revealedFinalists.length]);
 
   useEffect(() => {
     if (!taskHasSignalMap || !taskSourceId || !Number.isInteger(jobId) || jobId < 0) return () => undefined;
@@ -960,7 +992,7 @@ export default function JobDetailsPage() {
   }, [clearTaskCaches, jobId, loadTask, loadHeatmap, taskHasSignalMap, taskSourceId]);
 
   useEffect(() => {
-    if (!selectedFinalists.length) {
+    if (!revealedFinalists.length) {
       setFinalistSubmissions({});
       return;
     }
@@ -973,7 +1005,7 @@ export default function JobDetailsPage() {
       const byAgent: Record<string, SubmissionRecord | null> = {};
       let cachedAllSubmissions: SubmissionRecord[] | null = null;
 
-      for (const agent of selectedFinalists) {
+      for (const agent of revealedFinalists) {
         const key = agent.toLowerCase();
         try {
           const raw = await contract.getSubmission(jobId, agent);
@@ -1003,7 +1035,7 @@ export default function JobDetailsPage() {
     return () => {
       active = false;
     };
-  }, [jobId, selectedFinalists, taskSourceId]);
+  }, [jobId, revealedFinalists, taskSourceId]);
 
   const handleAccept = async () => {
     if (txInFlight) return;
@@ -1111,20 +1143,11 @@ export default function JobDetailsPage() {
     const revealEnd = Number(revealPhaseEnd || Number(job?.revealPhaseEnd ?? 0n));
     const isRevealActive = Boolean(job?.status === 4 && revealEnd > 0 && nowSeconds <= revealEnd);
 
-    console.log("[respond] signer:", Boolean(signer));
-    console.log("[respond] revealPhaseEnd:", revealEnd.toString());
-    console.log("[respond] job.status:", job?.status);
-    console.log("[respond] responseContent:", responseContent?.length ?? 0);
-    console.log("[respond] responseType:", responseType);
-
     if (!signer) {
       alert("Wallet not connected");
       return;
     }
     const caller = await signer.getAddress();
-    console.log("[respond] parentSubmissionId:", selectedSubmission.submissionId.toString());
-    console.log("[respond] caller:", caller);
-    console.log("[respond] known submitter:", selectedSubmission.agent);
     if (caller.toLowerCase() === selectedSubmission.agent.toLowerCase()) {
       setErrorMessage("You cannot respond to your own submission.");
       return;
@@ -1147,14 +1170,13 @@ export default function JobDetailsPage() {
       }
 
       const contentUri = contentToURI(responseContent.trim());
-      const { txHash, path } = await txInteract(
+      const { txHash } = await txInteract(
         signer,
         task?.sourceId ?? "current",
         BigInt(selectedSubmission.submissionId),
         responseType,
         contentUri
       );
-      console.log("[interact] path:", path);
       setStatusMessage(`Response tx: ${txHash}`);
       setResponseContent("");
       setShowResponsePanel(false);
@@ -1521,7 +1543,7 @@ export default function JobDetailsPage() {
       setBusyAction("finalize");
       const winners: string[] = [];
       const amounts: bigint[] = [];
-      for (const finalist of selectedFinalists) {
+      for (const finalist of revealedFinalists) {
         const parsed = parseUsdcInput(rewardInputs[finalist.toLowerCase()] ?? "");
         if (parsed && parsed > 0n) {
           winners.push(finalist);
@@ -1705,6 +1727,25 @@ export default function JobDetailsPage() {
       !isOwnSelectedSubmission &&
       !selectedAlreadyResponded
   );
+  // A disabled Submit button used to fail silently (no wallet popup, no
+  // explanation). Spell out the first unmet condition instead.
+  const respondBlockedReason = canInteract
+    ? responseContent.trim().length < 10
+      ? "Response needs at least 10 characters before you can submit."
+      : ""
+    : !signer || !isConnected
+      ? "Connect your wallet to respond."
+      : !task?.caps.canInteract || !showInteractionAction || !isRevealActive
+        ? "Interactions are only available during the reveal phase."
+        : !selectedSubmission
+          ? "Select a submission first."
+          : !isSelectedFinalist
+            ? "Only revealed finalists can receive responses."
+            : isOwnSelectedSubmission
+              ? "You cannot respond to your own submission."
+              : selectedAlreadyResponded
+                ? "You already responded to this submission."
+                : "";
   const canSettle = Boolean(
     task?.caps.canSettleRevealPhase &&
       job &&
@@ -1748,6 +1789,11 @@ export default function JobDetailsPage() {
     setJudgesLoaded(false);
     setVerdictsBySid(new Map());
     setPromotedAgents(new Set());
+    // Also drop the previous job's list so a failed load on the new job shows
+    // the error state rather than the old task's submissions.
+    setSubmissions([]);
+    setSubsError(null);
+    setSelectedFinalists([]);
   }, [jobId]);
 
   useEffect(() => {
@@ -2854,6 +2900,11 @@ export default function JobDetailsPage() {
                           ? "Submitting..."
                           : `Submit Response - Stake ${(Number(taskEconomy.interactionStake > 0n ? taskEconomy.interactionStake : 2_000_000n) / 1e6).toFixed(2)} USDC`}
                       </button>
+                      {respondBlockedReason && busyAction !== "respond" ? (
+                        <div className="text-center text-[11px] text-[var(--warn)]">
+                          {respondBlockedReason}
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
                 </>
@@ -2942,7 +2993,7 @@ export default function JobDetailsPage() {
               {job.status === 4 && revealEnded ? (
                 <div className="space-y-3">
                   <div className="section-header">FINALIZE WINNERS</div>
-                  {selectedFinalists.map((agent) => {
+                  {revealedFinalists.map((agent) => {
                     const key = agent.toLowerCase();
                     const parentAuthor = buildOnParents[key] ?? ZERO_ADDRESS;
                     const isBuildOnWinner =

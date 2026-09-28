@@ -609,12 +609,14 @@ export async function loadTaskSubmissions(
 ): Promise<SubmissionRecord[]> {
   const contract = getContractForSource(task.sourceId, provider);
 
+  let batchResolvedEmpty = false;
   try {
     const raw = Array.from((await contract.getSubmissions(task.jobId)) as unknown[]);
     const parsed = raw
       .map((entry, index) => task.sourceId === "archive" ? parseArchiveSubmission(entry, index) : parseSubmission(entry))
       .filter((submission) => submission.agent && !isZeroAddress(submission.agent));
     if (parsed.length > 0) return parsed;
+    batchResolvedEmpty = true;
   } catch (error) {
     console.warn("[adapter] getSubmissions failed:", error);
   }
@@ -631,6 +633,14 @@ export async function loadTaskSubmissions(
     } catch {
       break;
     }
+  }
+
+  if (fallback.length === 0 && !batchResolvedEmpty && task.submissionCount > 0) {
+    // getSubmissions threw AND enumeration produced nothing while the task is
+    // known to have submissions - this is an RPC failure, not an empty task.
+    // Throwing lets callers keep their previous list instead of swapping in []
+    // and blanking the view until the next refresh.
+    throw new Error("Submission read failed (RPC error).");
   }
 
   return fallback;
