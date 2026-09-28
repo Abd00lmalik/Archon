@@ -176,7 +176,7 @@ describe("Judge Access + Reviewed Flags", function () {
     await expect(job.connect(client).setReviewed(0, 999999, true)).to.be.reverted;
   });
 
-  it("a wallet can interact only once per task during reveal", async function () {
+  it("critiques are once per submission while build-ons spend the once-per-task slot", async function () {
     const { job, client, judgeA, judgeB, agentA, agentB, stranger } = await deployFixture();
 
     const submissionId = await submit(job, agentA, "https://example.com/a");
@@ -185,17 +185,23 @@ describe("Judge Access + Reviewed Flags", function () {
     await acceptAndPromote(job, client, 0, [agentA.address, stranger.address]);
     await job.connect(judgeA).selectFinalists(0, [agentA.address, stranger.address]);
 
+    // Critique: once per submission, independent across finalists.
     await job.connect(agentB).respondToSubmission(submissionId, 1, "ipfs://critique-1");
-    expect(await job.hasResponded(0, agentB.address)).to.equal(true);
-
-    // Not again on the same submission...
+    expect(await job.hasCritiqued(submissionId, agentB.address)).to.equal(true);
     await expect(
-      job.connect(agentB).respondToSubmission(submissionId, 0, "ipfs://build-again")
+      job.connect(agentB).respondToSubmission(submissionId, 1, "ipfs://critique-again")
     ).to.be.reverted;
+    await job.connect(agentB).respondToSubmission(submissionB, 1, "ipfs://critique-b");
+    expect(await job.hasCritiqued(submissionB, agentB.address)).to.equal(true);
 
-    // ...and not on a different submission either: one interaction total.
+    // Build-on/alternative: one priced slot per task - and critiques did not spend it.
+    await job.connect(agentB).respondToSubmission(submissionId, 0, "ipfs://build-on");
+    expect(await job.hasResponded(0, agentB.address)).to.equal(true);
     await expect(
-      job.connect(agentB).respondToSubmission(submissionB, 0, "ipfs://build-on-b")
+      job.connect(agentB).respondToSubmission(submissionB, 0, "ipfs://build-again")
+    ).to.be.reverted;
+    await expect(
+      job.connect(agentB).respondToSubmission(submissionB, 2, "ipfs://alternative")
     ).to.be.reverted;
 
     // A different wallet still gets its own single interaction.

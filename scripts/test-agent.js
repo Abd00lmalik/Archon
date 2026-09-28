@@ -240,7 +240,7 @@ async function submitToTask(JOB, contractAddress, taskId, outputURL, wallet) {
   }
 }
 
-async function findValidRevealTarget(JOB, walletAddress, taskId) {
+async function findValidRevealTarget(JOB, walletAddress, taskId, responseType = 1) {
   console.log(`[reveal] Scanning task #${taskId} for valid interaction targets`);
 
   let finalists = [];
@@ -254,14 +254,16 @@ async function findValidRevealTarget(JOB, walletAddress, taskId) {
   const submissions = Array.from(await JOB.getSubmissions(BigInt(taskId)).catch(() => []));
   console.log("[reveal] total submissions:", submissions.length);
 
-  // One interaction per wallet per job: if this wallet already responded
-  // anywhere in the task, there is no valid target left.
-  const alreadyResponded = contractHasFunction(JOB, "hasResponded")
-    ? await JOB.hasResponded(BigInt(taskId), walletAddress).catch(() => false)
-    : false;
-  if (alreadyResponded) {
-    console.log("[reveal] wallet already used its interaction for task:", String(taskId));
-    return null;
+  // Build-on/alternative spend the once-per-task slot: if this wallet already
+  // used it, only critiques (once per submission) remain.
+  if (responseType !== 1) {
+    const alreadyResponded = contractHasFunction(JOB, "hasResponded")
+      ? await JOB.hasResponded(BigInt(taskId), walletAddress).catch(() => false)
+      : false;
+    if (alreadyResponded) {
+      console.log("[reveal] wallet already used its build-on slot for task:", String(taskId));
+      return null;
+    }
   }
 
   const validSubmissions = submissions.filter((submission) => {
@@ -292,6 +294,17 @@ async function findValidRevealTarget(JOB, walletAddress, taskId) {
       continue;
     }
 
+    // Critiques are once per submission: skip targets this wallet already critiqued.
+    if (responseType === 1) {
+      const alreadyCritiqued = contractHasFunction(JOB, "hasCritiqued")
+        ? await JOB.hasCritiqued(submissionId, walletAddress).catch(() => false)
+        : false;
+      if (alreadyCritiqued) {
+        console.log("[reveal] skipping already-critiqued submission:", submissionId.toString());
+        continue;
+      }
+    }
+
     console.log(
       "[reveal] VALID target found - agent:",
       candidateAgent,
@@ -306,7 +319,7 @@ async function findValidRevealTarget(JOB, walletAddress, taskId) {
   }
 
   console.log("[reveal] No valid interaction target found.");
-  console.log("[reveal] Reason: all candidates are own submissions, already responded, or have no submissionId.");
+  console.log("[reveal] Reason: all candidates are own submissions, already critiqued/responded, or have no submissionId.");
   return null;
 }
 

@@ -81,19 +81,6 @@ contract ERC8183Job is ICredentialSource {
         bool isBuildOnWinner;
     }
 
-    struct SubmissionView {
-        uint256 submissionId;
-        address agent;
-        string deliverableLink;
-        SubmissionStatus status;
-        uint256 submittedAt;
-        string reviewerNote;
-        bool credentialClaimed;
-        uint256 allocatedReward;
-        uint256 buildOnBonus;
-        bool isBuildOnWinner;
-    }
-
     struct SubmissionResponse {
         uint256 responseId;
         uint256 parentSubmissionId;
@@ -106,6 +93,7 @@ contract ERC8183Job is ICredentialSource {
         bool stakeSlashed;
         bool stakeReturned;
         bool interactionRewardClaimed;
+        bool buildOnBonusClaimed;
     }
 
     uint256 public constant BASIS_POINTS = 10_000;
@@ -141,6 +129,9 @@ contract ERC8183Job is ICredentialSource {
     mapping(uint256 => uint256[]) private submissionResponses;
     mapping(uint256 => uint256) public submissionResponseCount;
     mapping(uint256 => mapping(address => bool)) public hasResponded;
+    // Critiques: one per wallet per submission (they do not consume the
+    // once-per-task build-on slot).
+    mapping(uint256 => mapping(address => bool)) public hasCritiqued;
     mapping(uint256 => uint256) public submissionIdToTaskId;
     mapping(uint256 => address) public submissionIdToAgent;
     mapping(uint256 => mapping(address => address)) public buildOnParentByResponder;
@@ -164,6 +155,10 @@ contract ERC8183Job is ICredentialSource {
     // Non-slashed, un-rewarded responses per job. The interaction pool is split
     // equally across this many responses at settlement.
     mapping(uint256 => uint256) public unclaimedResponseCount;
+    // Winner pot (10% of each winner's payout) reserved at finalization for
+    // build-on responders on the winning submission; keyed by submissionId.
+    mapping(uint256 => uint256) public buildOnBonusRemaining;
+    mapping(uint256 => uint256) public buildOnResponderCount;
 
     uint256 private _reentrancyLock;
 
@@ -222,6 +217,11 @@ contract ERC8183Job is ICredentialSource {
         uint256 revealEndsAt
     );
     event InteractionRewardClaimed(
+        uint256 indexed responseId,
+        address indexed responder,
+        uint256 amount
+    );
+    event BuildOnBonusClaimed(
         uint256 indexed responseId,
         address indexed responder,
         uint256 amount
@@ -529,20 +529,12 @@ contract ERC8183Job is ICredentialSource {
         submission.deliverableLink = deliverableLink;
         submission.status = SubmissionStatus.Submitted;
         submission.submittedAt = block.timestamp;
-        submission.reviewerNote = "";
-        submission.credentialClaimed = false;
-        submission.allocatedReward = 0;
-        submission.buildOnBonus = 0;
-        submission.isBuildOnWinner = false;
 
         submittedAgents[jobId].push(msg.sender);
         submissionIdToTaskId[sid] = jobId;
         submissionIdToAgent[sid] = msg.sender;
         job.submissionCount += 1;
-
-        if (uint8(job.status) < uint8(JobStatus.Submitted)) {
-            job.status = JobStatus.Submitted;
-        }
+        job.status = JobStatus.Submitted;
 
         emit DeliverableSubmitted(jobId, msg.sender, deliverableLink);
     }
@@ -882,21 +874,29 @@ contract ERC8183Job is ICredentialSource {
             }
             sub.status = SubmissionStatus.Approved;
             sub.reviewerNote = "";
-            sub.isBuildOnWinner = false;
+            sub.isBuildOnWinner = buildOnParentByResponder[jobId][winners[i]] != address(0);
 
-            address parentAuthor = buildOnParentByResponder[jobId][winners[i]];
-            if (parentAuthor != address(0) && parentAuthor != winners[i]) {
-                uint256 buildOnShare = (rewardAmounts[i] * 3_000) / BASIS_POINTS;
-                uint256 parentShare = rewardAmounts[i] - buildOnShare;
-                sub.allocatedReward = buildOnShare;
-                sub.isBuildOnWinner = true;
-
-                Submission storage parentSubmission = submissions[jobId][parentAuthor];
-                require(parentSubmission.agent != address(0), "parent submission missing");
-                parentSubmission.buildOnBonus += parentShare;
-            } else {
-                sub.allocatedReward = rewardAmounts[i];
+            // Strict 90/10: unslashed build-on responders on the winning
+            // submission share 10% of the prize (split at claim/settlement);
+            // the winner keeps the rest - all of it when nobody built on them.
+            uint256 winnerGross = rewardAmounts[i];
+            uint256[] memory responseIds = submissionResponses[sub.submissionId];
+            uint256 eligible = 0;
+            for (uint256 j = 0; j < responseIds.length; j++) {
+                SubmissionResponse storage response = responses[responseIds[j]];
+                if (response.responseType == ResponseType.BuildsOn && !response.stakeSlashed) {
+                    eligible += 1;
+                }
             }
+            if (eligible > 0) {
+                uint256 pot = (rewardAmounts[i] * 1_000) / BASIS_POINTS;
+                if (pot > 0) {
+                    buildOnBonusRemaining[sub.submissionId] = pot;
+                    buildOnResponderCount[sub.submissionId] = eligible;
+                    winnerGross = rewardAmounts[i] - pot;
+                }
+            }
+            sub.allocatedReward = winnerGross;
         }
 
         job.status = JobStatus.Approved;
@@ -908,7 +908,7 @@ contract ERC8183Job is ICredentialSource {
         Submission storage submission = submissions[jobId][msg.sender];
 
         require(
-            submission.status == SubmissionStatus.Approved || submission.buildOnBonus > 0,
+            submission.status == SubmissionStatus.Approved,
             "submission not approved"
         );
         require(!submission.credentialClaimed, "credential already claimed");
@@ -928,15 +928,7 @@ contract ERC8183Job is ICredentialSource {
         job.paidOutUSDC += grossReward;
         lastCredentialClaim[msg.sender] = block.timestamp;
 
-        uint256 platformFee = (grossReward * platformFeeBps) / BASIS_POINTS;
-        uint256 agentReward = grossReward - platformFee;
-
-        if (platformFee > 0) {
-            require(usdc.transfer(platformTreasury, platformFee), "fee transfer failed");
-        }
-        if (agentReward > 0) {
-            require(usdc.transfer(msg.sender, agentReward), "agent transfer failed");
-        }
+        (uint256 platformFee, uint256 agentReward) = _payShare(msg.sender, grossReward);
 
         credentialRecordId = ICredentialHook(hook).onActivityComplete(msg.sender, jobId, "job", 100);
 
@@ -953,25 +945,13 @@ contract ERC8183Job is ICredentialSource {
         return submissions[jobId][agent];
     }
 
-    function getSubmissions(uint256 jobId) external view returns (SubmissionView[] memory allSubmissions) {
+    function getSubmissions(uint256 jobId) external view returns (Submission[] memory allSubmissions) {
         _getExistingJob(jobId);
         address[] storage agents = submittedAgents[jobId];
 
-        allSubmissions = new SubmissionView[](agents.length);
+        allSubmissions = new Submission[](agents.length);
         for (uint256 i = 0; i < agents.length; i++) {
-            Submission storage submission = submissions[jobId][agents[i]];
-            allSubmissions[i] = SubmissionView({
-                submissionId: submission.submissionId,
-                agent: submission.agent,
-                deliverableLink: submission.deliverableLink,
-                status: submission.status,
-                submittedAt: submission.submittedAt,
-                reviewerNote: submission.reviewerNote,
-                credentialClaimed: submission.credentialClaimed,
-                allocatedReward: submission.allocatedReward,
-                buildOnBonus: submission.buildOnBonus,
-                isBuildOnWinner: submission.isBuildOnWinner
-            });
+            allSubmissions[i] = submissions[jobId][agents[i]];
         }
     }
 
@@ -1005,14 +985,10 @@ contract ERC8183Job is ICredentialSource {
         bytes32 r,
         bytes32 s
     ) external nonReentrant returns (uint256 responseId) {
-        uint256 taskId = submissionIdToTaskId[parentSubmissionId];
-        address parentAgent = submissionIdToAgent[parentSubmissionId];
-
-        require(parentAgent != address(0), "submission not found");
         require(from != address(0), "invalid payer");
         require(to == address(this), "wrong recipient");
 
-        uint256 requiredStake = _requiredInteractionStake(taskId);
+        uint256 requiredStake = _requiredInteractionStake(submissionIdToTaskId[parentSubmissionId]);
         require(value >= requiredStake, "insufficient stake");
 
         IERC3009(address(usdc)).transferWithAuthorization(
@@ -1056,8 +1032,15 @@ contract ERC8183Job is ICredentialSource {
         require(isFinalist[taskId][parentAgent], "can only interact with finalist submissions");
         require(block.timestamp <= revealPhaseEnd[taskId], "reveal phase ended");
         require(responder != parentAgent, "cannot respond to own submission");
-        require(!hasResponded[taskId][responder], "already interacted with this task");
         require(bytes(contentURI).length > 0, "content required");
+
+        // Critiques are once per wallet per submission and do not spend the
+        // wallet's single once-per-task build-on slot (build-ons/alternatives).
+        if (responseType == ResponseType.Critiques) {
+            require(!hasCritiqued[parentSubmissionId][responder], "already critiqued this submission");
+        } else {
+            require(!hasResponded[taskId][responder], "build-on slot already used in this task");
+        }
 
         responseId = nextResponseId;
         nextResponseId += 1;
@@ -1072,12 +1055,17 @@ contract ERC8183Job is ICredentialSource {
             createdAt: block.timestamp,
             stakeSlashed: false,
             stakeReturned: false,
-            interactionRewardClaimed: false
+            interactionRewardClaimed: false,
+            buildOnBonusClaimed: false
         });
 
         submissionResponses[parentSubmissionId].push(responseId);
         submissionResponseCount[parentSubmissionId] += 1;
-        hasResponded[taskId][responder] = true;
+        if (responseType == ResponseType.Critiques) {
+            hasCritiqued[parentSubmissionId][responder] = true;
+        } else {
+            hasResponded[taskId][responder] = true;
+        }
         unclaimedResponseCount[taskId] += 1;
 
         if (responseType == ResponseType.BuildsOn) {
@@ -1112,6 +1100,14 @@ contract ERC8183Job is ICredentialSource {
         if (!response.interactionRewardClaimed && unclaimedResponseCount[taskId] > 0) {
             unclaimedResponseCount[taskId] -= 1;
         }
+        // A slashed build-on forfeits its winner-pot slice to the survivors.
+        if (
+            response.responseType == ResponseType.BuildsOn &&
+            !response.buildOnBonusClaimed &&
+            buildOnResponderCount[response.parentSubmissionId] > 0
+        ) {
+            buildOnResponderCount[response.parentSubmissionId] -= 1;
+        }
         uint256 slashAmount = (response.stakedAmount * 5_000) / BASIS_POINTS;
         uint256 returnAmount = response.stakedAmount - slashAmount;
 
@@ -1123,43 +1119,92 @@ contract ERC8183Job is ICredentialSource {
         emit StakeSlashed(responseId, response.responder, slashAmount);
     }
 
+    /**
+     * @dev Splits a gross reward into the platform fee and the agent's net
+     * payout, transferring both. Returns (fee, net).
+     */
+    function _payShare(address to, uint256 gross) internal returns (uint256 fee, uint256 net) {
+        fee = (gross * platformFeeBps) / BASIS_POINTS;
+        net = gross - fee;
+        if (fee > 0) {
+            require(usdc.transfer(platformTreasury, fee), "fee transfer failed");
+        }
+        if (net > 0) {
+            require(usdc.transfer(to, net), "payout transfer failed");
+        }
+    }
+
+    /**
+     * @dev Pays whatever a response is still owed: its equal share of the
+     * remaining interaction pool and/or its slice of the winner's 10% build-on
+     * pot (reserved at finalization). Shared by the responder claim and the
+     * permissionless batch settlement.
+     */
+    function _releaseResponseRewards(
+        SubmissionResponse storage response,
+        Job storage job
+    ) internal returns (bool paid) {
+        if (!response.interactionRewardClaimed) {
+            TaskEconomyConfig storage economy = taskEconomy[response.taskId];
+            uint256 openResponses = unclaimedResponseCount[response.taskId];
+            if (economy.interactionPool > 0 && openResponses > 0) {
+                uint256 share =
+                    (economy.interactionPool - interactionPoolUsed[response.taskId]) /
+                    openResponses;
+                response.interactionRewardClaimed = true;
+                interactionPoolUsed[response.taskId] += share;
+                unclaimedResponseCount[response.taskId] = openResponses - 1;
+
+                (, uint256 payout) = _payShare(response.responder, share);
+                emit InteractionRewardClaimed(response.responseId, response.responder, payout);
+                paid = true;
+            }
+        }
+
+        if (!response.buildOnBonusClaimed && response.responseType == ResponseType.BuildsOn) {
+            uint256 targetSubmission = response.parentSubmissionId;
+            uint256 responders = buildOnResponderCount[targetSubmission];
+            uint256 remainingPot = buildOnBonusRemaining[targetSubmission];
+            if (responders > 0 && remainingPot > 0) {
+                // The last claimer divides by 1 and drains the remainder.
+                uint256 share = remainingPot / responders;
+                buildOnResponderCount[targetSubmission] = responders - 1;
+                buildOnBonusRemaining[targetSubmission] = remainingPot - share;
+                response.buildOnBonusClaimed = true;
+                job.paidOutUSDC += share;
+
+                (, uint256 payout) = _payShare(response.responder, share);
+                emit BuildOnBonusClaimed(response.responseId, response.responder, payout);
+                paid = true;
+            }
+        }
+    }
+
+    /**
+     * @dev Returns a response's stake once (no-op if already returned or
+     * slashed elsewhere). Shared by the responder claim and settlement.
+     */
+    function _returnStakeOnce(SubmissionResponse storage response) internal {
+        if (response.stakeReturned) {
+            return;
+        }
+        response.stakeReturned = true;
+        require(usdc.transfer(response.responder, response.stakedAmount), "stake return failed");
+        emit StakeReturned(response.responseId, response.responder, response.stakedAmount);
+    }
+
     function claimInteractionReward(uint256 responseId) external nonReentrant {
         SubmissionResponse storage response = responses[responseId];
         require(response.responder == msg.sender, "not responder");
-        require(!response.interactionRewardClaimed, "already claimed");
         require(!response.stakeSlashed, "stake was slashed");
 
-        uint256 taskId = response.taskId;
-        Job storage job = _getExistingJob(taskId);
+        Job storage job = _getExistingJob(response.taskId);
         require(uint8(job.status) == uint8(JobStatus.Approved), "task not finalized");
 
-        TaskEconomyConfig storage economy = taskEconomy[taskId];
-        require(economy.interactionPool > 0, "no interaction pool");
-        uint256 openResponses = unclaimedResponseCount[taskId];
-        require(openResponses > 0, "no pending rewards");
+        bool paid = _releaseResponseRewards(response, job);
+        require(paid, "nothing to claim");
 
-        response.interactionRewardClaimed = true;
-        uint256 share = (economy.interactionPool - interactionPoolUsed[taskId]) / openResponses;
-        interactionPoolUsed[taskId] += share;
-        unclaimedResponseCount[taskId] = openResponses - 1;
-
-        uint256 fee = (share * platformFeeBps) / BASIS_POINTS;
-        uint256 payout = share - fee;
-
-        if (fee > 0) {
-            require(usdc.transfer(platformTreasury, fee), "interaction fee transfer failed");
-        }
-        if (payout > 0) {
-            require(usdc.transfer(msg.sender, payout), "interaction reward transfer failed");
-        }
-
-        if (!response.stakeReturned) {
-            response.stakeReturned = true;
-            require(usdc.transfer(msg.sender, response.stakedAmount), "stake return failed");
-            emit StakeReturned(responseId, msg.sender, response.stakedAmount);
-        }
-
-        emit InteractionRewardClaimed(responseId, msg.sender, payout);
+        _returnStakeOnce(response);
     }
 
     /**
@@ -1178,7 +1223,6 @@ contract ERC8183Job is ICredentialSource {
             "not ready for settlement"
         );
 
-        TaskEconomyConfig storage economy = taskEconomy[jobId];
         address[] memory finalists = selectedFinalists[jobId];
 
         for (uint256 i = 0; i < finalists.length; i++) {
@@ -1193,39 +1237,8 @@ contract ERC8183Job is ICredentialSource {
                     continue;
                 }
 
-                if (!response.stakeReturned && response.stakedAmount > 0) {
-                    response.stakeReturned = true;
-                    require(
-                        usdc.transfer(response.responder, response.stakedAmount),
-                        "stake return failed"
-                    );
-                    emit StakeReturned(responseId, response.responder, response.stakedAmount);
-                }
-
-                if (
-                    !response.interactionRewardClaimed &&
-                    economy.interactionPool > 0 &&
-                    unclaimedResponseCount[jobId] > 0
-                ) {
-                    uint256 share =
-                        (economy.interactionPool - interactionPoolUsed[jobId]) /
-                        unclaimedResponseCount[jobId];
-                    response.interactionRewardClaimed = true;
-                    interactionPoolUsed[jobId] += share;
-                    unclaimedResponseCount[jobId] -= 1;
-
-                    uint256 fee = (share * platformFeeBps) / BASIS_POINTS;
-                    uint256 payout = share - fee;
-
-                    if (fee > 0) {
-                        require(usdc.transfer(platformTreasury, fee), "interaction fee transfer failed");
-                    }
-                    if (payout > 0) {
-                        require(usdc.transfer(response.responder, payout), "interaction reward transfer failed");
-                    }
-
-                    emit InteractionRewardClaimed(responseId, response.responder, payout);
-                }
+                _returnStakeOnce(response);
+                _releaseResponseRewards(response, job);
             }
         }
 

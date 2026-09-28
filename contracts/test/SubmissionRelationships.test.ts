@@ -147,7 +147,7 @@ describe("Submission Relationships", function () {
     await expect(job.connect(agentA).respondToSubmission(submissionId, 0, "ipfs://self")).to.be.reverted;
   });
 
-  it("responder cannot interact twice in the same job", async function () {
+  it("build-on slot is once per job while critiques stay per submission", async function () {
     const { job, client, agentA, agentB, agentC } = await deployFixture();
     await createJob(job, client);
     const submissionId = await submitBaseSubmission(job, agentA);
@@ -155,16 +155,28 @@ describe("Submission Relationships", function () {
     await enterRevealPhase(job, client, [agentA.address, agentC.address]);
 
     await job.connect(agentB).respondToSubmission(submissionId, 0, "ipfs://first");
-    // Not again on the same submission, and not on a different one either.
-    await expect(job.connect(agentB).respondToSubmission(submissionId, 1, "ipfs://second")).to.be.reverted;
+    // Build-on/alternative spent the once-per-job slot: not again on either finalist.
     await expect(
       job.connect(agentB).respondToSubmission(otherSubmissionId, 0, "ipfs://other-finalist")
     ).to.be.reverted;
+    await expect(
+      job.connect(agentB).respondToSubmission(otherSubmissionId, 2, "ipfs://alternative")
+    ).to.be.reverted;
     expect(await job.hasResponded(0, agentB.address)).to.equal(true);
 
-    // Other wallets still get their own single interaction.
+    // Critiques are a separate allowance: once on each finalist.
+    await job.connect(agentB).respondToSubmission(submissionId, 1, "ipfs://critique-same");
+    await job.connect(agentB).respondToSubmission(otherSubmissionId, 1, "ipfs://critique-other");
+    expect(await job.hasCritiqued(submissionId, agentB.address)).to.equal(true);
+    expect(await job.hasCritiqued(otherSubmissionId, agentB.address)).to.equal(true);
+    await expect(
+      job.connect(agentB).respondToSubmission(submissionId, 1, "ipfs://critique-again")
+    ).to.be.reverted;
+
+    // Other wallets still get their own single build-on slot.
     await job.connect(agentC).respondToSubmission(submissionId, 1, "ipfs://from-agent-c");
-    expect(await job.hasResponded(0, agentC.address)).to.equal(true);
+    expect(await job.hasCritiqued(submissionId, agentC.address)).to.equal(true);
+    expect(await job.hasResponded(0, agentC.address)).to.equal(false);
   });
 
   it("responding requires 2 USDC stake", async function () {
@@ -314,7 +326,7 @@ describe("Submission Relationships", function () {
     expect(visible[0].agent).to.equal(agentA.address);
   });
 
-  it("build-on winner reward splits 70/30 between parent and build-on author", async function () {
+  it("build-on author who wins keeps the full prize when nobody built on them", async function () {
     const { job, client, agentA, agentB } = await deployFixture();
     await createJob(job, client);
 
@@ -330,9 +342,11 @@ describe("Submission Relationships", function () {
 
     const parent = await job.getSubmission(0, agentA.address);
     const buildOn = await job.getSubmission(0, agentB.address);
-    expect(buildOn.allocatedReward).to.equal(ethers.parseUnits("30", 6));
+    // Nobody built on the winner's submission: 100% of the prize, no pot reserved.
+    expect(buildOn.allocatedReward).to.equal(ethers.parseUnits("100", 6));
     expect(buildOn.isBuildOnWinner).to.equal(true);
-    expect(parent.buildOnBonus).to.equal(ethers.parseUnits("70", 6));
+    expect(parent.allocatedReward).to.equal(0);
+    expect(parent.buildOnBonus).to.equal(0);
   });
 
   it("autoStartReveal works after deadline when submissions are under threshold", async function () {

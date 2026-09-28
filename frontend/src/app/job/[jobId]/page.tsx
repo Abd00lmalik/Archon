@@ -12,6 +12,7 @@ import {
   expectedChainId,
   extractBanner,
   fetchHasRespondedForJob,
+  fetchCritiquedForSubmissions,
   fetchIsJudge,
   fetchJobCredentialCooldownSeconds,
   fetchLastJobCredentialClaim,
@@ -529,8 +530,11 @@ export default function JobDetailsPage() {
   );
   const [promotedAgents, setPromotedAgents] = useState<Set<string>>(new Set());
   const [rejectConfirmId, setRejectConfirmId] = useState<number | null>(null);
-  // null = check pending/failed; only `true` blocks a second interaction.
-  const [viewerHasResponded, setViewerHasResponded] = useState<boolean | null>(null);
+  // null = check pending/failed; only `true` blocks a second build-on/alternative.
+  const [viewerUsedPricedSlot, setViewerUsedPricedSlot] = useState<boolean | null>(null);
+  // Submissions this wallet has already critiqued - once per submission, so a
+  // set is needed (unlike the single once-per-task slot above).
+  const [viewerCritiquedIds, setViewerCritiquedIds] = useState<Set<number>>(new Set());
   const [reviewBusyId, setReviewBusyId] = useState<number | null>(null);
   const [reviewError, setReviewError] = useState("");
   const [triageReady, setTriageReady] = useState(false);
@@ -1163,8 +1167,17 @@ export default function JobDetailsPage() {
       alert("Response content too short");
       return;
     }
-    if (viewerHasResponded) {
-      setErrorMessage("You already used your interaction for this task - each wallet can interact once per task.");
+    if (responseType === RESPONSE_TYPE.Critiques) {
+      if (viewerCritiquedIds.has(selectedSubmission.submissionId)) {
+        setErrorMessage(
+          "You already critiqued this submission - each submission accepts one critique per wallet."
+        );
+        return;
+      }
+    } else if (viewerUsedPricedSlot) {
+      setErrorMessage(
+        "You already used your build-on/alternative slot for this task - each wallet gets one."
+      );
       return;
     }
 
@@ -1187,7 +1200,15 @@ export default function JobDetailsPage() {
       setStatusMessage(`Response tx: ${txHash}`);
       setResponseContent("");
       setShowResponsePanel(false);
-      setViewerHasResponded(true);
+      if (responseType === RESPONSE_TYPE.Critiques) {
+        setViewerCritiquedIds((previous) => {
+          const next = new Set(previous);
+          next.add(selectedSubmission.submissionId);
+          return next;
+        });
+      } else {
+        setViewerUsedPricedSlot(true);
+      }
       clearTaskCaches();
       await loadHeatmap();
       await loadTask();
@@ -1719,7 +1740,16 @@ export default function JobDetailsPage() {
     taskEconomy.unclaimedResponseCount > 0
       ? taskEconomy.poolRemaining / BigInt(taskEconomy.unclaimedResponseCount)
       : 0n;
-  const viewerAlreadyResponded = viewerHasResponded === true;
+  const viewerAlreadyUsedSlot = viewerUsedPricedSlot === true;
+  // Type-aware allowance: critiques are once per submission, while build-on
+  // and alternative share the single once-per-task slot.
+  const viewerCritiquedSelected = selectedSubmission
+    ? viewerCritiquedIds.has(selectedSubmission.submissionId)
+    : false;
+  const responseTypeAllowed =
+    responseType === RESPONSE_TYPE.Critiques
+      ? !viewerCritiquedSelected
+      : !viewerAlreadyUsedSlot;
   const canInteract = Boolean(
     task?.caps.canInteract &&
       showInteractionAction &&
@@ -1729,7 +1759,7 @@ export default function JobDetailsPage() {
       selectedSubmission &&
       isSelectedFinalist &&
       !isOwnSelectedSubmission &&
-      !viewerAlreadyResponded
+      responseTypeAllowed
   );
   // A disabled Submit button used to fail silently (no wallet popup, no
   // explanation). Spell out the first unmet condition instead.
@@ -1747,9 +1777,11 @@ export default function JobDetailsPage() {
             ? "Only revealed finalists can receive responses."
             : isOwnSelectedSubmission
               ? "You cannot respond to your own submission."
-              : viewerAlreadyResponded
-                ? "You already used your interaction for this task - each wallet can interact once."
-                : "";
+              : viewerAlreadyUsedSlot && responseType !== RESPONSE_TYPE.Critiques
+                ? "You already used your build-on/alternative slot for this task - switch to CRITIQUES to critique each finalist once."
+                : viewerCritiquedSelected
+                  ? "You already critiqued this submission - each submission accepts one critique per wallet."
+                  : "";
   const canSettle = Boolean(
     task?.caps.canSettleRevealPhase &&
       job &&
@@ -1798,7 +1830,8 @@ export default function JobDetailsPage() {
     setSubmissions([]);
     setSubsError(null);
     setSelectedFinalists([]);
-    setViewerHasResponded(null);
+    setViewerUsedPricedSlot(null);
+    setViewerCritiquedIds(new Set());
   }, [jobId]);
 
   useEffect(() => {
@@ -1861,19 +1894,42 @@ export default function JobDetailsPage() {
   useEffect(() => {
     let active = true;
     if (!account) {
-      setViewerHasResponded(false);
+      setViewerUsedPricedSlot(false);
       return () => {
         active = false;
       };
     }
     void fetchHasRespondedForJob(jobId, account).then((responded) => {
       if (!active || responded === null) return;
-      setViewerHasResponded(responded);
+      setViewerUsedPricedSlot(responded);
     });
     return () => {
       active = false;
     };
   }, [jobId, account]);
+
+  // Critiques are per submission: load the set of finalist submissions this
+  // wallet has already critiqued (empty = nothing critiqued, worst case the
+  // duplicate just reverts on-chain).
+  useEffect(() => {
+    let active = true;
+    if (!account) {
+      setViewerCritiquedIds(new Set());
+      return () => {
+        active = false;
+      };
+    }
+    void fetchCritiquedForSubmissions(
+      safeSubmissions.map((submission) => submission.submissionId),
+      account
+    ).then((critiqued) => {
+      if (!active) return;
+      setViewerCritiquedIds(critiqued);
+    });
+    return () => {
+      active = false;
+    };
+  }, [jobId, account, safeSubmissions]);
 
   useEffect(() => {
     setDisplayTaskId(task?.displayId ? `#${task.displayId}` : validRouteTask ? `#${displayId}` : `#${rawJobParam}`);
@@ -2056,6 +2112,12 @@ export default function JobDetailsPage() {
                     {(Number(taskEconomy.poolRemaining) / 1e6).toFixed(3)} USDC
                   </div>
                 </div>
+                <div>
+                  <div style={{ color: "var(--text-muted)", fontSize: 10 }}>BUILD-ON BONUS</div>
+                  <div style={{ color: "var(--pulse)", fontFamily: "JetBrains Mono, monospace", fontWeight: 700 }}>
+                    10% of winner&apos;s prize
+                  </div>
+                </div>
               </div>
             </div>
           ) : null}
@@ -2202,7 +2264,11 @@ export default function JobDetailsPage() {
                       (reviewer) => verdictRowForSubmission[reviewer] === 1
                     );
                     const isAcceptedBySomeone = acceptedBy.length > 0;
-                    const interactionUsed = viewerHasResponded === true;
+                    const slotUsed = viewerUsedPricedSlot === true;
+                    const critiquedThis = viewerCritiquedIds.has(submission.submissionId);
+                    // Blocked only when this submission is already critiqued
+                    // and the wallet's build-on slot is spent too.
+                    const responseExhausted = critiquedThis && slotUsed;
                     const triageVisible = Boolean(job && canReview && job.status <= 3);
                     const finalistLimit = Number(maxApprovals || 1) + 5;
                     const promoteFull =
@@ -2227,6 +2293,11 @@ export default function JobDetailsPage() {
                             className="min-w-0"
                           />
                           <span className="flex shrink-0 items-center gap-1.5">
+                            {critiquedThis ? (
+                              <span className="badge" style={{ color: "var(--warn)" }}>
+                                CRITIQUED
+                              </span>
+                            ) : null}
                             {isAcceptedBySomeone && !isPromoted ? (
                               <span className="badge" style={{ color: "#7A9BB5" }}>
                                 ACCEPTED ({acceptedBy.length})
@@ -2256,9 +2327,10 @@ export default function JobDetailsPage() {
                           <div className="text-xs text-[var(--text-muted)]">No deliverable link provided</div>
                         )}
 
-                        {interactionUsed ? (
+                        {responseExhausted ? (
                           <div className="border border-[var(--border)] px-2 py-1.5 text-center text-[11px] text-[var(--text-secondary)]">
-                            You already used your interaction in this task - 1 interaction per wallet per task.
+                            You critiqued this submission and used your build-on slot for this task -
+                            no responses left here.
                           </div>
                         ) : null}
 
@@ -2271,14 +2343,16 @@ export default function JobDetailsPage() {
                             <button
                               type="button"
                               className="btn-ghost w-full text-xs"
-                              disabled={interactionUsed}
+                              disabled={responseExhausted}
                               onClick={() => setSelectedSubmission(submission)}
                             >
-                              {interactionUsed
-                                ? "Interaction used"
-                                : selectedSubmission?.submissionId === submission.submissionId
-                                  ? "Selected for Response"
-                                  : "Select for Response"}
+                              {responseExhausted
+                                ? "No responses left"
+                                : critiquedThis
+                                  ? "Critiqued - select for build-on"
+                                  : selectedSubmission?.submissionId === submission.submissionId
+                                    ? "Selected for Response"
+                                    : "Select for Response"}
                             </button>
                           )
                         ) : null}
@@ -2829,7 +2903,8 @@ export default function JobDetailsPage() {
                       <span className="font-mono text-[var(--arc)]">
                         ~{(Number(liveResponseShare) / 1e6).toFixed(3)} USDC per response
                       </span>
-                      . Each wallet gets one interaction per task.
+                      . Build-on and alternative share one slot per task; each
+                      submission can be critiqued once per wallet.
                     </div>
                   ) : null}
 
@@ -2837,19 +2912,19 @@ export default function JobDetailsPage() {
                     type="button"
                     className="btn-ghost w-full"
                     onClick={() => setShowResponsePanel((value) => !value)}
-                    disabled={viewerAlreadyResponded}
+                    disabled={viewerAlreadyUsedSlot && viewerCritiquedSelected}
                   >
-                    {viewerAlreadyResponded
-                      ? "Interaction already used in this task"
+                    {viewerAlreadyUsedSlot && viewerCritiquedSelected
+                      ? "No responses left for this submission"
                       : showResponsePanel
                         ? "Close Response Panel"
                         : "Respond to Selected Submission"}
                   </button>
 
-                  {viewerAlreadyResponded ? (
+                  {viewerAlreadyUsedSlot ? (
                     <div className="border border-[var(--border)] p-2 text-center text-[11px] text-[var(--text-muted)]">
-                      You already used your interaction for this task. Each wallet can critique or build on one
-                      submission only.
+                      Build-on and alternative are limited to one per task - you have used yours. You can
+                      still critique each finalist submission once.
                     </div>
                   ) : null}
 
@@ -2865,21 +2940,38 @@ export default function JobDetailsPage() {
                           { type: RESPONSE_TYPE.BuildsOn, label: "BUILDS ON", color: "var(--arc)" },
                           { type: RESPONSE_TYPE.Critiques, label: "CRITIQUES", color: "var(--warn)" },
                           { type: RESPONSE_TYPE.Alternative, label: "ALTERNATIVE", color: "var(--agent-primary)" }
-                        ].map((option) => (
-                          <button
-                            key={option.type}
-                            type="button"
-                            onClick={() => setResponseType(option.type)}
-                            className="border p-2 text-[10px] font-mono"
-                            style={{
-                              borderColor: responseType === option.type ? option.color : "var(--border)",
-                              color: responseType === option.type ? option.color : "var(--text-muted)",
-                              background: responseType === option.type ? `${option.color}12` : "transparent"
-                            }}
-                          >
-                            {option.label}
-                          </button>
-                        ))}
+                        ].map((option) => {
+                          const optionDisabled =
+                            !isSelectedFinalist ||
+                            (option.type === RESPONSE_TYPE.Critiques
+                              ? viewerCritiquedSelected
+                              : viewerAlreadyUsedSlot);
+                          return (
+                            <button
+                              key={option.type}
+                              type="button"
+                              onClick={() => setResponseType(option.type)}
+                              disabled={optionDisabled}
+                              title={
+                                optionDisabled
+                                  ? option.type === RESPONSE_TYPE.Critiques && isSelectedFinalist
+                                    ? "Already critiqued this submission"
+                                    : option.type !== RESPONSE_TYPE.Critiques && viewerAlreadyUsedSlot && isSelectedFinalist
+                                      ? "One build-on or alternative per task"
+                                      : "Only finalist submissions can receive responses"
+                                  : undefined
+                              }
+                              className="border p-2 text-[10px] font-mono disabled:opacity-40"
+                              style={{
+                                borderColor: responseType === option.type ? option.color : "var(--border)",
+                                color: responseType === option.type ? option.color : "var(--text-muted)",
+                                background: responseType === option.type ? `${option.color}12` : "transparent"
+                              }}
+                            >
+                              {option.label}
+                            </button>
+                          );
+                        })}
                       </div>
 
                       <textarea

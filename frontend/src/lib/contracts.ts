@@ -380,6 +380,9 @@ const JOB_FALLBACK_ABI = [
   "function setReviewed(uint256 jobId,uint256 submissionId,bool reviewed)",
   "function isReviewed(uint256 jobId,uint256 submissionId,address reviewer) view returns (bool)",
   "function hasResponded(uint256 jobId,address responder) view returns (bool)",
+  "function hasCritiqued(uint256 submissionId,address responder) view returns (bool)",
+  "function buildOnBonusRemaining(uint256 submissionId) view returns (uint256)",
+  "function buildOnResponderCount(uint256 submissionId) view returns (uint256)",
   "function unclaimedResponseCount(uint256 jobId) view returns (uint256)",
   "function updateDeliverable(uint256 jobId,string deliverableLink)",
   "function setReviewVerdict(uint256 jobId,uint256 submissionId,uint8 verdict)",
@@ -1738,6 +1741,37 @@ export async function fetchHasRespondedForJob(
   }
 }
 
+/**
+ * Per-submission critique marks for the viewer: which finalist submissions this
+ * wallet has already critiqued. Unlike hasResponded (once per task), critiques
+ * are once per submission, so the page needs the full set.
+ */
+export async function fetchCritiquedForSubmissions(
+  submissionIds: Array<number | bigint>,
+  account: string
+): Promise<Set<number>> {
+  const critiqued = new Set<number>();
+  if (!account || submissionIds.length === 0) return critiqued;
+  try {
+    const job = resolvedJobContract;
+    if (!job?.address) return critiqued;
+    const requests = submissionIds.map((submissionId) => ({
+      target: job.address,
+      abi: job.abi as ethers.InterfaceAbi,
+      functionName: "hasCritiqued",
+      args: [submissionId, account]
+    }));
+    const results = await multicall(getReadProvider(), requests);
+    results.forEach((result, index) => {
+      if (result?.ok && multicallBool(result)) critiqued.add(Number(submissionIds[index]));
+    });
+  } catch {
+    // Older deployments without the mapping read as "nothing critiqued":
+    // the on-chain gate still blocks duplicates if the user retries.
+  }
+  return critiqued;
+}
+
 export interface TriageSnapshot {
   /** submissionId -> reviewer address (lowercase) -> verdict (0 none, 1 accept, 2 reject). */
   verdicts: Map<number, Record<string, number>>;
@@ -3005,6 +3039,29 @@ export async function fetchPendingReleases(
     const deadline = Number(jobObject.deadline ?? jobTuple[4] ?? 0);
     const canManuallyReturnStake = deadline > 0 && Math.floor(Date.now() / 1000) > deadline + 7 * 24 * 60 * 60;
 
+    // Winner-pot slice per parent submission: reserved 10% / unclaimed build-on
+    // responders. Cached because several responses can share one parent.
+    const bonusByParent = new Map<string, { remaining: bigint; count: bigint }>();
+    const readBonusState = async (parentSubmissionId: bigint) => {
+      const key = parentSubmissionId.toString();
+      const cached = bonusByParent.get(key);
+      if (cached) return cached;
+      let state = { remaining: 0n, count: 0n };
+      try {
+        const remaining = contract.buildOnBonusRemaining
+          ? await contract.buildOnBonusRemaining(parentSubmissionId)
+          : 0n;
+        const count = contract.buildOnResponderCount
+          ? await contract.buildOnResponderCount(parentSubmissionId)
+          : 0n;
+        state = { remaining: toBigInt(remaining ?? 0n), count: toBigInt(count ?? 0n) };
+      } catch {
+        // Old deployment without the pot mappings: no bonus is claimable.
+      }
+      bonusByParent.set(key, state);
+      return state;
+    };
+
     for (const finalist of finalists) {
       try {
         const rawSubmission = await contract.getSubmission(taskId, finalist);
@@ -3022,21 +3079,36 @@ export async function fetchPendingReleases(
             const stakeSlashed = toBoolean(raw.stakeSlashed ?? raw[8] ?? false);
             const stakeReturned = toBoolean(raw.stakeReturned ?? raw[9] ?? false);
             const interactionRewardClaimed = toBoolean(raw.interactionRewardClaimed ?? raw[10] ?? false);
+            const buildOnBonusClaimed = toBoolean(raw.buildOnBonusClaimed ?? raw[11] ?? false);
+            const responseType = Number(raw.responseType ?? raw[4] ?? 1);
+            const parentSubmissionId = toBigInt(raw.parentSubmissionId ?? raw[1] ?? 0n);
 
             if (stakeSlashed) continue;
             // The pool is split equally across unclaimed responses, so the
             // claimable share is live: remaining pool / open responses.
             const liveShare =
               openResponses > 0 ? economy.poolRemaining / BigInt(openResponses) : 0n;
-            const canClaimReward =
+            const poolEligible =
               !interactionRewardClaimed && economy.interactionPool > 0n && openResponses > 0;
+
+            // Only unclaimed build-on responses split the winner's 10% pot.
+            let bonusShare = 0n;
+            if (responseType === 0 && !buildOnBonusClaimed && parentSubmissionId > 0n) {
+              const bonus = await readBonusState(parentSubmissionId);
+              if (bonus.count > 0n && bonus.remaining > 0n) {
+                bonusShare = bonus.remaining / bonus.count;
+              }
+            }
+
+            const canClaimReward = poolEligible || bonusShare > 0n;
+            const rewardAmount = (poolEligible ? liveShare : 0n) + bonusShare;
             const canReturnStake = !stakeReturned && stakeAmount > 0n && (canClaimReward || canManuallyReturnStake);
 
             if (canClaimReward || canReturnStake) {
               pending.push({
                 responseId,
                 stakeAmount: canReturnStake ? stakeAmount : 0n,
-                rewardAmount: canClaimReward ? liveShare : 0n,
+                rewardAmount,
                 canReturnStake,
                 canClaimReward
               });
