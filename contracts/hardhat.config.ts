@@ -42,7 +42,9 @@ const config: HardhatUserConfig = {
   },
   networks: {
     hardhat: {
-      allowUnlimitedContractSize: true
+      allowUnlimitedContractSize: true,
+      // Pool-split tests need 21 distinct responders plus the fixture actors.
+      accounts: { count: 26 }
     },
     localhost: {
       url: "http://127.0.0.1:8545"

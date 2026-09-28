@@ -137,13 +137,12 @@ contract ERC8183Job is ICredentialSource {
     mapping(uint256 => mapping(address => bool)) public isAccepted;
     mapping(uint256 => address[]) public submittedAgents;
     mapping(uint256 => mapping(address => Submission)) private submissions;
-    mapping(uint256 => SubmissionResponse) public responses;
-    mapping(uint256 => uint256[]) public submissionResponses;
+    mapping(uint256 => SubmissionResponse) private responses;
+    mapping(uint256 => uint256[]) private submissionResponses;
     mapping(uint256 => uint256) public submissionResponseCount;
     mapping(uint256 => mapping(address => bool)) public hasResponded;
     mapping(uint256 => uint256) public submissionIdToTaskId;
     mapping(uint256 => address) public submissionIdToAgent;
-    mapping(uint256 => address) public buildOnParent;
     mapping(uint256 => mapping(address => address)) public buildOnParentByResponder;
     mapping(uint256 => address[]) public selectedFinalists;
     mapping(uint256 => mapping(address => bool)) public isFinalist;
@@ -160,8 +159,11 @@ contract ERC8183Job is ICredentialSource {
     mapping(uint256 => mapping(uint256 => uint32)) public rejectCount;
     mapping(uint256 => mapping(address => bool)) public isPromoted;
     mapping(uint256 => address[]) public promotedAgents;
-    mapping(uint256 => TaskEconomyConfig) public taskEconomy;
+    mapping(uint256 => TaskEconomyConfig) private taskEconomy;
     mapping(uint256 => uint256) public interactionPoolUsed;
+    // Non-slashed, un-rewarded responses per job. The interaction pool is split
+    // equally across this many responses at settlement.
+    mapping(uint256 => uint256) public unclaimedResponseCount;
 
     uint256 private _reentrancyLock;
 
@@ -420,7 +422,6 @@ contract ERC8183Job is ICredentialSource {
             interactionPool: interactionPool,
             interactionPoolFunded: interactionPool > 0
         });
-        interactionPoolUsed[createdJobId] = 0;
 
         emit JobCreated(createdJobId, msg.sender, title, description, deadline, rewardUSDC);
     }
@@ -1055,7 +1056,7 @@ contract ERC8183Job is ICredentialSource {
         require(isFinalist[taskId][parentAgent], "can only interact with finalist submissions");
         require(block.timestamp <= revealPhaseEnd[taskId], "reveal phase ended");
         require(responder != parentAgent, "cannot respond to own submission");
-        require(!hasResponded[parentSubmissionId][responder], "already responded");
+        require(!hasResponded[taskId][responder], "already interacted with this task");
         require(bytes(contentURI).length > 0, "content required");
 
         responseId = nextResponseId;
@@ -1076,10 +1077,10 @@ contract ERC8183Job is ICredentialSource {
 
         submissionResponses[parentSubmissionId].push(responseId);
         submissionResponseCount[parentSubmissionId] += 1;
-        hasResponded[parentSubmissionId][responder] = true;
+        hasResponded[taskId][responder] = true;
+        unclaimedResponseCount[taskId] += 1;
 
         if (responseType == ResponseType.BuildsOn) {
-            buildOnParent[responseId] = parentAgent;
             buildOnParentByResponder[taskId][responder] = parentAgent;
         }
 
@@ -1108,6 +1109,9 @@ contract ERC8183Job is ICredentialSource {
         require(!response.stakeSlashed && !response.stakeReturned, "already processed");
 
         response.stakeSlashed = true;
+        if (!response.interactionRewardClaimed && unclaimedResponseCount[taskId] > 0) {
+            unclaimedResponseCount[taskId] -= 1;
+        }
         uint256 slashAmount = (response.stakedAmount * 5_000) / BASIS_POINTS;
         uint256 returnAmount = response.stakedAmount - slashAmount;
 
@@ -1131,17 +1135,16 @@ contract ERC8183Job is ICredentialSource {
 
         TaskEconomyConfig storage economy = taskEconomy[taskId];
         require(economy.interactionPool > 0, "no interaction pool");
-        require(economy.interactionReward > 0, "no interaction reward configured");
-        require(
-            interactionPoolUsed[taskId] + economy.interactionReward <= economy.interactionPool,
-            "interaction pool exhausted"
-        );
+        uint256 openResponses = unclaimedResponseCount[taskId];
+        require(openResponses > 0, "no pending rewards");
 
         response.interactionRewardClaimed = true;
-        interactionPoolUsed[taskId] += economy.interactionReward;
+        uint256 share = (economy.interactionPool - interactionPoolUsed[taskId]) / openResponses;
+        interactionPoolUsed[taskId] += share;
+        unclaimedResponseCount[taskId] = openResponses - 1;
 
-        uint256 fee = (economy.interactionReward * platformFeeBps) / BASIS_POINTS;
-        uint256 payout = economy.interactionReward - fee;
+        uint256 fee = (share * platformFeeBps) / BASIS_POINTS;
+        uint256 payout = share - fee;
 
         if (fee > 0) {
             require(usdc.transfer(platformTreasury, fee), "interaction fee transfer failed");
@@ -1202,14 +1205,17 @@ contract ERC8183Job is ICredentialSource {
                 if (
                     !response.interactionRewardClaimed &&
                     economy.interactionPool > 0 &&
-                    economy.interactionReward > 0 &&
-                    interactionPoolUsed[jobId] + economy.interactionReward <= economy.interactionPool
+                    unclaimedResponseCount[jobId] > 0
                 ) {
+                    uint256 share =
+                        (economy.interactionPool - interactionPoolUsed[jobId]) /
+                        unclaimedResponseCount[jobId];
                     response.interactionRewardClaimed = true;
-                    interactionPoolUsed[jobId] += economy.interactionReward;
+                    interactionPoolUsed[jobId] += share;
+                    unclaimedResponseCount[jobId] -= 1;
 
-                    uint256 fee = (economy.interactionReward * platformFeeBps) / BASIS_POINTS;
-                    uint256 payout = economy.interactionReward - fee;
+                    uint256 fee = (share * platformFeeBps) / BASIS_POINTS;
+                    uint256 payout = share - fee;
 
                     if (fee > 0) {
                         require(usdc.transfer(platformTreasury, fee), "interaction fee transfer failed");

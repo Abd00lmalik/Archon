@@ -262,6 +262,8 @@ export type TaskEconomyRecord = {
   interactionPool: bigint;
   interactionPoolFunded: boolean;
   poolRemaining: bigint;
+  // Unclaimed responses sharing the remaining pool equally.
+  unclaimedResponseCount: number;
 };
 
 export type PendingReleaseRecord = {
@@ -377,7 +379,8 @@ const JOB_FALLBACK_ABI = [
   "function isJudge(uint256 jobId,address judge) view returns (bool)",
   "function setReviewed(uint256 jobId,uint256 submissionId,bool reviewed)",
   "function isReviewed(uint256 jobId,uint256 submissionId,address reviewer) view returns (bool)",
-  "function hasResponded(uint256 submissionId,address responder) view returns (bool)",
+  "function hasResponded(uint256 jobId,address responder) view returns (bool)",
+  "function unclaimedResponseCount(uint256 jobId) view returns (uint256)",
   "function updateDeliverable(uint256 jobId,string deliverableLink)",
   "function setReviewVerdict(uint256 jobId,uint256 submissionId,uint8 verdict)",
   "function reviewVerdict(uint256 jobId,uint256 submissionId,address reviewer) view returns (uint8)",
@@ -1709,29 +1712,30 @@ export async function fetchReviewedByViewer(
   return reviewed;
 }
 
-export async function fetchHasRespondedMap(
-  submissionIds: Array<number | bigint>,
+export async function fetchHasRespondedForJob(
+  jobId: number | bigint,
   account: string
-): Promise<Set<number>> {
-  const responded = new Set<number>();
-  if (!account || submissionIds.length === 0) return responded;
+): Promise<boolean | null> {
+  if (!account) return false;
   try {
     const job = resolvedJobContract;
-    if (!job?.address) return responded;
-    const requests = submissionIds.map((submissionId) => ({
-      target: job.address,
-      abi: job.abi as ethers.InterfaceAbi,
-      functionName: "hasResponded",
-      args: [submissionId, account]
-    }));
-    const results = await multicall(getReadProvider(), requests);
-    results.forEach((result, index) => {
-      if (multicallBool(result)) responded.add(Number(submissionIds[index]));
-    });
+    if (!job?.address) return false;
+    const results = await multicall(getReadProvider(), [
+      {
+        target: job.address,
+        abi: job.abi as ethers.InterfaceAbi,
+        functionName: "hasResponded",
+        args: [jobId, account]
+      }
+    ]);
+    const first = results[0];
+    if (!first?.ok) return null;
+    return multicallBool(first);
   } catch {
-    // Ignore: the contract still enforces the one-response rule.
+    // null = "unknown": callers keep their previous value instead of assuming
+    // the wallet has (or has not) used its single interaction.
+    return null;
   }
-  return responded;
 }
 
 export interface TriageSnapshot {
@@ -2942,9 +2946,12 @@ export async function fetchTaskEconomy(
   const contract = getJobContract(provider);
 
   try {
-    const [economyRaw, poolRemainingRaw] = await Promise.all([
+    const [economyRaw, poolRemainingRaw, openRaw] = await Promise.all([
       contract.getTaskEconomy(BigInt(jobId)),
-      contract.getInteractionPoolRemaining(BigInt(jobId))
+      contract.getInteractionPoolRemaining(BigInt(jobId)),
+      contract.unclaimedResponseCount
+        ? contract.unclaimedResponseCount(BigInt(jobId)).catch(() => null)
+        : Promise.resolve(null)
     ]);
 
     const economy = economyRaw as {
@@ -2959,7 +2966,9 @@ export async function fetchTaskEconomy(
       interactionReward: toBigInt(economy.interactionReward ?? economy[1] ?? 0n),
       interactionPool: toBigInt(economy.interactionPool ?? economy[2] ?? 0n),
       interactionPoolFunded: Boolean(economy.interactionPoolFunded ?? economy[3] ?? false),
-      poolRemaining: toBigInt(poolRemainingRaw ?? 0n)
+      poolRemaining: toBigInt(poolRemainingRaw ?? 0n),
+      unclaimedResponseCount:
+        openRaw === null || openRaw === undefined ? 0 : Number(openRaw)
     };
   } catch {
     return {
@@ -2967,7 +2976,8 @@ export async function fetchTaskEconomy(
       interactionReward: 0n,
       interactionPool: 0n,
       interactionPoolFunded: false,
-      poolRemaining: 0n
+      poolRemaining: 0n,
+      unclaimedResponseCount: 0
     };
   }
 }
@@ -2989,6 +2999,7 @@ export async function fetchPendingReleases(
       fetchTaskEconomy(provider, taskId)
     ]);
     const finalists = Array.from(finalistsRaw as string[]);
+    const openResponses = economy.unclaimedResponseCount;
     const jobTuple = Array.isArray(jobRaw) ? jobRaw : [];
     const jobObject = (jobRaw && typeof jobRaw === "object" ? jobRaw : {}) as Record<string, unknown>;
     const deadline = Number(jobObject.deadline ?? jobTuple[4] ?? 0);
@@ -3013,18 +3024,19 @@ export async function fetchPendingReleases(
             const interactionRewardClaimed = toBoolean(raw.interactionRewardClaimed ?? raw[10] ?? false);
 
             if (stakeSlashed) continue;
+            // The pool is split equally across unclaimed responses, so the
+            // claimable share is live: remaining pool / open responses.
+            const liveShare =
+              openResponses > 0 ? economy.poolRemaining / BigInt(openResponses) : 0n;
             const canClaimReward =
-              !interactionRewardClaimed &&
-              economy.interactionPool > 0n &&
-              economy.interactionReward > 0n &&
-              economy.poolRemaining >= economy.interactionReward;
+              !interactionRewardClaimed && economy.interactionPool > 0n && openResponses > 0;
             const canReturnStake = !stakeReturned && stakeAmount > 0n && (canClaimReward || canManuallyReturnStake);
 
             if (canClaimReward || canReturnStake) {
               pending.push({
                 responseId,
                 stakeAmount: canReturnStake ? stakeAmount : 0n,
-                rewardAmount: canClaimReward ? economy.interactionReward : 0n,
+                rewardAmount: canClaimReward ? liveShare : 0n,
                 canReturnStake,
                 canClaimReward
               });

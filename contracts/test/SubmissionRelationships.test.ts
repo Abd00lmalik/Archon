@@ -147,14 +147,24 @@ describe("Submission Relationships", function () {
     await expect(job.connect(agentA).respondToSubmission(submissionId, 0, "ipfs://self")).to.be.reverted;
   });
 
-  it("responder cannot respond twice to same submission", async function () {
-    const { job, client, agentA, agentB } = await deployFixture();
+  it("responder cannot interact twice in the same job", async function () {
+    const { job, client, agentA, agentB, agentC } = await deployFixture();
     await createJob(job, client);
     const submissionId = await submitBaseSubmission(job, agentA);
-    await enterRevealPhase(job, client, [agentA.address]);
+    const otherSubmissionId = await submitBaseSubmission(job, agentC);
+    await enterRevealPhase(job, client, [agentA.address, agentC.address]);
 
     await job.connect(agentB).respondToSubmission(submissionId, 0, "ipfs://first");
+    // Not again on the same submission, and not on a different one either.
     await expect(job.connect(agentB).respondToSubmission(submissionId, 1, "ipfs://second")).to.be.reverted;
+    await expect(
+      job.connect(agentB).respondToSubmission(otherSubmissionId, 0, "ipfs://other-finalist")
+    ).to.be.reverted;
+    expect(await job.hasResponded(0, agentB.address)).to.equal(true);
+
+    // Other wallets still get their own single interaction.
+    await job.connect(agentC).respondToSubmission(submissionId, 1, "ipfs://from-agent-c");
+    expect(await job.hasResponded(0, agentC.address)).to.equal(true);
   });
 
   it("responding requires 2 USDC stake", async function () {

@@ -1,7 +1,7 @@
 {
   "network": "arc_testnet",
   "chainId": 5042002,
-  "deployedAt": "2026-09-27T14:47:46.474Z",
+  "deployedAt": "2026-09-28T09:34:12.640Z",
   "rpcUrl": "https://rpc.testnet.arc.network",
   "usdcAddress": "0x3600000000000000000000000000000000000000",
   "platformTreasury": "0x25265b9dBEb6c653b0CA281110Bb0697a9685107",
@@ -12,7 +12,7 @@
   },
   "contracts": {
     "sourceRegistry": {
-      "address": "0xE17FCf5067eBc32853d1da38cf43ed9e05a1e2c8",
+      "address": "0xB43d23dcc2eBA1f826366E51639Bb568c37A57E4",
       "abi": [
         {
           "inputs": [],
@@ -337,7 +337,7 @@
       ]
     },
     "validationRegistry": {
-      "address": "0xeA4fF37Da639d21564f1F3647a70259D0FDD92e0",
+      "address": "0x248d277E4CA32E4Eb9230Aec39137919865ff30d",
       "abi": [
         {
           "inputs": [],
@@ -798,7 +798,7 @@
       ]
     },
     "credentialHook": {
-      "address": "0x897a8dBAF66eFFaBe2DF430495316f780C232B40",
+      "address": "0xCA3ADA0e6a1eaEA3005be369853E04B935f9072b",
       "abi": [
         {
           "inputs": [
@@ -1148,7 +1148,7 @@
       ]
     },
     "jobContract": {
-      "address": "0xB621Ea466995684c0d83165e5101D5820d1722eD",
+      "address": "0x1e0f6e137F588c369488bf76fab3b24805E5280f",
       "abi": [
         {
           "inputs": [
@@ -2009,25 +2009,6 @@
           "name": "autoStartReveal",
           "outputs": [],
           "stateMutability": "nonpayable",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            }
-          ],
-          "name": "buildOnParent",
-          "outputs": [
-            {
-              "internalType": "address",
-              "name": "",
-              "type": "address"
-            }
-          ],
-          "stateMutability": "view",
           "type": "function"
         },
         {
@@ -3143,75 +3124,6 @@
           "inputs": [
             {
               "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            }
-          ],
-          "name": "responses",
-          "outputs": [
-            {
-              "internalType": "uint256",
-              "name": "responseId",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "parentSubmissionId",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "taskId",
-              "type": "uint256"
-            },
-            {
-              "internalType": "address",
-              "name": "responder",
-              "type": "address"
-            },
-            {
-              "internalType": "enum ERC8183Job.ResponseType",
-              "name": "responseType",
-              "type": "uint8"
-            },
-            {
-              "internalType": "string",
-              "name": "contentURI",
-              "type": "string"
-            },
-            {
-              "internalType": "uint256",
-              "name": "stakedAmount",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "createdAt",
-              "type": "uint256"
-            },
-            {
-              "internalType": "bool",
-              "name": "stakeSlashed",
-              "type": "bool"
-            },
-            {
-              "internalType": "bool",
-              "name": "stakeReturned",
-              "type": "bool"
-            },
-            {
-              "internalType": "bool",
-              "name": "interactionRewardClaimed",
-              "type": "bool"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "uint256",
               "name": "responseId",
               "type": "uint256"
             }
@@ -3587,30 +3499,6 @@
           "inputs": [
             {
               "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            }
-          ],
-          "name": "submissionResponses",
-          "outputs": [
-            {
-              "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "uint256",
               "name": "jobId",
               "type": "uint256"
             },
@@ -3670,40 +3558,6 @@
         {
           "inputs": [
             {
-              "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            }
-          ],
-          "name": "taskEconomy",
-          "outputs": [
-            {
-              "internalType": "uint256",
-              "name": "interactionStake",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "interactionReward",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "interactionPool",
-              "type": "uint256"
-            },
-            {
-              "internalType": "bool",
-              "name": "interactionPoolFunded",
-              "type": "bool"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
               "internalType": "address",
               "name": "newOwner",
               "type": "address"
@@ -3712,6 +3566,25 @@
           "name": "transferOwnership",
           "outputs": [],
           "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "name": "unclaimedResponseCount",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
           "type": "function"
         },
         {
@@ -3761,7 +3634,7 @@
       ]
     },
     "job": {
-      "address": "0xB621Ea466995684c0d83165e5101D5820d1722eD",
+      "address": "0x1e0f6e137F588c369488bf76fab3b24805E5280f",
       "abi": [
         {
           "inputs": [
@@ -4622,25 +4495,6 @@
           "name": "autoStartReveal",
           "outputs": [],
           "stateMutability": "nonpayable",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            }
-          ],
-          "name": "buildOnParent",
-          "outputs": [
-            {
-              "internalType": "address",
-              "name": "",
-              "type": "address"
-            }
-          ],
-          "stateMutability": "view",
           "type": "function"
         },
         {
@@ -5756,75 +5610,6 @@
           "inputs": [
             {
               "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            }
-          ],
-          "name": "responses",
-          "outputs": [
-            {
-              "internalType": "uint256",
-              "name": "responseId",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "parentSubmissionId",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "taskId",
-              "type": "uint256"
-            },
-            {
-              "internalType": "address",
-              "name": "responder",
-              "type": "address"
-            },
-            {
-              "internalType": "enum ERC8183Job.ResponseType",
-              "name": "responseType",
-              "type": "uint8"
-            },
-            {
-              "internalType": "string",
-              "name": "contentURI",
-              "type": "string"
-            },
-            {
-              "internalType": "uint256",
-              "name": "stakedAmount",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "createdAt",
-              "type": "uint256"
-            },
-            {
-              "internalType": "bool",
-              "name": "stakeSlashed",
-              "type": "bool"
-            },
-            {
-              "internalType": "bool",
-              "name": "stakeReturned",
-              "type": "bool"
-            },
-            {
-              "internalType": "bool",
-              "name": "interactionRewardClaimed",
-              "type": "bool"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "uint256",
               "name": "responseId",
               "type": "uint256"
             }
@@ -6200,30 +5985,6 @@
           "inputs": [
             {
               "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            }
-          ],
-          "name": "submissionResponses",
-          "outputs": [
-            {
-              "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "uint256",
               "name": "jobId",
               "type": "uint256"
             },
@@ -6283,40 +6044,6 @@
         {
           "inputs": [
             {
-              "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            }
-          ],
-          "name": "taskEconomy",
-          "outputs": [
-            {
-              "internalType": "uint256",
-              "name": "interactionStake",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "interactionReward",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "interactionPool",
-              "type": "uint256"
-            },
-            {
-              "internalType": "bool",
-              "name": "interactionPoolFunded",
-              "type": "bool"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
               "internalType": "address",
               "name": "newOwner",
               "type": "address"
@@ -6325,6 +6052,25 @@
           "name": "transferOwnership",
           "outputs": [],
           "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "name": "unclaimedResponseCount",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
           "type": "function"
         },
         {
@@ -6374,7 +6120,7 @@
       ]
     },
     "githubSource": {
-      "address": "0x087c984382Eb61FBADf3A1C72c6fDea6e737A5ec",
+      "address": "0xCF523E8d604cE30d71796fFa9C551566ecbeaa85",
       "abi": [
         {
           "inputs": [
@@ -6925,7 +6671,7 @@
       ]
     },
     "communitySource": {
-      "address": "0xfBBeb8616fad536d3A1Bb5125aD4Bd1fe6568C6a",
+      "address": "0xAE64a9B5fB91D17Cb72463D82E733a7de6008CD0",
       "abi": [
         {
           "inputs": [
@@ -7915,7 +7661,7 @@
       ]
     },
     "agentTaskSource": {
-      "address": "0xe72dB60E9be9B967745579Eb5e401db26829a88e",
+      "address": "0x4FC7FF15BCD6e6d4968d93d6EAB8C89059Aec5A7",
       "abi": [
         {
           "inputs": [
@@ -8660,7 +8406,7 @@
       ]
     },
     "milestoneEscrow": {
-      "address": "0xD8e578c597271616C88172860b553EA15D78f3A6",
+      "address": "0x1A889b7A754578fB4d8AF18502314059926d041E",
       "abi": [
         {
           "inputs": [
@@ -9717,7 +9463,7 @@
       ]
     },
     "peerAttestationSource": {
-      "address": "0x7cd528c9A8EcdAA3ACF9d463cEeCcF9041d38Fa5",
+      "address": "0x72f7E97Cf9EB6FC3CC765b438e4040567597aEbd",
       "abi": [
         {
           "inputs": [
@@ -10137,7 +9883,7 @@
       ]
     },
     "daoGovernanceSource": {
-      "address": "0x3086b17235929EC1D83A5301E7466EC280178be7",
+      "address": "0x0d5739fac0AE9964050EC7c3e75c5278E19D38f8",
       "abi": [
         {
           "inputs": [

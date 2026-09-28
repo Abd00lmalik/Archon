@@ -254,6 +254,16 @@ async function findValidRevealTarget(JOB, walletAddress, taskId) {
   const submissions = Array.from(await JOB.getSubmissions(BigInt(taskId)).catch(() => []));
   console.log("[reveal] total submissions:", submissions.length);
 
+  // One interaction per wallet per job: if this wallet already responded
+  // anywhere in the task, there is no valid target left.
+  const alreadyResponded = contractHasFunction(JOB, "hasResponded")
+    ? await JOB.hasResponded(BigInt(taskId), walletAddress).catch(() => false)
+    : false;
+  if (alreadyResponded) {
+    console.log("[reveal] wallet already used its interaction for task:", String(taskId));
+    return null;
+  }
+
   const validSubmissions = submissions.filter((submission) => {
     const agent = readSubmissionAgent(submission);
     return agent && agent.toLowerCase() !== ZERO;
@@ -279,14 +289,6 @@ async function findValidRevealTarget(JOB, walletAddress, taskId) {
     const submissionId = readSubmissionId(submission);
     if (submissionId === undefined || submissionId === null) {
       console.log("[reveal] submissionId missing for agent:", candidateAgent);
-      continue;
-    }
-
-    const alreadyResponded = contractHasFunction(JOB, "hasResponded")
-      ? await JOB.hasResponded(submissionId, walletAddress).catch(() => false)
-      : false;
-    if (alreadyResponded) {
-      console.log("[reveal] already responded to submission:", submissionId.toString());
       continue;
     }
 

@@ -212,7 +212,9 @@ describe("Interaction Economy", function () {
     expect(before - after).to.equal(stake);
     expect(response.responder).to.equal(agentB.address);
     expect(response.stakedAmount).to.equal(stake);
-    expect(await job.hasResponded(submissionId, agentB.address)).to.equal(true);
+    expect(await job.hasResponded(0, agentB.address)).to.equal(true);
+    // Every new response joins the equal-split pool.
+    expect(await job.unclaimedResponseCount(0)).to.equal(1);
   });
 
   it("claimInteractionReward pays after finalization", async function () {
@@ -232,8 +234,10 @@ describe("Interaction Economy", function () {
     await job.connect(client).finalizeWinners(0, [agentA.address], [ethers.parseUnits("120", 6)]);
 
     const economy = await job.getTaskEconomy(0);
-    const fee = (economy.interactionReward * 1000n) / 10000n;
-    const payout = economy.interactionReward - fee;
+    // Sole responder: the entire pool is their share.
+    const share = economy.interactionPool;
+    const fee = (share * 1000n) / 10000n;
+    const payout = share - fee;
 
     const responderBefore = await usdc.balanceOf(agentB.address);
     const treasuryBefore = await usdc.balanceOf(treasury.address);
@@ -250,6 +254,8 @@ describe("Interaction Economy", function () {
     expect(treasuryAfter - treasuryBefore).to.equal(fee);
     expect(response.interactionRewardClaimed).to.equal(true);
     expect(response.stakeReturned).to.equal(true);
+    expect(await job.unclaimedResponseCount(0)).to.equal(0);
+    expect(await job.getInteractionPoolRemaining(0)).to.equal(0);
   });
 
   it("settleRevealPhase returns stakes and pays rewards in a batch", async function () {
@@ -268,8 +274,10 @@ describe("Interaction Economy", function () {
     await job.connect(client).finalizeWinners(0, [agentA.address], [ethers.parseUnits("120", 6)]);
 
     const economy = await job.getTaskEconomy(0);
-    const fee = (economy.interactionReward * 1000n) / 10000n;
-    const payout = economy.interactionReward - fee;
+    // Sole responder settles for the entire pool.
+    const share = economy.interactionPool;
+    const fee = (share * 1000n) / 10000n;
+    const payout = share - fee;
     const responderBefore = await usdc.balanceOf(agentB.address);
     const treasuryBefore = await usdc.balanceOf(treasury.address);
 
@@ -283,10 +291,12 @@ describe("Interaction Economy", function () {
     expect(treasuryAfter - treasuryBefore).to.equal(fee);
     expect(response.stakeReturned).to.equal(true);
     expect(response.interactionRewardClaimed).to.equal(true);
+    expect(await job.unclaimedResponseCount(0)).to.equal(0);
+    expect(await job.getInteractionPoolRemaining(0)).to.equal(0);
   });
 
-  it("claimInteractionReward respects pool cap", async function () {
-    const { job, client, agentA, agentB, agentC, others } = await deployFixture();
+  it("unlimited responders split the pool equally at settlement", async function () {
+    const { job, client, agentA, agentB, agentC, treasury, usdc, others } = await deployFixture();
     await createJobWithEconomy(job, client, {
       reward: "100",
       maxApprovals: 2,
@@ -298,35 +308,81 @@ describe("Interaction Economy", function () {
     const submissionB = await submit(job, agentB, "https://example.com/b");
     await enterReveal(job, client, [agentA.address, agentB.address]);
 
-    const responders = [agentC, ...others.slice(0, 10)];
-    const responseIds: bigint[] = [];
+    // 21 distinct responders - well past the old 20-slot cap. Each wallet
+    // interacts exactly once and every response joins the split.
+    const responders = [agentC, ...others.slice(0, 20)];
+    expect(responders.length).to.equal(21);
 
-    for (const responder of responders) {
-      await job.connect(responder).respondToSubmission(submissionA, 1, `ipfs://critique-${responder.address}`);
-      responseIds.push((await job.getSubmissionResponses(submissionA)).slice(-1)[0]);
+    for (let i = 0; i < responders.length; i += 1) {
+      const target = i % 2 === 0 ? submissionA : submissionB;
+      await job.connect(responders[i]).respondToSubmission(target, 1, `ipfs://critique-${i}`);
     }
 
-    for (const responder of responders.slice(0, 10)) {
-      await job.connect(responder).respondToSubmission(submissionB, 0, `ipfs://build-${responder.address}`);
-      responseIds.push((await job.getSubmissionResponses(submissionB)).slice(-1)[0]);
-    }
-
-    expect(responseIds.length).to.equal(21);
+    const pool = ethers.parseUnits("10", 6);
+    expect(await job.unclaimedResponseCount(0)).to.equal(21);
+    // Rewards only leave the pot at settlement; the pool backs all 21 shares.
+    expect(await job.getInteractionPoolRemaining(0)).to.equal(pool);
 
     const revealEnd = Number(await job.getRevealPhaseEnd(0));
     await time.increaseTo(revealEnd + 1);
     await job.connect(client).finalizeWinners(0, [agentA.address], [ethers.parseUnits("60", 6)]);
 
-    for (const responseId of responseIds.slice(0, 20)) {
+    const responseIds: bigint[] = [];
+    for (const sid of [submissionA, submissionB]) {
+      responseIds.push(...((await job.getSubmissionResponses(sid)) as bigint[]));
+    }
+    expect(responseIds.length).to.equal(21);
+
+    const treasuryBefore = await usdc.balanceOf(treasury.address);
+    let paidToResponders = 0n;
+    for (const responseId of responseIds) {
       const response = await job.getResponse(responseId);
-      const responder = response.responder;
-      const signer = [agentC, ...others].find((candidate) => candidate.address === responder);
-      await job.connect(signer!).claimInteractionReward(responseId);
+      const signer = responders.find((candidate) => candidate.address === response.responder)!;
+      const before = await usdc.balanceOf(signer.address);
+      await job.connect(signer).claimInteractionReward(responseId);
+      const after = await usdc.balanceOf(signer.address);
+      // Exclude the returned stake: only reward + fee belong to the pool.
+      paidToResponders += after - before - response.stakedAmount;
     }
 
-    const lastResponse = await job.getResponse(responseIds[20]);
-    const lastSigner = [agentC, ...others].find((candidate) => candidate.address === lastResponse.responder)!;
-    await expect(job.connect(lastSigner).claimInteractionReward(responseIds[20])).to.be.reverted;
+    const treasuryFees = (await usdc.balanceOf(treasury.address)) - treasuryBefore;
+    expect(await job.unclaimedResponseCount(0)).to.equal(0);
+    expect(await job.getInteractionPoolRemaining(0)).to.equal(0);
+    // Floor rounding per claim; the pool pays out exactly.
+    expect(paidToResponders + treasuryFees).to.equal(pool);
+  });
+
+  it("slashing releases the responder's share to the remaining responders", async function () {
+    const { job, client, agentA, agentB, agentC, treasury, usdc } = await deployFixture();
+    await createJobWithEconomy(job, client, { reward: "200", interactionPoolPercent: 1000 });
+    const submissionId = await submit(job, agentA, "https://example.com/a");
+    await enterReveal(job, client, [agentA.address]);
+
+    await job.connect(agentB).respondToSubmission(submissionId, 1, "ipfs://from-b");
+    await job.connect(agentC).respondToSubmission(submissionId, 0, "ipfs://from-c");
+    expect(await job.unclaimedResponseCount(0)).to.equal(2);
+
+    const responseIds = await job.getSubmissionResponses(submissionId);
+    await job.connect(client).slashResponseStake(responseIds[1]);
+    // C's slash releases their share: B is now the sole claimant of the pool.
+    expect(await job.unclaimedResponseCount(0)).to.equal(1);
+
+    const revealEnd = Number(await job.getRevealPhaseEnd(0));
+    await time.increaseTo(revealEnd + 1);
+    await job.connect(client).finalizeWinners(0, [agentA.address], [ethers.parseUnits("120", 6)]);
+
+    const pool = ethers.parseUnits("20", 6);
+    const treasuryBefore = await usdc.balanceOf(treasury.address);
+    const bBefore = await usdc.balanceOf(agentB.address);
+    await job.connect(agentB).claimInteractionReward(responseIds[0]);
+    const bAfter = await usdc.balanceOf(agentB.address);
+    const treasuryAfter = await usdc.balanceOf(treasury.address);
+
+    const fee = (pool * 1000n) / 10000n;
+    expect(bAfter - bBefore).to.equal(pool - fee + ethers.parseUnits("2", 6));
+    expect(treasuryAfter - treasuryBefore).to.equal(fee);
+    expect(await job.unclaimedResponseCount(0)).to.equal(0);
+    expect(await job.getInteractionPoolRemaining(0)).to.equal(0);
   });
 
   it("submitDirect combines accept and submit in one tx", async function () {

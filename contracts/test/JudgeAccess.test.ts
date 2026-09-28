@@ -176,8 +176,8 @@ describe("Judge Access + Reviewed Flags", function () {
     await expect(job.connect(client).setReviewed(0, 999999, true)).to.be.reverted;
   });
 
-  it("a wallet can respond to a submission only once during reveal", async function () {
-    const { job, client, judgeA, agentA, agentB, stranger } = await deployFixture();
+  it("a wallet can interact only once per task during reveal", async function () {
+    const { job, client, judgeA, judgeB, agentA, agentB, stranger } = await deployFixture();
 
     const submissionId = await submit(job, agentA, "https://example.com/a");
     const submissionB = await submit(job, stranger, "https://example.com/b");
@@ -186,14 +186,20 @@ describe("Judge Access + Reviewed Flags", function () {
     await job.connect(judgeA).selectFinalists(0, [agentA.address, stranger.address]);
 
     await job.connect(agentB).respondToSubmission(submissionId, 1, "ipfs://critique-1");
-    expect(await job.hasResponded(submissionId, agentB.address)).to.equal(true);
+    expect(await job.hasResponded(0, agentB.address)).to.equal(true);
 
+    // Not again on the same submission...
     await expect(
       job.connect(agentB).respondToSubmission(submissionId, 0, "ipfs://build-again")
     ).to.be.reverted;
 
-    // ...but the same wallet may still respond to a different submission
-    await job.connect(agentB).respondToSubmission(submissionB, 0, "ipfs://build-on-b");
-    expect(await job.hasResponded(submissionB, agentB.address)).to.equal(true);
+    // ...and not on a different submission either: one interaction total.
+    await expect(
+      job.connect(agentB).respondToSubmission(submissionB, 0, "ipfs://build-on-b")
+    ).to.be.reverted;
+
+    // A different wallet still gets its own single interaction.
+    await job.connect(judgeB).respondToSubmission(submissionB, 0, "ipfs://second-wallet");
+    expect(await job.hasResponded(0, judgeB.address)).to.equal(true);
   });
 });

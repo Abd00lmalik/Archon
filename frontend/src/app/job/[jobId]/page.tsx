@@ -11,7 +11,7 @@ import {
   deriveDisplayStatus,
   expectedChainId,
   extractBanner,
-  fetchHasRespondedMap,
+  fetchHasRespondedForJob,
   fetchIsJudge,
   fetchJobCredentialCooldownSeconds,
   fetchLastJobCredentialClaim,
@@ -496,7 +496,8 @@ export default function JobDetailsPage() {
     interactionReward: 0n,
     interactionPool: 0n,
     interactionPoolFunded: false,
-    poolRemaining: 0n
+    poolRemaining: 0n,
+    unclaimedResponseCount: 0
   });
 
   const [selectedFinalists, setSelectedFinalists] = useState<string[]>([]);
@@ -528,7 +529,8 @@ export default function JobDetailsPage() {
   );
   const [promotedAgents, setPromotedAgents] = useState<Set<string>>(new Set());
   const [rejectConfirmId, setRejectConfirmId] = useState<number | null>(null);
-  const [respondedIds, setRespondedIds] = useState<Set<number>>(new Set());
+  // null = check pending/failed; only `true` blocks a second interaction.
+  const [viewerHasResponded, setViewerHasResponded] = useState<boolean | null>(null);
   const [reviewBusyId, setReviewBusyId] = useState<number | null>(null);
   const [reviewError, setReviewError] = useState("");
   const [triageReady, setTriageReady] = useState(false);
@@ -803,16 +805,18 @@ export default function JobDetailsPage() {
     const shouldLoadInteractions = task.caps.hasSignalMap || task.caps.canSelectFinalists || task.caps.canInteract;
     if (shouldLoadInteractions) {
       try {
-        const [finalRows, revealEndRaw, revealOpenRaw, economyRaw, poolRemainingRaw] = await Promise.all([
-          // Retry the finalist read: a transient failure here used to degrade
-          // silently to [] (interaction pool / finalize list fell back to ALL
-          // submissions). null means "failed" - keep the previous value.
-          withRetry(() => readContract.getSelectedFinalists(task.jobId)).catch(() => null),
-          readContract.getRevealPhaseEnd(task.jobId).catch(() => task.revealPhaseEnd),
-          readContract.isInRevealPhase(task.jobId).catch(() => task.isInRevealPhase),
-          withRetry(() => readContract.getTaskEconomy(task.jobId)).catch(() => null),
-          withRetry(() => readContract.getInteractionPoolRemaining(task.jobId)).catch(() => null)
-        ]);
+        const [finalRows, revealEndRaw, revealOpenRaw, economyRaw, poolRemainingRaw, openResponsesRaw] =
+          await Promise.all([
+            // Retry the finalist read: a transient failure here used to degrade
+            // silently to [] (interaction pool / finalize list fell back to ALL
+            // submissions). null means "failed" - keep the previous value.
+            withRetry(() => readContract.getSelectedFinalists(task.jobId)).catch(() => null),
+            readContract.getRevealPhaseEnd(task.jobId).catch(() => task.revealPhaseEnd),
+            readContract.isInRevealPhase(task.jobId).catch(() => task.isInRevealPhase),
+            withRetry(() => readContract.getTaskEconomy(task.jobId)).catch(() => null),
+            withRetry(() => readContract.getInteractionPoolRemaining(task.jobId)).catch(() => null),
+            withRetry(() => readContract.unclaimedResponseCount(task.jobId)).catch(() => null)
+          ]);
         const finals = finalRows === null ? null : Array.from(finalRows as string[]);
         const revealEnd = Number(revealEndRaw);
         if (finals) setSelectedFinalists(finals);
@@ -834,6 +838,9 @@ export default function JobDetailsPage() {
           }
           if (poolRemainingRaw !== null) {
             next.poolRemaining = coerceBigInt(poolRemainingRaw);
+          }
+          if (openResponsesRaw !== null) {
+            next.unclaimedResponseCount = Number(openResponsesRaw);
           }
           return next;
         });
@@ -1156,8 +1163,8 @@ export default function JobDetailsPage() {
       alert("Response content too short");
       return;
     }
-    if (respondedIds.has(selectedSubmission.submissionId)) {
-      setErrorMessage("You already responded to this submission - each wallet can respond only once.");
+    if (viewerHasResponded) {
+      setErrorMessage("You already used your interaction for this task - each wallet can interact once per task.");
       return;
     }
 
@@ -1180,7 +1187,7 @@ export default function JobDetailsPage() {
       setStatusMessage(`Response tx: ${txHash}`);
       setResponseContent("");
       setShowResponsePanel(false);
-      setRespondedIds((previous) => new Set(previous).add(selectedSubmission.submissionId));
+      setViewerHasResponded(true);
       clearTaskCaches();
       await loadHeatmap();
       await loadTask();
@@ -1706,16 +1713,13 @@ export default function JobDetailsPage() {
       !isJudge &&
       !submissionDeadlinePassed
   );
-  const finalistInteractionPool = safeSubmissions.filter((submission) =>
-    finalistSet.has(submission.agent.toLowerCase())
-  );
-  const respondedFinalistCount = finalistInteractionPool.filter((submission) =>
-    respondedIds.has(submission.submissionId)
-  ).length;
-  const remainingInteractions = Math.max(0, finalistInteractionPool.length - respondedFinalistCount);
-  const selectedAlreadyResponded = Boolean(
-    selectedSubmission && respondedIds.has(selectedSubmission.submissionId)
-  );
+  // Live per-response share: the whole remaining pool is split equally
+  // across all unclaimed responses (updated as responses arrive).
+  const liveResponseShare =
+    taskEconomy.unclaimedResponseCount > 0
+      ? taskEconomy.poolRemaining / BigInt(taskEconomy.unclaimedResponseCount)
+      : 0n;
+  const viewerAlreadyResponded = viewerHasResponded === true;
   const canInteract = Boolean(
     task?.caps.canInteract &&
       showInteractionAction &&
@@ -1725,7 +1729,7 @@ export default function JobDetailsPage() {
       selectedSubmission &&
       isSelectedFinalist &&
       !isOwnSelectedSubmission &&
-      !selectedAlreadyResponded
+      !viewerAlreadyResponded
   );
   // A disabled Submit button used to fail silently (no wallet popup, no
   // explanation). Spell out the first unmet condition instead.
@@ -1743,8 +1747,8 @@ export default function JobDetailsPage() {
             ? "Only revealed finalists can receive responses."
             : isOwnSelectedSubmission
               ? "You cannot respond to your own submission."
-              : selectedAlreadyResponded
-                ? "You already responded to this submission."
+              : viewerAlreadyResponded
+                ? "You already used your interaction for this task - each wallet can interact once."
                 : "";
   const canSettle = Boolean(
     task?.caps.canSettleRevealPhase &&
@@ -1794,6 +1798,7 @@ export default function JobDetailsPage() {
     setSubmissions([]);
     setSubsError(null);
     setSelectedFinalists([]);
+    setViewerHasResponded(null);
   }, [jobId]);
 
   useEffect(() => {
@@ -1850,42 +1855,29 @@ export default function JobDetailsPage() {
     };
   }, [jobId, safeSubmissions, taskJudges, clientAddress, taskSourceId]);
 
+  // One read per wallet+task: has this wallet already used its single
+  // interaction anywhere in this task? null (unknown/failed) keeps the
+  // previous value instead of wrongly re-enabling or re-blocking.
   useEffect(() => {
     let active = true;
-    if (!account || !isRevealActive || safeSubmissions.length === 0) {
-      setRespondedIds(new Set());
+    if (!account) {
+      setViewerHasResponded(false);
       return () => {
         active = false;
       };
     }
-    const finalists = safeSubmissions.filter((submission) =>
-      finalistSet.has(submission.agent.toLowerCase())
-    );
-    const ids = (finalists.length > 0 ? finalists : safeSubmissions).map(
-      (submission) => submission.submissionId
-    );
-    void fetchHasRespondedMap(ids, account).then((marks) => {
-      if (active) setRespondedIds(marks);
+    void fetchHasRespondedForJob(jobId, account).then((responded) => {
+      if (!active || responded === null) return;
+      setViewerHasResponded(responded);
     });
     return () => {
       active = false;
     };
-  }, [account, isRevealActive, safeSubmissions, finalistSet]);
+  }, [jobId, account]);
 
   useEffect(() => {
     setDisplayTaskId(task?.displayId ? `#${task.displayId}` : validRouteTask ? `#${displayId}` : `#${rawJobParam}`);
   }, [displayId, rawJobParam, task?.displayId, validRouteTask]);
-
-  useEffect(() => {
-    console.log("[revealCheck]", {
-      jobStatus: job?.status,
-      revealPhaseEnd: revealEndValue,
-      nowSeconds: Math.floor(Date.now() / 1000),
-      isRevealActive,
-      hasSigner: Boolean(signer),
-      contentLength: responseContent?.length ?? 0
-    });
-  }, [job?.status, revealEndValue, isRevealActive, signer, responseContent]);
 
   if (jobLoading) {
     return (
@@ -2043,11 +2035,19 @@ export default function JobDetailsPage() {
                   </div>
                 </div>
                 <div>
-                  <div style={{ color: "var(--text-muted)", fontSize: 10 }}>REWARD PER APPROVAL</div>
+                  <div style={{ color: "var(--text-muted)", fontSize: 10 }}>REWARD PER RESPONSE</div>
                   <div style={{ color: "var(--pulse)", fontFamily: "JetBrains Mono, monospace", fontWeight: 700 }}>
                     {taskEconomy.interactionPool > 0n
-                      ? `~${(Number(taskEconomy.interactionReward) / 1e6).toFixed(3)} USDC`
+                      ? taskEconomy.unclaimedResponseCount > 0
+                        ? `~${(Number(liveResponseShare) / 1e6).toFixed(3)} USDC`
+                        : "Awaiting responses"
                       : "No pool"}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ color: "var(--text-muted)", fontSize: 10 }}>RESPONSES IN POOL</div>
+                  <div style={{ color: "var(--arc)", fontFamily: "JetBrains Mono, monospace", fontWeight: 700 }}>
+                    {taskEconomy.unclaimedResponseCount}
                   </div>
                 </div>
                 <div>
@@ -2202,7 +2202,7 @@ export default function JobDetailsPage() {
                       (reviewer) => verdictRowForSubmission[reviewer] === 1
                     );
                     const isAcceptedBySomeone = acceptedBy.length > 0;
-                    const alreadyResponded = respondedIds.has(submission.submissionId);
+                    const interactionUsed = viewerHasResponded === true;
                     const triageVisible = Boolean(job && canReview && job.status <= 3);
                     const finalistLimit = Number(maxApprovals || 1) + 5;
                     const promoteFull =
@@ -2256,9 +2256,9 @@ export default function JobDetailsPage() {
                           <div className="text-xs text-[var(--text-muted)]">No deliverable link provided</div>
                         )}
 
-                        {alreadyResponded ? (
+                        {interactionUsed ? (
                           <div className="border border-[var(--border)] px-2 py-1.5 text-center text-[11px] text-[var(--text-secondary)]">
-                            You already responded to this submission - 1 response per wallet per submission.
+                            You already used your interaction in this task - 1 interaction per wallet per task.
                           </div>
                         ) : null}
 
@@ -2271,11 +2271,11 @@ export default function JobDetailsPage() {
                             <button
                               type="button"
                               className="btn-ghost w-full text-xs"
-                              disabled={alreadyResponded}
+                              disabled={interactionUsed}
                               onClick={() => setSelectedSubmission(submission)}
                             >
-                              {alreadyResponded
-                                ? "Already responded"
+                              {interactionUsed
+                                ? "Interaction used"
                                 : selectedSubmission?.submissionId === submission.submissionId
                                   ? "Selected for Response"
                                   : "Select for Response"}
@@ -2815,14 +2815,21 @@ export default function JobDetailsPage() {
                   </div>
                 ) : (
                 <>
-                  {finalistInteractionPool.length > 0 ? (
+                  {taskEconomy.interactionPool > 0n ? (
                     <div className="border px-3 py-2 text-[11px] text-[var(--text-secondary)]" style={{ borderColor: "var(--border)" }}>
-                      <span className="font-mono text-[var(--text-primary)]">
-                        {respondedFinalistCount}/{finalistInteractionPool.length}
+                      The{" "}
+                      <span className="font-mono text-[var(--gold)]">
+                        {(Number(taskEconomy.poolRemaining) / 1e6).toFixed(3)} USDC
                       </span>{" "}
-                      submissions responded to -{" "}
-                      <span className="font-mono text-[var(--arc)]">{remainingInteractions} left</span> to critique or
-                      build on. Each wallet can respond to each submission only once.
+                      pool is split equally across{" "}
+                      <span className="font-mono text-[var(--text-primary)]">
+                        {taskEconomy.unclaimedResponseCount}
+                      </span>{" "}
+                      {taskEconomy.unclaimedResponseCount === 1 ? "response" : "responses"} -{" "}
+                      <span className="font-mono text-[var(--arc)]">
+                        ~{(Number(liveResponseShare) / 1e6).toFixed(3)} USDC per response
+                      </span>
+                      . Each wallet gets one interaction per task.
                     </div>
                   ) : null}
 
@@ -2830,19 +2837,19 @@ export default function JobDetailsPage() {
                     type="button"
                     className="btn-ghost w-full"
                     onClick={() => setShowResponsePanel((value) => !value)}
-                    disabled={selectedAlreadyResponded}
+                    disabled={viewerAlreadyResponded}
                   >
-                    {selectedAlreadyResponded
-                      ? "Already responded to this submission"
+                    {viewerAlreadyResponded
+                      ? "Interaction already used in this task"
                       : showResponsePanel
                         ? "Close Response Panel"
                         : "Respond to Selected Submission"}
                   </button>
 
-                  {selectedAlreadyResponded ? (
+                  {viewerAlreadyResponded ? (
                     <div className="border border-[var(--border)] p-2 text-center text-[11px] text-[var(--text-muted)]">
-                      You already responded to this submission. Pick another finalist -{" "}
-                      {remainingInteractions} left.
+                      You already used your interaction for this task. Each wallet can critique or build on one
+                      submission only.
                     </div>
                   ) : null}
 
