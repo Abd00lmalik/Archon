@@ -4,6 +4,8 @@ import { ethers } from "hardhat";
 import { time } from "@nomicfoundation/hardhat-network-helpers";
 import { anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
 
+const FIVE_DAYS = 5 * 24 * 60 * 60;
+
 describe("Archon Hook + ERC8183Job", function () {
   async function deployFixture() {
     const [owner, client, agentA, agentB, treasury, other] = await ethers.getSigners();
@@ -72,7 +74,7 @@ describe("Archon Hook + ERC8183Job", function () {
       other.address,
       fourth.address
     ]);
-    await job.connect(client).selectFinalists(0, [agentA.address, agentB.address, other.address, fourth.address]);
+    await job.connect(client).selectFinalists(0, [agentA.address, agentB.address, other.address, fourth.address], FIVE_DAYS);
     await time.increase(5 * 24 * 60 * 60 + 1);
 
     await expect(
@@ -97,7 +99,7 @@ describe("Archon Hook + ERC8183Job", function () {
 
     await job.connect(agentA).submitDirect(0, "https://github.com/work");
     await acceptAndPromote(job, client, 0, [agentA.address]);
-    await job.connect(client).selectFinalists(0, [agentA.address]);
+    await job.connect(client).selectFinalists(0, [agentA.address], FIVE_DAYS);
     await time.increase(5 * 24 * 60 * 60 + 1);
     await job.connect(client).finalizeWinners(0, [agentA.address], [ethers.parseUnits("100", 6)]);
 

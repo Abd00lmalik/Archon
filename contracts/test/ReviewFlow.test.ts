@@ -2,6 +2,8 @@ import { expect } from "chai";
 import { ethers } from "hardhat";
 import { time } from "@nomicfoundation/hardhat-network-helpers";
 
+const FIVE_DAYS = 5 * 24 * 60 * 60;
+
 describe("Judge triage: verdicts + promotion + reveal", function () {
   async function deployFixture(maxApprovals = 2) {
     const [owner, client, judgeA, judgeB, agentA, agentB, agentC, stranger, treasury] =
@@ -194,10 +196,10 @@ describe("Judge triage: verdicts + promotion + reveal", function () {
     const sid = await submit(job, agentA, "https://example.com/a");
 
     await job.connect(client).setReviewVerdict(0, sid, 1);
-    await expect(job.connect(judgeA).selectFinalists(0, [agentA.address])).to.be.reverted;
+    await expect(job.connect(judgeA).selectFinalists(0, [agentA.address], FIVE_DAYS)).to.be.reverted;
 
     await job.connect(client).setPromoted(0, agentA.address, true);
-    await job.connect(judgeA).selectFinalists(0, [agentA.address]);
+    await job.connect(judgeA).selectFinalists(0, [agentA.address], FIVE_DAYS);
     expect(await job.isInRevealPhase(0)).to.equal(true);
 
     await expect(job.connect(client).setPromoted(0, agentA.address, false)).to.be.reverted;
@@ -256,7 +258,7 @@ describe("Judge triage: verdicts + promotion + reveal", function () {
     await job.connect(client).setPromoted(0, agentA.address, true);
 
     // Explicit begin-reveal with the promoted list.
-    await job.connect(judgeA).selectFinalists(0, [agentA.address]);
+    await job.connect(judgeA).selectFinalists(0, [agentA.address], FIVE_DAYS);
     expect(await job.isInRevealPhase(0)).to.equal(true);
 
     await time.increase(5 * 24 * 60 * 60 + 1);

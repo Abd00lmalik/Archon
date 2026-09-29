@@ -11,7 +11,7 @@ import {
   deriveDisplayStatus,
   expectedChainId,
   extractBanner,
-  fetchHasRespondedForJob,
+  fetchPricedSlotState,
   fetchCritiquedForSubmissions,
   fetchIsJudge,
   fetchJobCredentialCooldownSeconds,
@@ -369,22 +369,52 @@ function FinalistSelectionPanel({
   disabled?: boolean;
   disabledHint?: string;
   submitLabel?: string;
-  onSubmit: (agents: string[]) => void;
+  onSubmit: (agents: string[], revealDurationSeconds: number) => void;
 }) {
   const maxFinalists = maxApprovals + 5;
   const selectedKeys = useMemo(() => new Set(selected.map((agent) => agent.toLowerCase())), [selected]);
+  const [durationDays, setDurationDays] = useState<number>(5);
+  const durationOptions = [1, 2, 3, 5, 7];
 
   return (
     <div className="space-y-4">
       <div className="section-header">PROMOTED FOR REVEAL</div>
       <div className="border border-[#162334] px-3 py-2 text-xs text-[#7A9BB5]">
-        These accepted submissions are shortlisted for the 5-day reveal phase. Click one to remove
+        These accepted submissions are shortlisted for the reveal phase. Click one to remove
         it from the shortlist. Only promoted submissions will be visible for critique and
         build-ons.
         <br />
         <strong style={{ color: "#00E5FF" }}>
           Promoted: {selected.length} / {maxFinalists}
         </strong>
+      </div>
+
+      <div className="space-y-2">
+        <div className="section-header">REVEAL WINDOW</div>
+        <div className="flex flex-wrap items-center gap-2">
+          {durationOptions.map((days) => {
+            const active = durationDays === days;
+            return (
+              <button
+                key={days}
+                type="button"
+                onClick={() => setDurationDays(days)}
+                disabled={submitting}
+                className="border px-3 py-1.5 font-mono text-xs transition-all disabled:opacity-50"
+                style={{
+                  borderColor: active ? "#00E5FF" : "#1E3347",
+                  color: active ? "#020608" : "#7A9BB5",
+                  background: active ? "#00E5FF" : "transparent"
+                }}
+              >
+                {days}D
+              </button>
+            );
+          })}
+          <span className="text-[11px] text-[var(--text-muted)]">
+            How long critics &amp; builders get once reveal opens (1-7 days)
+          </span>
+        </div>
       </div>
 
       <div className="space-y-2">
@@ -446,13 +476,13 @@ function FinalistSelectionPanel({
       <button
         type="button"
         className="btn-primary w-full"
-        onClick={() => onSubmit(selected)}
+        onClick={() => onSubmit(selected, durationDays * 24 * 60 * 60)}
         disabled={selected.length === 0 || submitting || disabled}
       >
         {submitting
           ? "Starting Reveal Phase..."
           : submitLabel ??
-            `Start Reveal Phase with ${selected.length} Finalist${selected.length === 1 ? "" : "s"}`}
+            `Start Reveal Phase with ${selected.length} Finalist${selected.length === 1 ? "" : "s"} (${durationDays}d)`}
       </button>
       {disabled && disabledHint ? (
         <div className="text-center text-[11px] text-[var(--text-muted)]">{disabledHint}</div>
@@ -532,6 +562,9 @@ export default function JobDetailsPage() {
   const [rejectConfirmId, setRejectConfirmId] = useState<number | null>(null);
   // null = check pending/failed; only `true` blocks a second build-on/alternative.
   const [viewerUsedPricedSlot, setViewerUsedPricedSlot] = useState<boolean | null>(null);
+  // Submission the priced slot was spent on (build-on or alternative);
+  // null = unknown or slot unused. Disambiguates submission id 0.
+  const [viewerPricedSlotTarget, setViewerPricedSlotTarget] = useState<bigint | null>(null);
   // Submissions this wallet has already critiqued - once per submission, so a
   // set is needed (unlike the single once-per-task slot above).
   const [viewerCritiquedIds, setViewerCritiquedIds] = useState<Set<number>>(new Set());
@@ -1174,6 +1207,16 @@ export default function JobDetailsPage() {
         );
         return;
       }
+      if (
+        viewerUsedPricedSlot &&
+        viewerPricedSlotTarget !== null &&
+        viewerPricedSlotTarget === BigInt(selectedSubmission.submissionId)
+      ) {
+        setErrorMessage(
+          "You already built on this submission - a wallet cannot also critique what it built on."
+        );
+        return;
+      }
     } else if (viewerUsedPricedSlot) {
       setErrorMessage(
         "You already used your build-on/alternative slot for this task - each wallet gets one."
@@ -1208,6 +1251,7 @@ export default function JobDetailsPage() {
         });
       } else {
         setViewerUsedPricedSlot(true);
+        setViewerPricedSlotTarget(BigInt(selectedSubmission.submissionId));
       }
       clearTaskCaches();
       await loadHeatmap();
@@ -1470,7 +1514,7 @@ export default function JobDetailsPage() {
     }
   };
 
-  const handleSelectFinalists = async (agents: string[]) => {
+  const handleSelectFinalists = async (agents: string[], revealDurationSeconds: number) => {
     if (!agents.length) return;
     if (finalistSelecting) return;
     try {
@@ -1489,7 +1533,7 @@ export default function JobDetailsPage() {
         throw new Error(`Too many finalists selected (${unique.length}/${threshold}).`);
       }
       const contract = await getTaskWriteContract();
-      const tx = await contract.selectFinalists(BigInt(jobId), unique);
+      const tx = await contract.selectFinalists(BigInt(jobId), unique, BigInt(revealDurationSeconds));
       await tx.wait();
       const txHash = tx.hash as string;
       setStatusMessage(`Reveal phase tx: ${txHash}`);
@@ -1742,13 +1786,21 @@ export default function JobDetailsPage() {
       : 0n;
   const viewerAlreadyUsedSlot = viewerUsedPricedSlot === true;
   // Type-aware allowance: critiques are once per submission, while build-on
-  // and alternative share the single once-per-task slot.
+  // and alternative share the single once-per-task slot. One-directional rule:
+  // a wallet that built on (or offered an alternative on) a submission may
+  // not critique that same submission.
   const viewerCritiquedSelected = selectedSubmission
     ? viewerCritiquedIds.has(selectedSubmission.submissionId)
     : false;
+  const viewerBuiltOnSelected = Boolean(
+    viewerAlreadyUsedSlot &&
+      selectedSubmission &&
+      viewerPricedSlotTarget !== null &&
+      viewerPricedSlotTarget === BigInt(selectedSubmission.submissionId)
+  );
   const responseTypeAllowed =
     responseType === RESPONSE_TYPE.Critiques
-      ? !viewerCritiquedSelected
+      ? !viewerCritiquedSelected && !viewerBuiltOnSelected
       : !viewerAlreadyUsedSlot;
   const canInteract = Boolean(
     task?.caps.canInteract &&
@@ -1781,7 +1833,9 @@ export default function JobDetailsPage() {
                 ? "You already used your build-on/alternative slot for this task - switch to CRITIQUES to critique each finalist once."
                 : viewerCritiquedSelected
                   ? "You already critiqued this submission - each submission accepts one critique per wallet."
-                  : "";
+                  : responseType === RESPONSE_TYPE.Critiques && viewerBuiltOnSelected
+                    ? "You already built on this submission - a wallet cannot also critique what it built on."
+                    : "";
   const canSettle = Boolean(
     task?.caps.canSettleRevealPhase &&
       job &&
@@ -1831,6 +1885,7 @@ export default function JobDetailsPage() {
     setSubsError(null);
     setSelectedFinalists([]);
     setViewerUsedPricedSlot(null);
+    setViewerPricedSlotTarget(null);
     setViewerCritiquedIds(new Set());
   }, [jobId]);
 
@@ -1889,19 +1944,22 @@ export default function JobDetailsPage() {
   }, [jobId, safeSubmissions, taskJudges, clientAddress, taskSourceId]);
 
   // One read per wallet+task: has this wallet already used its single
-  // interaction anywhere in this task? null (unknown/failed) keeps the
-  // previous value instead of wrongly re-enabling or re-blocking.
+  // interaction anywhere in this task, and on which submission? null
+  // (unknown/failed) keeps the previous value instead of wrongly
+  // re-enabling or re-blocking.
   useEffect(() => {
     let active = true;
     if (!account) {
       setViewerUsedPricedSlot(false);
+      setViewerPricedSlotTarget(null);
       return () => {
         active = false;
       };
     }
-    void fetchHasRespondedForJob(jobId, account).then((responded) => {
-      if (!active || responded === null) return;
-      setViewerUsedPricedSlot(responded);
+    void fetchPricedSlotState(jobId, account).then((state) => {
+      if (!active || state === null) return;
+      setViewerUsedPricedSlot(state.used);
+      setViewerPricedSlotTarget(state.target);
     });
     return () => {
       active = false;
@@ -2054,7 +2112,7 @@ export default function JobDetailsPage() {
 
           {isCreator && job.status === 4 ? (
             <div className="border border-[var(--border)] p-3 text-xs text-[var(--text-secondary)]">
-              Finalist submissions are now visible to all participants. The 5-day interaction window is open for
+              Finalist submissions are now visible to all participants. The interaction window is open for
               critiques and build-ons. After it closes, select final winners - you can choose any finalist regardless
               of interaction signals.
             </div>
@@ -2196,7 +2254,7 @@ export default function JobDetailsPage() {
                 <div className="font-heading mb-2 text-base font-semibold">Submissions are sealed</div>
                 <div className="max-w-xs text-sm text-[var(--text-secondary)]">
                   Submissions are hidden until accepted submissions are promoted and the creator
-                  begins the 5-day reveal phase. This prevents copying and ensures independent
+                  begins the reveal phase. This prevents copying and ensures independent
                   solutions.
                 </div>
                 {submissionDeadlinePassed ? (
@@ -2266,9 +2324,15 @@ export default function JobDetailsPage() {
                     const isAcceptedBySomeone = acceptedBy.length > 0;
                     const slotUsed = viewerUsedPricedSlot === true;
                     const critiquedThis = viewerCritiquedIds.has(submission.submissionId);
-                    // Blocked only when this submission is already critiqued
-                    // and the wallet's build-on slot is spent too.
-                    const responseExhausted = critiquedThis && slotUsed;
+                    const builtOnThis = Boolean(
+                      slotUsed &&
+                        viewerPricedSlotTarget !== null &&
+                        viewerPricedSlotTarget === BigInt(submission.submissionId)
+                    );
+                    // Nothing left here: the slot target blocks critiques on
+                    // top of the build-on, or this submission is already
+                    // critiqued while the slot is spent.
+                    const responseExhausted = builtOnThis || (critiquedThis && slotUsed);
                     const triageVisible = Boolean(job && canReview && job.status <= 3);
                     const finalistLimit = Number(maxApprovals || 1) + 5;
                     const promoteFull =
@@ -2293,6 +2357,11 @@ export default function JobDetailsPage() {
                             className="min-w-0"
                           />
                           <span className="flex shrink-0 items-center gap-1.5">
+                            {builtOnThis ? (
+                              <span className="badge" style={{ color: "var(--arc)" }}>
+                                BUILT ON
+                              </span>
+                            ) : null}
                             {critiquedThis ? (
                               <span className="badge" style={{ color: "var(--warn)" }}>
                                 CRITIQUED
@@ -2329,8 +2398,9 @@ export default function JobDetailsPage() {
 
                         {responseExhausted ? (
                           <div className="border border-[var(--border)] px-2 py-1.5 text-center text-[11px] text-[var(--text-secondary)]">
-                            You critiqued this submission and used your build-on slot for this task -
-                            no responses left here.
+                            {builtOnThis
+                              ? "You built on this submission - a wallet cannot also critique what it built on."
+                              : "You critiqued this submission and used your build-on slot for this task - no responses left here."}
                           </div>
                         ) : null}
 
@@ -2912,9 +2982,11 @@ export default function JobDetailsPage() {
                     type="button"
                     className="btn-ghost w-full"
                     onClick={() => setShowResponsePanel((value) => !value)}
-                    disabled={viewerAlreadyUsedSlot && viewerCritiquedSelected}
+                    disabled={
+                      viewerBuiltOnSelected || (viewerAlreadyUsedSlot && viewerCritiquedSelected)
+                    }
                   >
-                    {viewerAlreadyUsedSlot && viewerCritiquedSelected
+                    {viewerBuiltOnSelected || (viewerAlreadyUsedSlot && viewerCritiquedSelected)
                       ? "No responses left for this submission"
                       : showResponsePanel
                         ? "Close Response Panel"
@@ -2924,7 +2996,7 @@ export default function JobDetailsPage() {
                   {viewerAlreadyUsedSlot ? (
                     <div className="border border-[var(--border)] p-2 text-center text-[11px] text-[var(--text-muted)]">
                       Build-on and alternative are limited to one per task - you have used yours. You can
-                      still critique each finalist submission once.
+                      still critique each finalist submission you have not built on.
                     </div>
                   ) : null}
 
@@ -2944,7 +3016,7 @@ export default function JobDetailsPage() {
                           const optionDisabled =
                             !isSelectedFinalist ||
                             (option.type === RESPONSE_TYPE.Critiques
-                              ? viewerCritiquedSelected
+                              ? viewerCritiquedSelected || viewerBuiltOnSelected
                               : viewerAlreadyUsedSlot);
                           return (
                             <button
@@ -2954,11 +3026,13 @@ export default function JobDetailsPage() {
                               disabled={optionDisabled}
                               title={
                                 optionDisabled
-                                  ? option.type === RESPONSE_TYPE.Critiques && isSelectedFinalist
-                                    ? "Already critiqued this submission"
-                                    : option.type !== RESPONSE_TYPE.Critiques && viewerAlreadyUsedSlot && isSelectedFinalist
-                                      ? "One build-on or alternative per task"
-                                      : "Only finalist submissions can receive responses"
+                                  ? option.type === RESPONSE_TYPE.Critiques && viewerBuiltOnSelected && isSelectedFinalist
+                                    ? "You built on this submission - cannot critique it too"
+                                    : option.type === RESPONSE_TYPE.Critiques && isSelectedFinalist
+                                      ? "Already critiqued this submission"
+                                      : option.type !== RESPONSE_TYPE.Critiques && viewerAlreadyUsedSlot && isSelectedFinalist
+                                        ? "One build-on or alternative per task"
+                                        : "Only finalist submissions can receive responses"
                                   : undefined
                               }
                               className="border p-2 text-[10px] font-mono disabled:opacity-40"
@@ -3017,8 +3091,8 @@ export default function JobDetailsPage() {
               <div className="section-header">JUDGES</div>
               <div className="text-[11px] leading-relaxed text-[var(--text-secondary)]">
                 Paste wallet addresses (comma or newline separated) to let them accept or reject
-                submissions, promote accepted submissions, and begin the 5-day reveal phase. New
-                addresses are added to the current list; judges cannot submit work to this task.
+                submissions, promote accepted submissions, and begin the reveal phase (a 1-7 day
+                window chosen at that step). New addresses are added to the current list; judges cannot submit work to this task.
               </div>
               <textarea
                 aria-label="Judge wallet addresses"
@@ -3083,7 +3157,9 @@ export default function JobDetailsPage() {
               disabled={!submissionDeadlinePassed}
               disabledHint="The reveal can begin once the submission deadline passes."
               submitLabel="Begin reveal phase"
-              onSubmit={(agents) => void handleSelectFinalists(agents)}
+              onSubmit={(agents, revealDurationSeconds) =>
+                void handleSelectFinalists(agents, revealDurationSeconds)
+              }
             />
           ) : null}
 

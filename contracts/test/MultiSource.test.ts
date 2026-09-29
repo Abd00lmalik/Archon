@@ -3,6 +3,8 @@ import { acceptAndPromote } from "./helpers/reviewFlow";
 import { ethers } from "hardhat";
 import { time } from "@nomicfoundation/hardhat-network-helpers";
 
+const FIVE_DAYS = 5 * 24 * 60 * 60;
+
 describe("MultiSource Integration", function () {
   async function deployFixture() {
     const [owner, client, agent, verifier, poster, treasury] = await ethers.getSigners();
@@ -127,7 +129,7 @@ describe("MultiSource Integration", function () {
       .createJob("Landing", "Build page", jobDeadline, ethers.parseUnits("300", 6), 3);
     await job.connect(agent).submitDirect(0, "https://github.com/org/repo/pull/1");
     await acceptAndPromote(job, client, 0, [agent.address]);
-    await job.connect(client).selectFinalists(0, [agent.address]);
+    await job.connect(client).selectFinalists(0, [agent.address], FIVE_DAYS);
     await time.increase(5 * 24 * 60 * 60 + 1);
     await job.connect(client).finalizeWinners(0, [agent.address], [ethers.parseUnits("100", 6)]);
     await job.connect(agent).claimCredential(0);

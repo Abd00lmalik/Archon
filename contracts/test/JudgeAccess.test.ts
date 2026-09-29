@@ -3,6 +3,8 @@ import { acceptAndPromote } from "./helpers/reviewFlow";
 import { ethers } from "hardhat";
 import { time } from "@nomicfoundation/hardhat-network-helpers";
 
+const FIVE_DAYS = 5 * 24 * 60 * 60;
+
 describe("Judge Access + Reviewed Flags", function () {
   async function deployFixture() {
     const [owner, client, judgeA, judgeB, agentA, agentB, stranger, treasury] =
@@ -120,12 +122,12 @@ describe("Judge Access + Reviewed Flags", function () {
 
     await submit(job, agentA, "https://example.com/a");
 
-    await expect(job.connect(stranger).selectFinalists(0, [agentA.address]))
+    await expect(job.connect(stranger).selectFinalists(0, [agentA.address], FIVE_DAYS))
       .to.be.reverted;
 
     await job.connect(client).setJudges(0, [judgeA.address]);
     await acceptAndPromote(job, client, 0, [agentA.address]);
-    await job.connect(judgeA).selectFinalists(0, [agentA.address]);
+    await job.connect(judgeA).selectFinalists(0, [agentA.address], FIVE_DAYS);
 
     expect(await job.isFinalist(0, agentA.address)).to.equal(true);
     const status = (await job.getJob(0)).status;
@@ -140,8 +142,43 @@ describe("Judge Access + Reviewed Flags", function () {
     await job.connect(client).setJudges(0, [judgeA.address]);
     await job.connect(client).setJudges(0, []);
 
-    await expect(job.connect(judgeA).selectFinalists(0, [agentA.address]))
+    await expect(job.connect(judgeA).selectFinalists(0, [agentA.address], FIVE_DAYS))
       .to.be.reverted;
+  });
+
+  it("selectFinalists honors a chosen reveal duration and enforces bounds", async function () {
+    const { job, client, agentA } = await deployFixture();
+    const oneDay = 24 * 60 * 60;
+
+    await submit(job, agentA, "https://example.com/a");
+    await acceptAndPromote(job, client, 0, [agentA.address]);
+
+    await expect(
+      job.connect(client).selectFinalists(0, [agentA.address], oneDay / 2)
+    ).to.be.reverted;
+    await expect(
+      job.connect(client).selectFinalists(0, [agentA.address], 8 * 24 * 60 * 60)
+    ).to.be.reverted;
+
+    await job.connect(client).selectFinalists(0, [agentA.address], oneDay);
+    const start = Number(await job.revealPhaseStart(0));
+    const end = Number(await job.revealPhaseEnd(0));
+    expect(end - start).to.equal(oneDay);
+    expect(await job.isInRevealPhase(0)).to.equal(true);
+  });
+
+  it("autoStartReveal keeps the fixed five-day window", async function () {
+    const { job, client, agentA } = await deployFixture();
+
+    await submit(job, agentA, "https://example.com/a");
+    await acceptAndPromote(job, client, 0, [agentA.address]);
+
+    await time.increase(3 * 60 * 60);
+    await expect(job.connect(client).autoStartReveal(0)).to.emit(job, "AutoRevealStarted");
+
+    const start = Number(await job.revealPhaseStart(0));
+    const end = Number(await job.revealPhaseEnd(0));
+    expect(end - start).to.equal(FIVE_DAYS);
   });
 
   it("creator and judge can setReviewed; strangers cannot; un-review works", async function () {
@@ -183,7 +220,7 @@ describe("Judge Access + Reviewed Flags", function () {
     const submissionB = await submit(job, stranger, "https://example.com/b");
     await job.connect(client).setJudges(0, [judgeA.address]);
     await acceptAndPromote(job, client, 0, [agentA.address, stranger.address]);
-    await job.connect(judgeA).selectFinalists(0, [agentA.address, stranger.address]);
+    await job.connect(judgeA).selectFinalists(0, [agentA.address, stranger.address], FIVE_DAYS);
 
     // Critique: once per submission, independent across finalists.
     await job.connect(agentB).respondToSubmission(submissionId, 1, "ipfs://critique-1");

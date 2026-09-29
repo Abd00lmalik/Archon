@@ -1,7 +1,7 @@
 {
   "network": "arc_testnet",
   "chainId": 5042002,
-  "deployedAt": "2026-09-28T12:40:02.511Z",
+  "deployedAt": "2026-09-29T06:54:29.201Z",
   "rpcUrl": "https://rpc.testnet.arc.network",
   "usdcAddress": "0x3600000000000000000000000000000000000000",
   "platformTreasury": "0x25265b9dBEb6c653b0CA281110Bb0697a9685107",
@@ -12,7 +12,7 @@
   },
   "contracts": {
     "sourceRegistry": {
-      "address": "0x1C53d0188bA554A23242A2822daBaB802698D511",
+      "address": "0x31dA844d811f94ff34e8B3E84aC9a5fcB5eAB584",
       "abi": [
         {
           "inputs": [],
@@ -337,7 +337,7 @@
       ]
     },
     "validationRegistry": {
-      "address": "0xb47316C6C523e531D282ea4665387C66c55a2bfd",
+      "address": "0xCe9e48ceB023646299cAA97b3e5E7542d6a66195",
       "abi": [
         {
           "inputs": [],
@@ -798,7 +798,7 @@
       ]
     },
     "credentialHook": {
-      "address": "0xBcb79a313767eee06234D844261C2E529204faD5",
+      "address": "0xB685F9039334F984Ad0Fd90635E3C4a40Ea874Ca",
       "abi": [
         {
           "inputs": [
@@ -1148,7 +1148,7 @@
       ]
     },
     "jobContract": {
-      "address": "0xFb9F6fFaf309843ad103c6aD99eD36Ba80335434",
+      "address": "0x6423B07886980CBb49010A0912b6e0e08a7C1C37",
       "abi": [
         {
           "inputs": [
@@ -1204,31 +1204,6 @@
             }
           ],
           "name": "AutoRevealStarted",
-          "type": "event"
-        },
-        {
-          "anonymous": false,
-          "inputs": [
-            {
-              "indexed": true,
-              "internalType": "uint256",
-              "name": "responseId",
-              "type": "uint256"
-            },
-            {
-              "indexed": true,
-              "internalType": "address",
-              "name": "responder",
-              "type": "address"
-            },
-            {
-              "indexed": false,
-              "internalType": "uint256",
-              "name": "amount",
-              "type": "uint256"
-            }
-          ],
-          "name": "BuildOnBonusClaimed",
           "type": "event"
         },
         {
@@ -1858,33 +1833,7 @@
         },
         {
           "inputs": [],
-          "name": "BASIS_POINTS",
-          "outputs": [
-            {
-              "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [],
           "name": "CREDENTIAL_COOLDOWN",
-          "outputs": [
-            {
-              "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [],
-          "name": "DEFAULT_INTERACTION_STAKE",
           "outputs": [
             {
               "internalType": "uint256",
@@ -1910,7 +1859,7 @@
         },
         {
           "inputs": [],
-          "name": "MAX_INTERACTION_STAKE",
+          "name": "MAX_REVEAL_DURATION",
           "outputs": [
             {
               "internalType": "uint256",
@@ -1923,46 +1872,7 @@
         },
         {
           "inputs": [],
-          "name": "MIN_INTERACTION_STAKE",
-          "outputs": [
-            {
-              "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [],
-          "name": "MIN_JOB_DURATION",
-          "outputs": [
-            {
-              "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [],
-          "name": "MIN_REVIEW_DELAY",
-          "outputs": [
-            {
-              "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [],
-          "name": "RESPONSE_STAKE",
+          "name": "MIN_REVEAL_DURATION",
           "outputs": [
             {
               "internalType": "uint256",
@@ -3069,6 +2979,30 @@
               "type": "uint256"
             },
             {
+              "internalType": "address",
+              "name": "",
+              "type": "address"
+            }
+          ],
+          "name": "pricedSlotTarget",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            },
+            {
               "internalType": "uint256",
               "name": "",
               "type": "uint256"
@@ -3303,6 +3237,11 @@
               "internalType": "address[]",
               "name": "agents",
               "type": "address[]"
+            },
+            {
+              "internalType": "uint256",
+              "name": "revealDuration",
+              "type": "uint256"
             }
           ],
           "name": "selectFinalists",
@@ -3726,7 +3665,7 @@
       ]
     },
     "job": {
-      "address": "0xFb9F6fFaf309843ad103c6aD99eD36Ba80335434",
+      "address": "0x6423B07886980CBb49010A0912b6e0e08a7C1C37",
       "abi": [
         {
           "inputs": [
@@ -3782,31 +3721,6 @@
             }
           ],
           "name": "AutoRevealStarted",
-          "type": "event"
-        },
-        {
-          "anonymous": false,
-          "inputs": [
-            {
-              "indexed": true,
-              "internalType": "uint256",
-              "name": "responseId",
-              "type": "uint256"
-            },
-            {
-              "indexed": true,
-              "internalType": "address",
-              "name": "responder",
-              "type": "address"
-            },
-            {
-              "indexed": false,
-              "internalType": "uint256",
-              "name": "amount",
-              "type": "uint256"
-            }
-          ],
-          "name": "BuildOnBonusClaimed",
           "type": "event"
         },
         {
@@ -4436,33 +4350,7 @@
         },
         {
           "inputs": [],
-          "name": "BASIS_POINTS",
-          "outputs": [
-            {
-              "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [],
           "name": "CREDENTIAL_COOLDOWN",
-          "outputs": [
-            {
-              "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [],
-          "name": "DEFAULT_INTERACTION_STAKE",
           "outputs": [
             {
               "internalType": "uint256",
@@ -4488,7 +4376,7 @@
         },
         {
           "inputs": [],
-          "name": "MAX_INTERACTION_STAKE",
+          "name": "MAX_REVEAL_DURATION",
           "outputs": [
             {
               "internalType": "uint256",
@@ -4501,46 +4389,7 @@
         },
         {
           "inputs": [],
-          "name": "MIN_INTERACTION_STAKE",
-          "outputs": [
-            {
-              "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [],
-          "name": "MIN_JOB_DURATION",
-          "outputs": [
-            {
-              "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [],
-          "name": "MIN_REVIEW_DELAY",
-          "outputs": [
-            {
-              "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [],
-          "name": "RESPONSE_STAKE",
+          "name": "MIN_REVEAL_DURATION",
           "outputs": [
             {
               "internalType": "uint256",
@@ -5647,6 +5496,30 @@
               "type": "uint256"
             },
             {
+              "internalType": "address",
+              "name": "",
+              "type": "address"
+            }
+          ],
+          "name": "pricedSlotTarget",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            },
+            {
               "internalType": "uint256",
               "name": "",
               "type": "uint256"
@@ -5881,6 +5754,11 @@
               "internalType": "address[]",
               "name": "agents",
               "type": "address[]"
+            },
+            {
+              "internalType": "uint256",
+              "name": "revealDuration",
+              "type": "uint256"
             }
           ],
           "name": "selectFinalists",
@@ -6304,7 +6182,7 @@
       ]
     },
     "githubSource": {
-      "address": "0x3107aa8E07302A75c69DE95f56e0781466C51D9c",
+      "address": "0x31d17A1DB4d72c63FD4E484A324E06b55c27c9CA",
       "abi": [
         {
           "inputs": [
@@ -6855,7 +6733,7 @@
       ]
     },
     "communitySource": {
-      "address": "0x0EFa181835C134328287880e72645c0Ace5b86a3",
+      "address": "0xe694cCbd48eEfba6afebb3d72d6543903F0Ac0da",
       "abi": [
         {
           "inputs": [
@@ -7845,7 +7723,7 @@
       ]
     },
     "agentTaskSource": {
-      "address": "0x0Fe2F940e503CaA56C271D93C7f6deD70f9E1681",
+      "address": "0xF9c5aDcb416BCdd344351f8bf8cE6FC83d01d403",
       "abi": [
         {
           "inputs": [
@@ -8590,7 +8468,7 @@
       ]
     },
     "milestoneEscrow": {
-      "address": "0xE3d7c0E21D892f788ee5d1e1FDa25c7fcFAaD7e0",
+      "address": "0x811373e6251965d3De0Dc05EE99347CA33F2b77F",
       "abi": [
         {
           "inputs": [
@@ -9647,7 +9525,7 @@
       ]
     },
     "peerAttestationSource": {
-      "address": "0x0EdF24F46A7Ae9Ed429afaC66E4b667488C6Ef89",
+      "address": "0x27eB4eA7966C5d8700625567dFE6bD87f9Efaed3",
       "abi": [
         {
           "inputs": [
@@ -10067,7 +9945,7 @@
       ]
     },
     "daoGovernanceSource": {
-      "address": "0x595b715A38f16Abf9643fC8a6827622212812171",
+      "address": "0xE18A8f9840058a5C6b1C743AB72D2DC3705466cd",
       "abi": [
         {
           "inputs": [

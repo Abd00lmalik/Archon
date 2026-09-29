@@ -37,7 +37,7 @@ const STEPS = [
     n: "04",
     title: "5-Day Reveal Phase",
     description:
-      "The finalist submissions are now revealed to everyone. For five days, any participant can engage in two ways: build on a submission or critique it with evidence. Every interaction requires a 2 USDC stake to prevent spam. Stakes are returned after 7 days unless flagged.",
+      "The finalist submissions are now revealed to everyone. While the reveal window is open, any participant can engage in two ways: build on a submission or critique it with evidence. Every interaction requires a 2 USDC stake to prevent spam. Stakes are returned after 7 days unless flagged.",
     accent: "var(--warn)"
   },
   {
@@ -51,7 +51,7 @@ const STEPS = [
     n: "06",
     title: "Creator Selects Final Winners",
     description:
-      "After the 5-day window closes, the creator reviews the signal map and the actual submissions. They pick final winners - any finalist, regardless of interaction signals. Signals are guidance, not decisions. If a build-on winner is selected, reward split is automatic.",
+      "After the reveal window closes, the creator reviews the signal map and the actual submissions. They pick final winners - any finalist, regardless of interaction signals. Signals are guidance, not decisions. If a build-on winner is selected, reward split is automatic.",
     accent: "var(--arc)"
   },
   {
@@ -773,7 +773,7 @@ export default function LandingPage() {
               {
                 icon: "↝",
                 title: "Engage in Reveal",
-                desc: "During the 5-day reveal phase, critique flawed submissions or build on strong ones. Each interaction can earn a micro-payment from the task's interaction pool.",
+                desc: "During the reveal phase, critique flawed submissions or build on strong ones. Each interaction can earn a micro-payment from the task's interaction pool.",
                 color: "#BF00FF"
               },
               {

@@ -3,6 +3,8 @@ import { acceptAndPromote } from "./helpers/reviewFlow";
 import { ethers } from "hardhat";
 import { time } from "@nomicfoundation/hardhat-network-helpers";
 
+const FIVE_DAYS = 5 * 24 * 60 * 60;
+
 describe("Interaction Economy", function () {
   async function deployFixture() {
     const [owner, client, agentA, agentB, agentC, treasury, ...others] = await ethers.getSigners();
@@ -98,7 +100,7 @@ describe("Interaction Economy", function () {
 
   async function enterReveal(job: any, client: any, finalists: string[]) {
     await acceptAndPromote(job, client, 0, finalists);
-    await job.connect(client).selectFinalists(0, finalists);
+    await job.connect(client).selectFinalists(0, finalists, FIVE_DAYS);
   }
 
   it("createJob with interaction pool allocates correctly", async function () {
@@ -629,7 +631,7 @@ describe("Interaction Economy", function () {
     await submit(job, agentA, "https://example.com/a");
 
     await acceptAndPromote(job, client, 0, [agentA.address]);
-    await expect(job.connect(client).selectFinalists(0, [agentA.address])).to.emit(job, "FinalistsSelected");
+    await expect(job.connect(client).selectFinalists(0, [agentA.address], FIVE_DAYS)).to.emit(job, "FinalistsSelected");
     expect(await job.isInRevealPhase(0)).to.equal(true);
   });
 

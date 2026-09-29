@@ -3,6 +3,8 @@ import { acceptAndPromote } from "./helpers/reviewFlow";
 import { ethers } from "hardhat";
 import { time } from "@nomicfoundation/hardhat-network-helpers";
 
+const FIVE_DAYS = 5 * 24 * 60 * 60;
+
 describe("Submission Relationships", function () {
   async function deployFixture() {
     const [owner, client, agentA, agentB, agentC, treasury, ...others] = await ethers.getSigners();
@@ -63,7 +65,7 @@ describe("Submission Relationships", function () {
 
   async function enterRevealPhase(job: any, client: any, finalists: string[]) {
     await acceptAndPromote(job, client, 0, finalists);
-    await job.connect(client).selectFinalists(0, finalists);
+    await job.connect(client).selectFinalists(0, finalists, FIVE_DAYS);
   }
 
   it("only client can selectFinalists", async function () {
@@ -71,7 +73,7 @@ describe("Submission Relationships", function () {
     await createJob(job, client);
     await submitBaseSubmission(job, agentA);
 
-    await expect(job.connect(agentB).selectFinalists(0, [agentA.address])).to.be.reverted;
+    await expect(job.connect(agentB).selectFinalists(0, [agentA.address], FIVE_DAYS)).to.be.reverted;
   });
 
   it("only submitted agents can be selected as finalists", async function () {
@@ -81,7 +83,7 @@ describe("Submission Relationships", function () {
     await job.connect(agentB).acceptJob(0);
     await acceptAndPromote(job, client, 0, [agentA.address]);
 
-    await expect(job.connect(client).selectFinalists(0, [agentA.address, agentB.address])).to.be.reverted;
+    await expect(job.connect(client).selectFinalists(0, [agentA.address, agentB.address], FIVE_DAYS)).to.be.reverted;
   });
 
   it("responder can build on an existing finalist submission", async function () {
@@ -164,19 +166,46 @@ describe("Submission Relationships", function () {
     ).to.be.reverted;
     expect(await job.hasResponded(0, agentB.address)).to.equal(true);
 
-    // Critiques are a separate allowance: once on each finalist.
-    await job.connect(agentB).respondToSubmission(submissionId, 1, "ipfs://critique-same");
-    await job.connect(agentB).respondToSubmission(otherSubmissionId, 1, "ipfs://critique-other");
-    expect(await job.hasCritiqued(submissionId, agentB.address)).to.equal(true);
-    expect(await job.hasCritiqued(otherSubmissionId, agentB.address)).to.equal(true);
+    // One-directional gate: a wallet that built on a submission cannot also
+    // critique it, but critiques of other finalists remain open.
     await expect(
-      job.connect(agentB).respondToSubmission(submissionId, 1, "ipfs://critique-again")
+      job.connect(agentB).respondToSubmission(submissionId, 1, "ipfs://critique-same")
+    ).to.be.reverted;
+    await job.connect(agentB).respondToSubmission(otherSubmissionId, 1, "ipfs://critique-other");
+    expect(await job.hasCritiqued(otherSubmissionId, agentB.address)).to.equal(true);
+    expect(await job.hasCritiqued(submissionId, agentB.address)).to.equal(false);
+    await expect(
+      job.connect(agentB).respondToSubmission(otherSubmissionId, 1, "ipfs://critique-again")
     ).to.be.reverted;
 
-    // Other wallets still get their own single build-on slot.
+    // Other wallets still get their own critique allowance.
     await job.connect(agentC).respondToSubmission(submissionId, 1, "ipfs://from-agent-c");
     expect(await job.hasCritiqued(submissionId, agentC.address)).to.equal(true);
     expect(await job.hasResponded(0, agentC.address)).to.equal(false);
+  });
+
+  it("alternatives block a critique of the target; critique-then-build-on stays allowed", async function () {
+    const { job, client, agentA, agentB, agentC } = await deployFixture();
+    await createJob(job, client);
+    const submissionId = await submitBaseSubmission(job, agentA);
+    const otherSubmissionId = await submitBaseSubmission(job, agentC);
+    await enterRevealPhase(job, client, [agentA.address, agentC.address]);
+
+    // An alternative on `otherSubmissionId` blocks a critique of it...
+    await job.connect(agentB).respondToSubmission(otherSubmissionId, 2, "ipfs://alternative");
+    expect(await job.pricedSlotTarget(0, agentB.address)).to.equal(otherSubmissionId);
+    await expect(
+      job.connect(agentB).respondToSubmission(otherSubmissionId, 1, "ipfs://critique-after-alt")
+    ).to.be.reverted;
+    // ...but not a critique of a different finalist.
+    await job.connect(agentB).respondToSubmission(submissionId, 1, "ipfs://critique-other");
+    expect(await job.hasCritiqued(submissionId, agentB.address)).to.equal(true);
+
+    // Critique -> build-on (the opposite direction) stays allowed.
+    await job.connect(agentA).respondToSubmission(otherSubmissionId, 1, "ipfs://critique-first");
+    await job.connect(agentA).respondToSubmission(otherSubmissionId, 0, "ipfs://builds-after-critique");
+    expect(await job.hasResponded(0, agentA.address)).to.equal(true);
+    expect(await job.pricedSlotTarget(0, agentA.address)).to.equal(otherSubmissionId);
   });
 
   it("responding requires 2 USDC stake", async function () {

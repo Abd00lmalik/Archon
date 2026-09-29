@@ -96,15 +96,17 @@ contract ERC8183Job is ICredentialSource {
         bool buildOnBonusClaimed;
     }
 
-    uint256 public constant BASIS_POINTS = 10_000;
-    uint256 public constant MIN_JOB_DURATION = 1 hours;
-    uint256 public constant MIN_REVIEW_DELAY = 15 minutes;
+    uint256 internal constant BASIS_POINTS = 10_000;
+    uint256 internal constant MIN_JOB_DURATION = 1 hours;
     uint256 public constant CREDENTIAL_COOLDOWN = 6 hours;
+    // Fixed window for the permissionless autoStartReveal fallback; the
+    // manual selectFinalists path lets the creator/judge pick 1-7 days.
     uint256 public constant REVEAL_DURATION = 5 days;
-    uint256 public constant MIN_INTERACTION_STAKE = 10_000; // 0.01 USDC
-    uint256 public constant MAX_INTERACTION_STAKE = 5_000_000; // 5 USDC
-    uint256 public constant DEFAULT_INTERACTION_STAKE = 2_000_000; // 2 USDC
-    uint256 public constant RESPONSE_STAKE = DEFAULT_INTERACTION_STAKE; // backwards-compatible alias
+    uint256 public constant MIN_REVEAL_DURATION = 1 days;
+    uint256 public constant MAX_REVEAL_DURATION = 7 days;
+    uint256 internal constant MIN_INTERACTION_STAKE = 10_000; // 0.01 USDC
+    uint256 internal constant MAX_INTERACTION_STAKE = 5_000_000; // 5 USDC
+    uint256 internal constant DEFAULT_INTERACTION_STAKE = 2_000_000; // 2 USDC
     uint256 public constant MAX_INTERACTION_POOL_RATIO = 3_000; // 30%
     uint8 private constant VERDICT_ACCEPT = 1;
     uint8 private constant VERDICT_REJECT = 2;
@@ -132,6 +134,10 @@ contract ERC8183Job is ICredentialSource {
     // Critiques: one per wallet per submission (they do not consume the
     // once-per-task build-on slot).
     mapping(uint256 => mapping(address => bool)) public hasCritiqued;
+    // Task -> responder -> submission the wallet's priced slot (build-on or
+    // alternative) was spent on; 0 = slot unused. Blocks critiquing a
+    // submission the wallet already built on.
+    mapping(uint256 => mapping(address => uint256)) public pricedSlotTarget;
     mapping(uint256 => uint256) public submissionIdToTaskId;
     mapping(uint256 => address) public submissionIdToAgent;
     mapping(uint256 => mapping(address => address)) public buildOnParentByResponder;
@@ -217,11 +223,6 @@ contract ERC8183Job is ICredentialSource {
         uint256 revealEndsAt
     );
     event InteractionRewardClaimed(
-        uint256 indexed responseId,
-        address indexed responder,
-        uint256 amount
-    );
-    event BuildOnBonusClaimed(
         uint256 indexed responseId,
         address indexed responder,
         uint256 amount
@@ -520,7 +521,6 @@ contract ERC8183Job is ICredentialSource {
 
         Submission storage submission = submissions[jobId][msg.sender];
         require(submission.status == SubmissionStatus.None, "already submitted");
-        require(!submission.credentialClaimed, "credential already claimed");
 
         uint256 sid = nextSubmissionId;
         nextSubmissionId += 1;
@@ -718,7 +718,11 @@ contract ERC8183Job is ICredentialSource {
         }
     }
 
-    function selectFinalists(uint256 jobId, address[] calldata agents) external {
+    function selectFinalists(
+        uint256 jobId,
+        address[] calldata agents,
+        uint256 revealDuration
+    ) external {
         Job storage job = _getExistingJob(jobId);
         require(
             msg.sender == job.client || isJudge[jobId][msg.sender],
@@ -735,6 +739,10 @@ contract ERC8183Job is ICredentialSource {
             "too many finalists"
         );
         require(selectedFinalists[jobId].length == 0, "finalists already selected");
+        require(
+            revealDuration >= MIN_REVEAL_DURATION && revealDuration <= MAX_REVEAL_DURATION,
+            "reveal duration out of bounds"
+        );
 
         for (uint256 i = 0; i < agents.length; i++) {
             address finalist = agents[i];
@@ -755,7 +763,7 @@ contract ERC8183Job is ICredentialSource {
         selectedFinalists[jobId] = agents;
         job.status = JobStatus.SelectionPhase;
         revealPhaseStart[jobId] = block.timestamp;
-        revealPhaseEnd[jobId] = block.timestamp + REVEAL_DURATION;
+        revealPhaseEnd[jobId] = block.timestamp + revealDuration;
         job.status = JobStatus.RevealPhase;
 
         emit FinalistsSelected(jobId, agents, revealPhaseEnd[jobId]);
@@ -1036,8 +1044,18 @@ contract ERC8183Job is ICredentialSource {
 
         // Critiques are once per wallet per submission and do not spend the
         // wallet's single once-per-task build-on slot (build-ons/alternatives).
+        // One-directional: a wallet that already built on this submission
+        // (or offered an alternative) may not critique it on top.
         if (responseType == ResponseType.Critiques) {
             require(!hasCritiqued[parentSubmissionId][responder], "already critiqued this submission");
+            // Slot unused or spent on a different submission. hasResponded
+            // disambiguates: a fresh responder's target (0) would otherwise
+            // collide with submission id 0.
+            require(
+                !hasResponded[taskId][responder] ||
+                    pricedSlotTarget[taskId][responder] != parentSubmissionId,
+                "already built on this submission"
+            );
         } else {
             require(!hasResponded[taskId][responder], "build-on slot already used in this task");
         }
@@ -1065,6 +1083,7 @@ contract ERC8183Job is ICredentialSource {
             hasCritiqued[parentSubmissionId][responder] = true;
         } else {
             hasResponded[taskId][responder] = true;
+            pricedSlotTarget[taskId][responder] = parentSubmissionId;
         }
         unclaimedResponseCount[taskId] += 1;
 
@@ -1174,7 +1193,7 @@ contract ERC8183Job is ICredentialSource {
                 job.paidOutUSDC += share;
 
                 (, uint256 payout) = _payShare(response.responder, share);
-                emit BuildOnBonusClaimed(response.responseId, response.responder, payout);
+                emit InteractionRewardClaimed(response.responseId, response.responder, payout);
                 paid = true;
             }
         }

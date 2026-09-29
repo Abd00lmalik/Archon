@@ -381,6 +381,7 @@ const JOB_FALLBACK_ABI = [
   "function isReviewed(uint256 jobId,uint256 submissionId,address reviewer) view returns (bool)",
   "function hasResponded(uint256 jobId,address responder) view returns (bool)",
   "function hasCritiqued(uint256 submissionId,address responder) view returns (bool)",
+  "function pricedSlotTarget(uint256 taskId,address responder) view returns (uint256)",
   "function buildOnBonusRemaining(uint256 submissionId) view returns (uint256)",
   "function buildOnResponderCount(uint256 submissionId) view returns (uint256)",
   "function unclaimedResponseCount(uint256 jobId) view returns (uint256)",
@@ -1715,28 +1716,38 @@ export async function fetchReviewedByViewer(
   return reviewed;
 }
 
-export async function fetchHasRespondedForJob(
+/**
+ * Whether the wallet has spent its once-per-task priced slot (build-on or
+ * alternative), and on which submission. `target` is null when unknown (e.g.
+ * an older deployment without the pricedSlotTarget getter); callers should
+ * keep their previous state when the whole result is null.
+ */
+export async function fetchPricedSlotState(
   jobId: number | bigint,
   account: string
-): Promise<boolean | null> {
-  if (!account) return false;
+): Promise<{ used: boolean; target: bigint | null } | null> {
+  if (!account) return { used: false, target: null };
   try {
     const job = resolvedJobContract;
-    if (!job?.address) return false;
-    const results = await multicall(getReadProvider(), [
-      {
-        target: job.address,
-        abi: job.abi as ethers.InterfaceAbi,
-        functionName: "hasResponded",
-        args: [jobId, account]
-      }
+    if (!job?.address) return { used: false, target: null };
+    const provider = getReadProvider();
+    const abi = job.abi as ethers.InterfaceAbi;
+    const [responded, target] = await Promise.all([
+      multicall(provider, [
+        { target: job.address, abi, functionName: "hasResponded", args: [jobId, account] }
+      ]).then((r) => (r[0]?.ok ? multicallBool(r[0]) : null)),
+      multicall(provider, [
+        { target: job.address, abi, functionName: "pricedSlotTarget", args: [jobId, account] }
+      ]).then((r) => {
+        if (!r[0]?.ok) return null;
+        const value = Array.isArray(r[0].value) ? r[0].value[0] : r[0].value;
+        return BigInt(String(value));
+      })
     ]);
-    const first = results[0];
-    if (!first?.ok) return null;
-    return multicallBool(first);
+    if (responded === null) return null;
+    return { used: responded, target };
   } catch {
-    // null = "unknown": callers keep their previous value instead of assuming
-    // the wallet has (or has not) used its single interaction.
+    // null = "unknown": callers keep their previous value.
     return null;
   }
 }
@@ -2658,10 +2669,11 @@ export async function txApproveSubmission(
 export async function txSelectFinalists(
   signer: ethers.JsonRpcSigner,
   jobId: bigint,
-  agents: string[]
+  agents: string[],
+  revealDurationSeconds: number
 ) : Promise<string> {
   const contract = getJobContract(signer);
-  const tx = await contract.selectFinalists(jobId, agents);
+  const tx = await contract.selectFinalists(jobId, agents, BigInt(revealDurationSeconds));
   await tx.wait();
   return tx.hash as string;
 }
