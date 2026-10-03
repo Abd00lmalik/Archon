@@ -389,8 +389,34 @@ const MosaicTile = memo(function MosaicTile({
 
         {showStats ? (
           <div className="flex w-full flex-wrap items-center justify-center gap-x-3 gap-y-0.5 overflow-hidden text-[10px] text-white/80">
-            <span className="flex items-center gap-1">🔴 {person.critiquesReceived}</span>
-            <span className="flex items-center gap-1">🟢 {person.buildOnsReceived}</span>
+            <span className="flex items-center gap-1">
+              <span
+                aria-hidden="true"
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: "50%",
+                  background: getTileColor(4, 0),
+                  display: "inline-block",
+                  flexShrink: 0
+                }}
+              />
+              {person.critiquesReceived}
+            </span>
+            <span className="flex items-center gap-1">
+              <span
+                aria-hidden="true"
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: "50%",
+                  background: getTileColor(0, 4),
+                  display: "inline-block",
+                  flexShrink: 0
+                }}
+              />
+              {person.buildOnsReceived}
+            </span>
           </div>
         ) : null}
       </button>
@@ -596,8 +622,9 @@ export default function SignalMap(props: Props) {
         NO SIGNALS YET
       </div>
       <div style={{ color: "var(--text-muted)", fontSize: 11, maxWidth: 300 }}>
-        The signal map activates during the reveal phase when participants begin building on and critiquing finalist
-        submissions.
+        The signal map opens once the creator selects finalists and begins the reveal phase. It shows every build-on
+        and critique received per finalist submission, and stays available after reveal ends while winners are being
+        chosen.
       </div>
     </div>
   ) : (

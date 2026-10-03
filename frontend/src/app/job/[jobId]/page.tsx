@@ -247,7 +247,10 @@ function FinalistCard({
   isWinner,
   rewardAmount,
   onRewardChange,
-  buildOnInfo
+  buildOnInfo,
+  eligibleBuilders,
+  selectDisabled,
+  selectHint
 }: {
   agent: string;
   submission: SubmissionRecord | null;
@@ -256,11 +259,28 @@ function FinalistCard({
   rewardAmount: string;
   onRewardChange: (value: string) => void;
   buildOnInfo?: { parentAgent: string };
+  /** Unslashed build-on responders on this finalist's own submission. */
+  eligibleBuilders?: string[];
+  /** True when maxApprovals winners are already picked (further picks blocked). */
+  selectDisabled?: boolean;
+  selectHint?: string;
 }) {
   const deliverable = submission?.deliverableLink ?? "";
   const submittedAt = submission?.submittedAt ?? 0;
   const isBuildOn = Boolean(buildOnInfo);
-  const numericReward = Number(rewardAmount || "0");
+  const parsedReward = parseUsdcInput(rewardAmount || "");
+  const builderCount = eligibleBuilders?.length ?? 0;
+  // Mirrors ERC8183Job.finalizeWinners: pot = amount * 1000 / 10000 (10%),
+  // the winner keeps amount - pot only when there are eligible unslashed
+  // builders (and the pot floors to >0); otherwise the winner keeps 100%.
+  const bonusPot =
+    parsedReward !== null && parsedReward > 0n && builderCount > 0
+      ? (parsedReward * 1_000n) / 10_000n
+      : 0n;
+  const splitPot = bonusPot > 0n;
+  const winnerGross =
+    parsedReward !== null ? (splitPot ? parsedReward - bonusPot : parsedReward) : 0n;
+  const perBuilderShare = splitPot ? bonusPot / BigInt(builderCount) : 0n;
 
   return (
     <div
@@ -308,15 +328,30 @@ function FinalistCard({
         </div>
       ) : null}
 
-      {isBuildOn && numericReward > 0 ? (
-        <div className="mb-3 p-2 border border-[var(--arc)]/20 bg-[var(--arc)]/5">
-          <div className="text-[10px] font-mono text-[var(--arc)] mb-1">REWARD SPLIT (BUILD-ON)</div>
+      {isWinner && parsedReward !== null && parsedReward > 0n ? (
+        <div className="mb-3 p-2 border border-[var(--gold)]/30 bg-[var(--gold)]/5">
+          <div className="text-[10px] font-mono text-[var(--gold)] mb-1">REWARD SPLIT (STRICT 90/10)</div>
           <div className="text-[10px] font-mono text-[var(--text-secondary)]">
-            {buildOnInfo?.parentAgent.slice(0, 8)}... -&gt; {(numericReward * 0.7).toFixed(2)} USDC (70%)
+            {agent.slice(0, 8)}... -&gt; {formatUsdc(winnerGross)} USDC {splitPot ? "(90%)" : "(100%)"}
           </div>
-          <div className="text-[10px] font-mono text-[var(--text-secondary)]">
-            {agent.slice(0, 8)}... -&gt; {(numericReward * 0.3).toFixed(2)} USDC (30%)
-          </div>
+          {splitPot ? (
+            <>
+              <div className="mt-1 text-[10px] font-mono text-[var(--pulse)]">
+                BUILD-ON BONUS -&gt; {formatUsdc(bonusPot)} USDC (10%) shared by {builderCount} builder
+                {builderCount === 1 ? "" : "s"}
+              </div>
+              {(eligibleBuilders ?? []).slice(0, 5).map((builder) => (
+                <div key={builder} className="text-[10px] font-mono text-[var(--text-muted)]">
+                  {builder.slice(0, 8)}... -&gt; ~{formatUsdc(perBuilderShare)} USDC
+                </div>
+              ))}
+              {builderCount > 5 ? (
+                <div className="text-[10px] font-mono text-[var(--text-muted)]">
+                  +{builderCount - 5} more builder{builderCount - 5 === 1 ? "" : "s"}
+                </div>
+              ) : null}
+            </>
+          ) : null}
         </div>
       ) : null}
 
@@ -336,7 +371,9 @@ function FinalistCard({
       <button
         type="button"
         onClick={onSelect}
-        className={`w-full text-xs py-2 font-mono font-600 tracking-wider transition-all border ${
+        disabled={selectDisabled}
+        title={selectDisabled ? selectHint : undefined}
+        className={`w-full min-h-[44px] text-xs py-2 font-mono font-600 tracking-wider transition-all border disabled:cursor-not-allowed disabled:opacity-50 ${
           isWinner
             ? "border-[var(--gold)] text-[var(--gold)] bg-[var(--gold)]/10"
             : "border-[var(--border-bright)] text-[var(--text-secondary)] hover:border-[var(--arc)] hover:text-[var(--arc)]"
@@ -344,6 +381,9 @@ function FinalistCard({
       >
         {isWinner ? "SELECTED AS WINNER" : "SELECT AS WINNER"}
       </button>
+      {selectDisabled && selectHint ? (
+        <div className="text-center text-[10px] font-mono text-[var(--text-muted)]">{selectHint}</div>
+      ) : null}
     </div>
   );
 }
@@ -575,6 +615,15 @@ export default function JobDetailsPage() {
   const [judgesLoaded, setJudgesLoaded] = useState(false);
 
   const taskRef = useRef<UnifiedTask | null>(null);
+  // Signal-map load coordination: `seq` discards out-of-order responses (a slow
+  // older load must never overwrite a newer one — that made the map depend on
+  // which refresh "won" the race), and `loaded` keeps background refreshes from
+  // flashing the full-board spinner once data has rendered.
+  const heatmapSeqRef = useRef(0);
+  const heatmapLoadedRef = useRef(false);
+  // Key of the job/source the current map belongs to - navigating to another
+  // job must never show the previous task's signals.
+  const heatmapKeyRef = useRef("");
 
   const [deliverableLink, setDeliverableLink] = useState("");
   const [responseType, setResponseType] = useState<number>(RESPONSE_TYPE.BuildsOn);
@@ -938,23 +987,39 @@ export default function JobDetailsPage() {
   }, [account, submissions, task]);
 
   const loadHeatmap = useCallback(async () => {
+    const seq = ++heatmapSeqRef.current;
+    const loadKey = `${taskSourceId ?? ""}:${Number.isInteger(taskJobId) ? taskJobId : -1}`;
+    if (heatmapKeyRef.current !== loadKey) {
+      // Different job/source than whatever map is on screen: drop it now so a
+      // failed load shows "nothing yet" instead of another task's signals,
+      // and so the first paint of the new job shows the loading state.
+      heatmapKeyRef.current = loadKey;
+      heatmapLoadedRef.current = false;
+      setHeatmap({ people: [], totalActivity: 0, revealPhaseEnd: 0, isRevealPhase: false });
+      setHeatmapLoading(true);
+    }
     if (!taskHasSignalMap || !Number.isInteger(taskJobId) || taskJobId < 0 || !taskSourceId) {
       setHeatmap({ people: [], totalActivity: 0, revealPhaseEnd: 0, isRevealPhase: false });
       setHeatmapLoading(false);
       return;
     }
-    setHeatmapLoading(true);
+    // Only the first load shows the board-level spinner; background refreshes
+    // keep rendering the previous map so the board never flickers.
+    if (!heatmapLoadedRef.current) setHeatmapLoading(true);
     setHeatmapError(false);
     try {
       const data = await buildTaskHeatmap(getReadProvider(), Number(taskJobId), taskSourceId);
+      if (seq !== heatmapSeqRef.current) return;
       setHeatmap(data);
+      heatmapLoadedRef.current = data.people.length > 0;
     } catch (error) {
+      if (seq !== heatmapSeqRef.current) return;
       console.warn("[heatmap] load error:", error);
       // Keep the last good heatmap; surface an error + retry instead of
       // silently blanking the signal map.
       setHeatmapError(true);
     } finally {
-      setHeatmapLoading(false);
+      if (seq === heatmapSeqRef.current) setHeatmapLoading(false);
     }
   }, [taskHasSignalMap, taskJobId, taskSourceId]);
 
@@ -975,6 +1040,27 @@ export default function JobDetailsPage() {
   useEffect(() => {
     void loadHeatmap();
   }, [loadHeatmap]);
+
+  // Keep the signal map fresh without user action: responses can only arrive
+  // while the reveal clock is running, so poll only then (event subscriptions
+  // over a polling RPC provider can miss updates); once the reveal is over the
+  // data is frozen, so a tab-focus revalidation is enough.
+  useEffect(() => {
+    if (!taskHasSignalMap || heatmap.revealPhaseEnd <= 0) return () => undefined;
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void loadHeatmap();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    const timer = heatmap.isRevealPhase
+      ? window.setInterval(() => {
+          void loadHeatmap();
+        }, 15_000)
+      : undefined;
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      if (timer !== undefined) window.clearInterval(timer);
+    };
+  }, [heatmap.isRevealPhase, heatmap.revealPhaseEnd, loadHeatmap, taskHasSignalMap]);
 
   useEffect(() => {
     if (taskLoaded && !taskHasSignalMap && viewMode === "signal") {
@@ -1622,6 +1708,27 @@ export default function JobDetailsPage() {
           amounts.push(parsed);
         }
       }
+      // Same limits the contract enforces (and the panel displays) - block
+      // here with a precise message instead of letting the tx revert with a
+      // generic error.
+      if (winners.length === 0) {
+        setErrorMessage("Select at least one winner and allocate a reward before finalizing.");
+        return;
+      }
+      if (winners.length > maxApprovals) {
+        setErrorMessage(
+          `Too many winners selected (${winners.length}) - the maximum for this task is ${maxApprovals}.`
+        );
+        return;
+      }
+      const totalAllocated = amounts.reduce((sum, amount) => sum + amount, 0n);
+      const pool = coerceBigInt(job?.rewardUSDC);
+      if (totalAllocated > pool) {
+        setErrorMessage(
+          `Allocated ${formatUsdc(totalAllocated)} USDC exceeds the ${formatUsdc(pool)} USDC reward pool.`
+        );
+        return;
+      }
       const contract = await getTaskWriteContract();
       const tx = await contract.finalizeWinners(BigInt(jobId), winners, amounts);
       await tx.wait();
@@ -1631,7 +1738,13 @@ export default function JobDetailsPage() {
       await loadTask();
       await loadHeatmap();
     } catch (error) {
-      setErrorMessage(errorText(error, "Failed to finalize winners"));
+      const raw = errorText(error, "Failed to finalize winners");
+      const mapped = raw.includes("too many winners")
+        ? `Too many winners selected - the maximum for this task is ${maxApprovals}.`
+        : raw.includes("reward exceeds escrow")
+          ? `Allocations exceed the ${formatUsdc(coerceBigInt(job?.rewardUSDC))} USDC reward pool.`
+          : raw;
+      setErrorMessage(mapped);
     } finally {
       setBusyAction("");
     }
@@ -1744,6 +1857,25 @@ export default function JobDetailsPage() {
   const nowSeconds = Math.floor(Date.now() / 1000);
   const isRevealActive = Boolean(job?.status === 4 && revealEndValue > 0 && nowSeconds <= revealEndValue);
   const shouldShowSignalMap = Boolean(task?.caps.hasSignalMap);
+  // Finalize-window validation. The contract enforces both limits on-chain
+  // ("too many winners" / "reward exceeds escrow"), but the UI used to accept
+  // any number of selections and any allocated total — the tx then reverted
+  // with a generic error. Mirror the limits here so the creator is stopped
+  // before signing.
+  const finalizePool = coerceBigInt(job?.rewardUSDC);
+  const finalizeEntries = revealedFinalists.map((agent) => {
+    const key = agent.toLowerCase();
+    return { agent, key, parsed: parseUsdcInput(rewardInputs[key] ?? "") };
+  });
+  const finalizeSelected = finalizeEntries.filter((entry) => entry.parsed !== null && entry.parsed > 0n);
+  const finalizeAllocated = finalizeSelected.reduce((sum, entry) => sum + (entry.parsed ?? 0n), 0n);
+  const finalizeCount = finalizeSelected.length;
+  const finalizeOverCount = finalizeCount > maxApprovals;
+  const finalizeOverPool = finalizeAllocated > finalizePool;
+  const finalizeInvalidInput = finalizeEntries.some(
+    (entry) => (rewardInputs[entry.key] ?? "").trim().length > 0 && entry.parsed === null
+  );
+  const finalizeBlocked = finalizeCount === 0 || finalizeOverCount || finalizeOverPool || finalizeInvalidInput;
   const isSelectedFinalist = Boolean(
     selectedSubmission && finalistSet.has(selectedSubmission.agent.toLowerCase())
   );
@@ -2076,7 +2208,7 @@ export default function JobDetailsPage() {
         </div>
       </div>
 
-      <div className="task-detail-grid grid gap-4 xl:grid-cols-[260px_minmax(0,1fr)_320px]">
+      <div className="task-detail-grid grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)_300px] xl:grid-cols-[260px_minmax(0,1fr)_320px]">
         <aside className="panel h-fit space-y-6">
           <div><div className="section-header">DESCRIPTION</div><p className="text-sm text-[var(--text-secondary)]">{formatTaskDescription(job.description)}</p></div>
           <div><div className="section-header">METADATA</div><div className="space-y-2 text-xs"><div className="flex justify-between"><span className="text-[var(--text-muted)]">Creator</span><UserDisplay address={job.client} showAvatar={true} avatarSize={22} /></div><div className="flex justify-between"><span className="text-[var(--text-muted)]">Tasks posted</span><span className="font-mono">{creatorPostedCount}</span></div><div className="flex justify-between"><span className="text-[var(--text-muted)]">Created</span><span className="font-mono">{formatTimestamp(job.createdAt)}</span></div></div></div>
@@ -2238,7 +2370,7 @@ export default function JobDetailsPage() {
                 <div className="flex items-center justify-center h-48 text-[var(--text-muted)] font-mono text-xs text-center p-6">
                   <div>
                     <div className="text-2xl mb-3 opacity-20">?</div>
-                    Signal map is only available during the reveal phase.
+                    Signal map opens once the creator selects finalists and begins the reveal phase.
                     {job?.status === 2 ? " Creator is promoting submissions for the reveal." : ""}
                     {job?.status === 0 ? " Task is still accepting submissions." : ""}
                   </div>
@@ -3035,7 +3167,7 @@ export default function JobDetailsPage() {
                                         : "Only finalist submissions can receive responses"
                                   : undefined
                               }
-                              className="border p-2 text-[10px] font-mono disabled:opacity-40"
+                              className="min-h-[44px] border p-2 text-[10px] font-mono disabled:opacity-40"
                               style={{
                                 borderColor: responseType === option.type ? option.color : "var(--border)",
                                 color: responseType === option.type ? option.color : "var(--text-muted)",
@@ -3168,6 +3300,14 @@ export default function JobDetailsPage() {
               {job.status === 4 && revealEnded ? (
                 <div className="space-y-3">
                   <div className="section-header">FINALIZE WINNERS</div>
+                  <div className="flex items-center justify-between border border-[var(--border)] px-3 py-2 font-mono text-[10px]">
+                    <span className={finalizeOverCount ? "text-[var(--danger)]" : "text-[var(--text-muted)]"}>
+                      WINNERS {finalizeCount}/{maxApprovals}
+                    </span>
+                    <span className={finalizeOverPool ? "text-[var(--danger)]" : "text-[var(--text-muted)]"}>
+                      ALLOCATED {formatUsdc(finalizeAllocated)} / {formatUsdc(finalizePool)} USDC
+                    </span>
+                  </div>
                   {revealedFinalists.map((agent) => {
                     const key = agent.toLowerCase();
                     const parentAuthor = buildOnParents[key] ?? ZERO_ADDRESS;
@@ -3176,6 +3316,16 @@ export default function JobDetailsPage() {
                       parentAuthor.toLowerCase() !== ZERO_ADDRESS.toLowerCase() &&
                       parentAuthor.toLowerCase() !== key;
                     const isWinnerSelected = (rewardInputs[key] ?? "").trim().length > 0;
+                    const finalistTile = heatmap.people.find(
+                      (entry) => entry.agent.toLowerCase() === key
+                    );
+                    const eligibleBuilders = (finalistTile?.responses ?? [])
+                      .filter(
+                        (response) =>
+                          response.responseType === "builds_on" && !response.stakeSlashed
+                      )
+                      .map((response) => response.responder);
+                    const selectionFull = finalizeCount >= maxApprovals && !isWinnerSelected;
                     return (
                       <FinalistCard
                         key={agent}
@@ -3193,14 +3343,41 @@ export default function JobDetailsPage() {
                           setRewardInputs((previous) => ({ ...previous, [key]: value }))
                         }
                         buildOnInfo={isBuildOnWinner ? { parentAgent: parentAuthor } : undefined}
+                        eligibleBuilders={eligibleBuilders}
+                        selectDisabled={selectionFull}
+                        selectHint={
+                          selectionFull ? `Max ${maxApprovals} winners already selected` : undefined
+                        }
                       />
                     );
                   })}
+                  {finalizeOverCount ? (
+                    <div className="border border-[var(--danger)] px-3 py-2 text-xs text-[var(--danger)]">
+                      {finalizeCount} winners selected - the maximum is {maxApprovals}. Deselect
+                      some before finalizing.
+                    </div>
+                  ) : null}
+                  {finalizeOverPool ? (
+                    <div className="border border-[var(--danger)] px-3 py-2 text-xs text-[var(--danger)]">
+                      Allocated {formatUsdc(finalizeAllocated)} USDC exceeds the{" "}
+                      {formatUsdc(finalizePool)} USDC reward pool.
+                    </div>
+                  ) : null}
+                  {finalizeInvalidInput ? (
+                    <div className="border border-[var(--danger)] px-3 py-2 text-xs text-[var(--danger)]">
+                      Reward amounts must be a number in USDC (e.g. 5 or 5.5).
+                    </div>
+                  ) : null}
+                  {finalizeCount === 0 && !finalizeInvalidInput ? (
+                    <div className="text-[10px] font-mono text-[var(--text-muted)]">
+                      Select a winner below (max {maxApprovals}) and allocate their reward.
+                    </div>
+                  ) : null}
                   <button
                     type="button"
-                    className="btn-primary w-full"
+                    className="btn-primary w-full disabled:cursor-not-allowed disabled:opacity-50"
                     onClick={() => void handleFinalizeWinners()}
-                    disabled={busyAction === "finalize"}
+                    disabled={busyAction === "finalize" || finalizeBlocked}
                   >
                     {busyAction === "finalize" ? "Finalizing..." : "Finalize Winners"}
                   </button>

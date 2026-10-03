@@ -10,6 +10,14 @@ import { mapLimit, MulticallRequest, multicall, withRetry } from "@/lib/multical
 import { getContractForSource } from "@/lib/task-adapter";
 import { fetchUserProfile } from "@/lib/user-profiles";
 
+/** Per-call read overrides accepted by ethers contract methods. */
+export type ReadOverrides = { blockTag?: number | string };
+
+/** Overrides object for a pinned-block read (empty when unpinned). */
+function atBlock(blockTag?: number | string): ReadOverrides {
+  return blockTag !== undefined && blockTag !== null ? { blockTag } : {};
+}
+
 const COLOR_NEUTRAL = "#3A4A5A";
 const COLOR_MIXED = "#F5A623";
 
@@ -89,15 +97,26 @@ function mapResponseType(responseType: number): "critique" | "builds_on" | "othe
 
 async function loadResponseIds(
   contract: {
-    getResponses?: (submissionId: bigint | number) => Promise<unknown[]>;
-    getSubmissionResponses?: (submissionId: bigint | number) => Promise<Array<bigint | number>>;
-    submissionResponseCount?: (submissionId: bigint | number) => Promise<bigint | number>;
-    submissionResponses?: (submissionId: bigint | number, index: bigint | number) => Promise<bigint | number>;
+    getResponses?: (submissionId: bigint | number, overrides?: ReadOverrides) => Promise<unknown[]>;
+    getSubmissionResponses?: (
+      submissionId: bigint | number,
+      overrides?: ReadOverrides
+    ) => Promise<Array<bigint | number>>;
+    submissionResponseCount?: (
+      submissionId: bigint | number,
+      overrides?: ReadOverrides
+    ) => Promise<bigint | number>;
+    submissionResponses?: (
+      submissionId: bigint | number,
+      index: bigint | number,
+      overrides?: ReadOverrides
+    ) => Promise<bigint | number>;
   },
-  submissionId: bigint | number
+  submissionId: bigint | number,
+  overrides?: ReadOverrides
 ): Promise<Array<bigint | number>> {
   if (contract.getResponses) {
-    const rows = await contract.getResponses(submissionId).catch(() => null);
+    const rows = await contract.getResponses(submissionId, overrides).catch(() => null);
     if (rows && Array.isArray(rows)) {
       return rows
         .map((row) => (row as Record<string, unknown> & unknown[]).responseId ?? (row as unknown[])[0])
@@ -106,20 +125,20 @@ async function loadResponseIds(
   }
 
   if (contract.getSubmissionResponses) {
-    const explicit = await contract.getSubmissionResponses(submissionId).catch(() => null);
+    const explicit = await contract.getSubmissionResponses(submissionId, overrides).catch(() => null);
     if (explicit) return Array.from(explicit);
   }
 
   const count = Number(
     contract.submissionResponseCount
-      ? await contract.submissionResponseCount(submissionId).catch(() => 0n)
+      ? await contract.submissionResponseCount(submissionId, overrides).catch(() => 0n)
       : 0n
   );
 
   const ids: Array<bigint | number> = [];
   for (let index = 0; index < count; index += 1) {
     const responseId = contract.submissionResponses
-      ? await contract.submissionResponses(submissionId, index).catch(() => null)
+      ? await contract.submissionResponses(submissionId, index, overrides).catch(() => null)
       : null;
     if (responseId !== null && responseId !== undefined) ids.push(responseId);
   }
@@ -129,26 +148,40 @@ async function loadResponseIds(
 type ResponseRow = Record<string, unknown> & unknown[];
 
 type JobContractShape = {
-  getSubmissions?: (taskId: number) => Promise<unknown[]>;
-  submittedAgents?: (taskId: number, index: number) => Promise<string>;
-  getSubmission?: (taskId: number, agent: string) => Promise<unknown>;
-  submissions?: (taskId: number, agent: string) => Promise<unknown>;
-  getSelectedFinalists?: (taskId: number) => Promise<string[]>;
-  getResponses?: (submissionId: bigint | number) => Promise<unknown[]>;
-  getSubmissionResponses?: (submissionId: bigint | number) => Promise<Array<bigint | number>>;
-  submissionResponses?: (submissionId: bigint | number, index: bigint | number) => Promise<bigint | number>;
-  submissionResponseCount?: (submissionId: bigint | number) => Promise<bigint | number>;
-  getResponse?: (responseId: bigint | number) => Promise<unknown>;
+  getSubmissions?: (taskId: number, overrides?: ReadOverrides) => Promise<unknown[]>;
+  submittedAgents?: (taskId: number, index: number, overrides?: ReadOverrides) => Promise<string>;
+  getSubmission?: (taskId: number, agent: string, overrides?: ReadOverrides) => Promise<unknown>;
+  submissions?: (taskId: number, agent: string, overrides?: ReadOverrides) => Promise<unknown>;
+  getSelectedFinalists?: (taskId: number, overrides?: ReadOverrides) => Promise<string[]>;
+  getResponses?: (
+    submissionId: bigint | number,
+    overrides?: ReadOverrides
+  ) => Promise<unknown[]>;
+  getSubmissionResponses?: (
+    submissionId: bigint | number,
+    overrides?: ReadOverrides
+  ) => Promise<Array<bigint | number>>;
+  submissionResponses?: (
+    submissionId: bigint | number,
+    index: bigint | number,
+    overrides?: ReadOverrides
+  ) => Promise<bigint | number>;
+  submissionResponseCount?: (
+    submissionId: bigint | number,
+    overrides?: ReadOverrides
+  ) => Promise<bigint | number>;
+  getResponse?: (responseId: bigint | number, overrides?: ReadOverrides) => Promise<unknown>;
 };
 
-type BatchContext = { provider: Provider; target: string; abi: InterfaceAbi };
+type BatchContext = { provider: Provider; target: string; abi: InterfaceAbi; blockTag?: number };
 
 type SubmissionResponseData = { rows: ResponseRow[]; count: number | null };
 
 async function fallbackLoadResponses(
   jobContract: JobContractShape,
   map: Map<string, SubmissionResponseData>,
-  submissionIds: bigint[]
+  submissionIds: bigint[],
+  overrides?: ReadOverrides
 ): Promise<void> {
   await mapLimit(submissionIds, 6, async (sid) => {
     const key = sid.toString();
@@ -157,14 +190,14 @@ async function fallbackLoadResponses(
     try {
       let rows: ResponseRow[] = [];
       if (jobContract.getResponses) {
-        const raw = await jobContract.getResponses(sid).catch(() => null);
+        const raw = await jobContract.getResponses(sid, overrides).catch(() => null);
         if (Array.isArray(raw)) rows = raw as ResponseRow[];
       }
       if (rows.length === 0) {
-        const ids = await loadResponseIds(jobContract, sid).catch(() => []);
+        const ids = await loadResponseIds(jobContract, sid, overrides).catch(() => []);
         const fetched = await Promise.all(
           ids.map(async (rid) => {
-            const raw = await jobContract.getResponse?.(rid).catch(() => null);
+            const raw = await jobContract.getResponse?.(rid, overrides).catch(() => null);
             return raw ? (raw as ResponseRow) : null;
           })
         );
@@ -186,6 +219,10 @@ async function collectResponses(
   for (const sid of submissionIds) map.set(sid.toString(), { rows: [], count: null });
   if (submissionIds.length === 0) return map;
 
+  // All reads in this batch derive their pinning from the same blockTag so a
+  // fallback after a failed multicall chunk still reads the same block.
+  const overrides = atBlock(batch?.blockTag);
+
   if (batch) {
     const requests: MulticallRequest[] = submissionIds.flatMap((sid) => [
       { target: batch.target, abi: batch.abi, functionName: "getResponses", args: [sid] },
@@ -193,7 +230,7 @@ async function collectResponses(
     ]);
 
     try {
-      const results = await multicall(batch.provider, requests);
+      const results = await multicall(batch.provider, requests, 50, batch.blockTag);
       const unresolved: bigint[] = [];
       submissionIds.forEach((sid, index) => {
         const key = sid.toString();
@@ -221,22 +258,24 @@ async function collectResponses(
           unresolved.push(sid);
         }
       });
-      if (unresolved.length) await fallbackLoadResponses(jobContract, map, unresolved);
+      if (unresolved.length) await fallbackLoadResponses(jobContract, map, unresolved, overrides);
       return map;
     } catch {
       // Multicall unavailable or rejected - fall through to direct reads.
     }
   }
 
-  await fallbackLoadResponses(jobContract, map, submissionIds);
+  await fallbackLoadResponses(jobContract, map, submissionIds, overrides);
   return map;
 }
 
 export async function buildSignalMapData(
   jobContract: JobContractShape,
   jobId: number,
-  batch?: BatchContext
+  batch?: BatchContext,
+  blockTag?: number
 ): Promise<SignalTile[]> {
+  const overrides = atBlock(blockTag);
   // Load submissions: retry the batched getter, then fall back to enumerating
   // submittedAgents. If both paths yield nothing the read itself is broken —
   // during a reveal there is always at least one submission — so throw instead
@@ -244,7 +283,7 @@ export async function buildSignalMapData(
   let rawSubmissions: unknown[] = [];
   if (jobContract.getSubmissions) {
     try {
-      const rows = await withRetry(() => jobContract.getSubmissions!(jobId));
+      const rows = await withRetry(() => jobContract.getSubmissions!(jobId, overrides));
       rawSubmissions = Array.from(rows ?? []);
     } catch {
       rawSubmissions = [];
@@ -253,11 +292,11 @@ export async function buildSignalMapData(
   if (rawSubmissions.length === 0) {
     for (let idx = 0; idx < 100; idx += 1) {
       try {
-        const agent = await jobContract.submittedAgents?.(jobId, idx);
+        const agent = await jobContract.submittedAgents?.(jobId, idx, overrides);
         if (!agent || isZeroAddress(agent)) break;
         const raw =
-          (await jobContract.getSubmission?.(jobId, agent).catch(() => null)) ??
-          (await jobContract.submissions?.(jobId, agent).catch(() => null));
+          (await jobContract.getSubmission?.(jobId, agent, overrides).catch(() => null)) ??
+          (await jobContract.submissions?.(jobId, agent, overrides).catch(() => null));
         if (raw && isValidSubmission(raw)) rawSubmissions.push(raw);
       } catch {
         break;
@@ -280,7 +319,7 @@ export async function buildSignalMapData(
   // interaction-based fallback below.
   let finalists: string[] = [];
   if (jobContract.getSelectedFinalists) {
-    const rows = await withRetry(() => jobContract.getSelectedFinalists!(jobId));
+    const rows = await withRetry(() => jobContract.getSelectedFinalists!(jobId, overrides));
     finalists = Array.from(rows ?? [])
       .map((address) => String(address))
       .filter((address) => !isZeroAddress(address));
@@ -410,21 +449,39 @@ export async function buildTaskHeatmap(
   sourceId = "current"
 ): Promise<TaskHeatmap> {
   const readProvider = provider ?? getReadProvider();
+
+  // Pin every read of one build to a single block so submissions, finalists
+  // and responses can never straddle two chain states: a lagging or flaky
+  // replica then returns one coherent snapshot instead of a mixed one.
+  let blockTag: number | undefined;
+  try {
+    blockTag = await withRetry(() => readProvider.getBlockNumber());
+  } catch {
+    blockTag = undefined;
+  }
+
+  try {
+    return await buildTaskHeatmapAt(readProvider, taskId, sourceId, blockTag);
+  } catch (error) {
+    if (blockTag === undefined) throw error;
+    // The node refused the recent historical block (pruned state): redo the
+    // whole build unpinned rather than mixing pinned and latest reads.
+    return buildTaskHeatmapAt(readProvider, taskId, sourceId, undefined);
+  }
+}
+
+async function buildTaskHeatmapAt(
+  readProvider: BrowserProvider | JsonRpcProvider,
+  taskId: number,
+  sourceId: string,
+  blockTag?: number
+): Promise<TaskHeatmap> {
   const contractInstance = getContractForSource(sourceId, readProvider);
-  const contract = contractInstance as unknown as {
-    getRevealPhaseEnd?: (taskId: number) => Promise<bigint | number>;
-    isInRevealPhase?: (taskId: number) => Promise<boolean>;
-    getSubmissions?: (taskId: number) => Promise<unknown[]>;
-    submittedAgents?: (taskId: number, index: number) => Promise<string>;
-    getSubmission?: (taskId: number, agent: string) => Promise<unknown>;
-    submissions?: (taskId: number, agent: string) => Promise<unknown>;
-    getSelectedFinalists?: (taskId: number) => Promise<string[]>;
-    getResponses?: (submissionId: bigint | number) => Promise<unknown[]>;
-    getSubmissionResponses?: (submissionId: bigint | number) => Promise<Array<bigint | number>>;
-    submissionResponses?: (submissionId: bigint | number, index: bigint | number) => Promise<bigint | number>;
-    submissionResponseCount?: (submissionId: bigint | number) => Promise<bigint | number>;
-    getResponse?: (responseId: bigint | number) => Promise<unknown>;
+  const contract = contractInstance as unknown as JobContractShape & {
+    getRevealPhaseEnd?: (taskId: number, overrides?: ReadOverrides) => Promise<bigint | number>;
+    isInRevealPhase?: (taskId: number, overrides?: ReadOverrides) => Promise<boolean>;
   };
+  const overrides = atBlock(blockTag);
 
   // Retry reveal-state reads. A transient failure here used to be swallowed
   // into "not in reveal", returning an empty map — so the signal map flipped
@@ -433,14 +490,18 @@ export async function buildTaskHeatmap(
   // propagates so the caller can show an error with a retry.
   let revealPhaseEnd = 0;
   if (contract.getRevealPhaseEnd) {
-    revealPhaseEnd = Number(await withRetry(() => contract.getRevealPhaseEnd!(taskId)));
+    revealPhaseEnd = Number(await withRetry(() => contract.getRevealPhaseEnd!(taskId, overrides)));
   }
   let isRevealPhase = false;
   if (contract.isInRevealPhase) {
-    isRevealPhase = Boolean(await withRetry(() => contract.isInRevealPhase!(taskId)));
+    isRevealPhase = Boolean(await withRetry(() => contract.isInRevealPhase!(taskId, overrides)));
   }
 
-  if (!isRevealPhase) {
+  // Build whenever the reveal has been scheduled (or is still active). The old
+  // gate (active-reveal only) blanked the map the moment the reveal clock
+  // ended — exactly while the creator is choosing winners — and for good
+  // after settlement. A truly unselected job (revealPhaseEnd == 0) stays empty.
+  if (!isRevealPhase && !(revealPhaseEnd > 0)) {
     return {
       people: [],
       totalActivity: 0,
@@ -453,11 +514,17 @@ export async function buildTaskHeatmap(
     typeof contractInstance.target === "string"
       ? contractInstance.target
       : await contractInstance.target.getAddress();
-  const tiles = await buildSignalMapData(contract, taskId, {
-    provider: readProvider,
-    target: contractTarget,
-    abi: contractInstance.interface.fragments
-  });
+  const tiles = await buildSignalMapData(
+    contract,
+    taskId,
+    {
+      provider: readProvider,
+      target: contractTarget,
+      abi: contractInstance.interface.fragments,
+      blockTag
+    },
+    blockTag
+  );
   const weighted = computeTileWeights(tiles);
 
   const people: SignalTileWithWeight[] = weighted.map((tile) => ({

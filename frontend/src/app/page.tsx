@@ -226,7 +226,7 @@ export default function HomePage() {
   }
 
   return (
-    <section className="page-container grid gap-6 xl:grid-cols-[240px_1fr_320px]">
+    <section className="page-container grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)_300px] xl:grid-cols-[240px_1fr_320px]">
       <aside className="panel h-fit space-y-6">
         <SectionHeader>Your Command</SectionHeader>
         <StatBlock value={account ? myScore : "-"} label="Score" accent="var(--arc)" />

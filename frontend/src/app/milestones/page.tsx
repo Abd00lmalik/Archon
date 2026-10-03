@@ -620,7 +620,7 @@ export default function MilestonesPage() {
                                     borderRadius: 8
                                   }}
                                 >
-                                  {approvingMilestoneId === milestone.milestoneId ? "Approving…" : "✅ Approve & Release"}
+                                  {approvingMilestoneId === milestone.milestoneId ? "Approving…" : "Approve & Release"}
                                 </button>
                                 <button
                                   type="button"
@@ -634,7 +634,7 @@ export default function MilestonesPage() {
                                     borderRadius: 8
                                   }}
                                 >
-                                  {disputingMilestoneId === milestone.milestoneId ? "Disputing…" : "⚠️ Dispute"}
+                                  {disputingMilestoneId === milestone.milestoneId ? "Disputing…" : "Dispute"}
                                 </button>
                               </div>
                               <textarea

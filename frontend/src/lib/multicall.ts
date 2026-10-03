@@ -127,11 +127,14 @@ export function resetMulticallSupport() {
  * Execute batched read calls through Multicall3.
  * Each request maps 1:1 to a result (in order); failed or undecodable calls
  * yield `ok: false` so callers can retry or default them.
+ * When `blockTag` is set, every chunk is evaluated at that exact block so a
+ * multi-chunk read behaves as one consistent snapshot.
  */
 export async function multicall<T = unknown>(
   provider: Provider,
   requests: MulticallRequest[],
-  chunkSize = 50
+  chunkSize = 50,
+  blockTag?: number
 ): Promise<MulticallResult<T>[]> {
   const results: MulticallResult<T>[] = new Array(requests.length);
   if (requests.length === 0) return results;
@@ -178,7 +181,10 @@ export async function multicall<T = unknown>(
         requests[index].target,
         true,
         (encoded[index] as { callData: string }).callData
-      ]);      const response = (await multicallContract.aggregate3.staticCall(calls)) as ArrayLike<{
+      ]);      const response = (await multicallContract.aggregate3.staticCall(
+        calls,
+        blockTag !== undefined ? { blockTag } : {}
+      )) as ArrayLike<{
         success?: boolean;
         returnData?: string;
       }>;

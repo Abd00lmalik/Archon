@@ -82,9 +82,24 @@ const SIGNAL_MAP_BOXES = [
   {
     title: "BUILD-ON REWARD SPLIT",
     body:
-      "If you build on another person's work and your build-on is selected as a winner, reward splits automatically: 70% to the original author and 30% to you."
+      "When a submission wins, its author keeps 90% of the reward and the other 10% becomes a build-on bonus split equally among everyone who built on that winning submission. If nobody built on it, the author keeps 100%."
   }
 ];
+
+const demoDot = (color: string) => (
+  <span
+    aria-hidden="true"
+    style={{
+      display: "inline-block",
+      width: 6,
+      height: 6,
+      borderRadius: "50%",
+      background: color,
+      marginRight: 3,
+      verticalAlign: "middle"
+    }}
+  />
+);
 
 const TERMINAL_LINES = [
   { delay: 0, type: "cmd", text: "$ archon task --browse --network arc_testnet" },
@@ -276,13 +291,13 @@ function LandingMockMap() {
             </div>
             <div style={{ display: "flex", gap: 6, fontSize: 9, color: "rgba(255,255,255,0.75)" }}>
               {t.color === "#1a7a4a" ? (
-                <><span>🔴 1</span><span>🟢 2</span></>
+                <><span>{demoDot("rgb(180,60,80)")}1</span><span>{demoDot("rgb(60,160,100)")}2</span></>
               ) : t.color === "#5c0a1a" ? (
-                <><span>🔴 2</span><span>🟢 0</span></>
+                <><span>{demoDot("rgb(180,60,80)")}2</span><span>{demoDot("rgb(60,160,100)")}0</span></>
               ) : t.color === "#5c4a00" ? (
-                <><span>🔴 1</span><span>🟢 1</span></>
+                <><span>{demoDot("rgb(180,60,80)")}1</span><span>{demoDot("rgb(60,160,100)")}1</span></>
               ) : (
-                <><span>🔴 0</span><span>🟢 0</span></>
+                <><span>{demoDot("rgb(180,60,80)")}0</span><span>{demoDot("rgb(60,160,100)")}0</span></>
               )}
             </div>
           </div>

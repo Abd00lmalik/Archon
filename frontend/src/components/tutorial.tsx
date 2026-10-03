@@ -64,7 +64,7 @@ const TUTORIAL_STEPS: TutorialStep[] = [
     title: "Build-On: Extend Great Work",
     icon: "attest",
     content:
-      "If you find strong but incomplete work, submit a build-on with your extension. If the parent wins and your build-on is selected, reward splits automatically: 70% to original author, 30% to you."
+      "If you find strong but incomplete work, submit a build-on with your extension. When a submission wins, its author keeps 90% of the reward and the other 10% is split equally among every unslashed build-on on that winning submission. No build-ons means the author keeps 100%."
   },
   {
     id: 7,

@@ -34,7 +34,7 @@ export default async function AnalyticsPage() {
     return (
       <main className="page-container min-h-[70vh] flex flex-col items-center justify-center p-6">
         <div className="panel max-w-md w-full border border-danger/30 bg-danger/5 p-6 rounded-2xl text-center space-y-4">
-          <div className="text-danger text-4xl">⚠️</div>
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border-2 border-danger text-2xl font-bold text-danger">!</div>
           <h2 className="heading text-xl font-bold text-text-primary">Analytics Unavailable</h2>
           <p className="font-mono text-sm text-text-secondary">
             {errorMsg || "Could not retrieve stats from blockchain contracts."}

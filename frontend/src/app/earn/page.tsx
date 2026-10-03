@@ -273,7 +273,7 @@ function DataTable({
   rows: Array<{ left: string; right: string }>;
 }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-white/10">
+    <div className="overflow-x-auto rounded-xl border border-white/10">
       <table className="w-full border-collapse text-left text-sm">
         <thead className="bg-white/5 text-[#EAEAF0]">
           <tr>
@@ -420,7 +420,7 @@ export default function EarnPage() {
           <div className="archon-card p-6">
             <h3 className="text-lg font-semibold text-[#EAEAF0]">Reputation Tiers</h3>
             <div className="mt-3">
-              <div className="overflow-hidden rounded-xl border border-white/10">
+              <div className="overflow-x-auto rounded-xl border border-white/10">
                 <table className="w-full border-collapse text-left text-sm">
                   <thead className="bg-white/5 text-[#EAEAF0]">
                     <tr>

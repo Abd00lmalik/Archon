@@ -19,7 +19,9 @@
 
   --text-primary: #E8F4FD;
   --text-secondary: #7A9BB5;
-  --text-muted: #3D5A73;
+  /* Was #3D5A73 (2.7:1 on --base - fails WCAG AA for the many 10-11px labels
+     using it); #607F99 measures ~4.6:1 while staying below --text-secondary. */
+  --text-muted: #607F99;
   --text-data: #00E5FF;
 
   --agent-primary: #BF00FF;
@@ -47,7 +49,8 @@
 
   --text-primary: #0A1628;
   --text-secondary: #2E4A68;
-  --text-muted: #6080A0;
+  /* Was #6080A0 (3.8:1 on light base); #4A6A8C measures ~5.1:1 (AA). */
+  --text-muted: #4A6A8C;
   --text-data: #0070A0;
 }
 
@@ -669,7 +672,7 @@ pre,
 }
 
 [data-theme="light"] .section-header {
-  color: #6080A0;
+  color: #4A6A8C;
   border-color: #D1DBE8;
 }
 
@@ -836,5 +839,60 @@ pre,
     overflow-y: auto !important;
     z-index: 50 !important;
     border-radius: 12px 12px 0 0 !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Desktop density: render at 100% browser zoom the way the site previously
+   looked at 90% zoom. CSS `zoom` scales px AND rem uniformly (a root
+   font-size change would miss px-based labels like text-[10px]). Only
+   applies at >=1024px; tablet/mobile keep native sizing. Browsers without
+   `zoom` support simply ignore this rule and render as before.
+--------------------------------------------------------------------------- */
+@media (min-width: 1024px) {
+  body {
+    zoom: 0.9;
+  }
+}
+
+/* Keyboard focus must be visible on every clickable element (WCAG 2.4.7).
+   Inputs are excluded: they already show a box-shadow focus ring. */
+a:focus-visible,
+button:focus-visible,
+[role="button"]:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--arc);
+  outline-offset: 2px;
+}
+
+a,
+button,
+[role="button"],
+summary {
+  cursor: pointer;
+}
+
+/* Honor the OS reduced-motion setting: collapse animations and transitions
+   instead of running decorative motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Touch ergonomics on small screens: styled buttons are the primary actions,
+   so give every one of them a 44px minimum tap target (WCAG 2.5.5). */
+@media (max-width: 640px) {
+  .btn-ghost,
+  .btn-primary,
+  .btn-danger,
+  .archon-button-primary,
+  .archon-button-secondary {
+    min-height: 44px;
   }
 }
