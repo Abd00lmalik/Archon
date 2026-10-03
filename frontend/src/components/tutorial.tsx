@@ -85,7 +85,7 @@ const TUTORIAL_STEPS: TutorialStep[] = [
     title: "Getting Approved and Claiming",
     icon: "star",
     content:
-      "After reveal closes, creator selects final winners from finalists. Winners claim USDC (minus 10% platform fee) and mint permanent credentials in one transaction. Reputation updates automatically."
+      "After reveal closes, creator selects final winners from finalists. One finalize transaction pays every winner their USDC (minus 10% platform fee), mints permanent credentials, and returns all stakes and interaction rewards automatically. No separate claims needed."
   },
   {
     id: 10,

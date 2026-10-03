@@ -221,7 +221,7 @@ describe("Interaction Economy", function () {
     expect(await job.unclaimedResponseCount(0)).to.equal(1);
   });
 
-  it("claimInteractionReward pays after finalization", async function () {
+  it("finalization pays interaction rewards automatically", async function () {
     const { job, client, agentA, agentB, treasury, usdc } = await deployFixture();
     await createJobWithEconomy(job, client, {
       reward: "200",
@@ -233,10 +233,6 @@ describe("Interaction Economy", function () {
     await job.connect(agentB).respondToSubmission(submissionId, 1, "ipfs://rewarded-critique");
     const responseId = (await job.getSubmissionResponses(submissionId))[0];
 
-    const revealEnd = Number(await job.getRevealPhaseEnd(0));
-    await time.increaseTo(revealEnd + 1);
-    await job.connect(client).finalizeWinners(0, [agentA.address], [ethers.parseUnits("120", 6)]);
-
     const economy = await job.getTaskEconomy(0);
     // Sole responder: the entire pool is their share.
     const share = economy.interactionPool;
@@ -246,7 +242,9 @@ describe("Interaction Economy", function () {
     const responderBefore = await usdc.balanceOf(agentB.address);
     const treasuryBefore = await usdc.balanceOf(treasury.address);
 
-    await expect(job.connect(agentB).claimInteractionReward(responseId))
+    const revealEnd = Number(await job.getRevealPhaseEnd(0));
+    await time.increaseTo(revealEnd + 1);
+    await expect(job.connect(client).finalizeWinners(0, [agentA.address], [ethers.parseUnits("120", 6)]))
       .to.emit(job, "InteractionRewardClaimed")
       .withArgs(responseId, agentB.address, payout);
 
@@ -255,14 +253,20 @@ describe("Interaction Economy", function () {
     const response = await job.getResponse(responseId);
 
     expect(responderAfter - responderBefore).to.equal(payout + response.stakedAmount);
-    expect(treasuryAfter - treasuryBefore).to.equal(fee);
+    // Treasury also receives the winner's platform fee from the same tx.
+    expect(treasuryAfter - treasuryBefore).to.equal(
+      fee + (ethers.parseUnits("120", 6) * 1000n) / 10000n
+    );
     expect(response.interactionRewardClaimed).to.equal(true);
     expect(response.stakeReturned).to.equal(true);
     expect(await job.unclaimedResponseCount(0)).to.equal(0);
     expect(await job.getInteractionPoolRemaining(0)).to.equal(0);
+
+    // The manual claim path is now only a guard: already paid at finalization.
+    await expect(job.connect(agentB).claimInteractionReward(responseId)).to.be.reverted;
   });
 
-  it("settleRevealPhase returns stakes and pays rewards in a batch", async function () {
+  it("finalization settles the batch and settleRevealPhase stays idempotent", async function () {
     const { job, client, agentA, agentB, treasury, usdc } = await deployFixture();
     await createJobWithEconomy(job, client, {
       reward: "200",
@@ -273,10 +277,6 @@ describe("Interaction Economy", function () {
     await job.connect(agentB).respondToSubmission(submissionId, 1, "ipfs://batch-critique");
     const responseId = (await job.getSubmissionResponses(submissionId))[0];
 
-    const revealEnd = Number(await job.getRevealPhaseEnd(0));
-    await time.increaseTo(revealEnd + 1);
-    await job.connect(client).finalizeWinners(0, [agentA.address], [ethers.parseUnits("120", 6)]);
-
     const economy = await job.getTaskEconomy(0);
     // Sole responder settles for the entire pool.
     const share = economy.interactionPool;
@@ -285,18 +285,28 @@ describe("Interaction Economy", function () {
     const responderBefore = await usdc.balanceOf(agentB.address);
     const treasuryBefore = await usdc.balanceOf(treasury.address);
 
-    await expect(job.connect(agentB).settleRevealPhase(0)).to.emit(job, "RevealPhaseSettled");
+    const revealEnd = Number(await job.getRevealPhaseEnd(0));
+    await time.increaseTo(revealEnd + 1);
+    await job.connect(client).finalizeWinners(0, [agentA.address], [ethers.parseUnits("120", 6)]);
 
     const responderAfter = await usdc.balanceOf(agentB.address);
     const treasuryAfter = await usdc.balanceOf(treasury.address);
     const response = await job.getResponse(responseId);
 
     expect(responderAfter - responderBefore).to.equal(payout + response.stakedAmount);
-    expect(treasuryAfter - treasuryBefore).to.equal(fee);
+    // Treasury also receives the winner's platform fee from the same tx.
+    expect(treasuryAfter - treasuryBefore).to.equal(
+      fee + (ethers.parseUnits("120", 6) * 1000n) / 10000n
+    );
     expect(response.stakeReturned).to.equal(true);
     expect(response.interactionRewardClaimed).to.equal(true);
     expect(await job.unclaimedResponseCount(0)).to.equal(0);
     expect(await job.getInteractionPoolRemaining(0)).to.equal(0);
+
+    // The permissionless settle path remains callable and pays nothing twice.
+    await expect(job.connect(agentB).settleRevealPhase(0)).to.emit(job, "RevealPhaseSettled");
+    expect(await usdc.balanceOf(agentB.address)).to.equal(responderAfter);
+    expect(await usdc.balanceOf(treasury.address)).to.equal(treasuryAfter);
   });
 
   it("unlimited responders split the pool equally at settlement", async function () {
@@ -327,32 +337,41 @@ describe("Interaction Economy", function () {
     // Rewards only leave the pot at settlement; the pool backs all 21 shares.
     expect(await job.getInteractionPoolRemaining(0)).to.equal(pool);
 
-    const revealEnd = Number(await job.getRevealPhaseEnd(0));
-    await time.increaseTo(revealEnd + 1);
-    await job.connect(client).finalizeWinners(0, [agentA.address], [ethers.parseUnits("60", 6)]);
-
     const responseIds: bigint[] = [];
     for (const sid of [submissionA, submissionB]) {
       responseIds.push(...((await job.getSubmissionResponses(sid)) as bigint[]));
     }
     expect(responseIds.length).to.equal(21);
 
+    const revealEnd = Number(await job.getRevealPhaseEnd(0));
+    await time.increaseTo(revealEnd + 1);
+
     const treasuryBefore = await usdc.balanceOf(treasury.address);
+    const beforeByAddress = new Map<string, bigint>();
+    for (const signer of responders) {
+      beforeByAddress.set(signer.address, await usdc.balanceOf(signer.address));
+    }
+
+    // Finalization batch-pays every responder in the same transaction.
+    await job.connect(client).finalizeWinners(0, [agentA.address], [ethers.parseUnits("60", 6)]);
+
     let paidToResponders = 0n;
     for (const responseId of responseIds) {
       const response = await job.getResponse(responseId);
-      const signer = responders.find((candidate) => candidate.address === response.responder)!;
-      const before = await usdc.balanceOf(signer.address);
-      await job.connect(signer).claimInteractionReward(responseId);
-      const after = await usdc.balanceOf(signer.address);
+      const after = await usdc.balanceOf(response.responder);
       // Exclude the returned stake: only reward + fee belong to the pool.
-      paidToResponders += after - before - response.stakedAmount;
+      paidToResponders += after - beforeByAddress.get(response.responder)! - response.stakedAmount;
+      expect(response.interactionRewardClaimed).to.equal(true);
+      expect(response.stakeReturned).to.equal(true);
     }
 
-    const treasuryFees = (await usdc.balanceOf(treasury.address)) - treasuryBefore;
+    // Treasury also receives the winner's platform fee from the same tx.
+    const winnerFee = (ethers.parseUnits("60", 6) * 1000n) / 10000n;
+    const treasuryFees =
+      ((await usdc.balanceOf(treasury.address)) as bigint) - treasuryBefore - winnerFee;
     expect(await job.unclaimedResponseCount(0)).to.equal(0);
     expect(await job.getInteractionPoolRemaining(0)).to.equal(0);
-    // Floor rounding per claim; the pool pays out exactly.
+    // Floor rounding per share; the pool pays out exactly.
     expect(paidToResponders + treasuryFees).to.equal(pool);
   });
 
@@ -373,20 +392,23 @@ describe("Interaction Economy", function () {
 
     const revealEnd = Number(await job.getRevealPhaseEnd(0));
     await time.increaseTo(revealEnd + 1);
-    await job.connect(client).finalizeWinners(0, [agentA.address], [ethers.parseUnits("120", 6)]);
 
     const pool = ethers.parseUnits("20", 6);
     const treasuryBefore = await usdc.balanceOf(treasury.address);
     const bBefore = await usdc.balanceOf(agentB.address);
-    await job.connect(agentB).claimInteractionReward(responseIds[0]);
+    await job.connect(client).finalizeWinners(0, [agentA.address], [ethers.parseUnits("120", 6)]);
     const bAfter = await usdc.balanceOf(agentB.address);
     const treasuryAfter = await usdc.balanceOf(treasury.address);
 
     const fee = (pool * 1000n) / 10000n;
     expect(bAfter - bBefore).to.equal(pool - fee + ethers.parseUnits("2", 6));
-    expect(treasuryAfter - treasuryBefore).to.equal(fee);
+    // Treasury also receives the winner's platform fee from the same tx.
+    expect(treasuryAfter - treasuryBefore).to.equal(
+      fee + (ethers.parseUnits("120", 6) * 1000n) / 10000n
+    );
     expect(await job.unclaimedResponseCount(0)).to.equal(0);
     expect(await job.getInteractionPoolRemaining(0)).to.equal(0);
+    expect((await job.getResponse(responseIds[0])).stakeReturned).to.equal(true);
   });
 
   it("strict 90/10: build-on responders on the winner share 10% of the prize", async function () {
@@ -400,43 +422,39 @@ describe("Interaction Economy", function () {
 
     const revealEnd = Number(await job.getRevealPhaseEnd(0));
     await time.increaseTo(revealEnd + 1);
+
+    const bBefore = await usdc.balanceOf(agentB.address);
+    const cBefore = await usdc.balanceOf(agentC.address);
+    const aBefore = await usdc.balanceOf(agentA.address);
     await job.connect(client).finalizeWinners(0, [agentA.address], [ethers.parseUnits("100", 6)]);
 
-    // 10% of the prize is reserved for the two build-on responders; the rest stays with the winner.
+    // 10% of the prize was reserved for the two build-on responders and paid
+    // out in the same transaction; the rest went to the winner.
     const submission = await job.getSubmission(0, agentA.address);
     expect(submission.allocatedReward).to.equal(ethers.parseUnits("90", 6));
-    expect(await job.buildOnBonusRemaining(submissionA)).to.equal(ethers.parseUnits("10", 6));
-    expect(await job.buildOnResponderCount(submissionA)).to.equal(2);
+    expect(await job.buildOnBonusRemaining(submissionA)).to.equal(0);
+    expect(await job.buildOnResponderCount(submissionA)).to.equal(0);
 
     const responseB = (await job.getSubmissionResponses(submissionA))[0];
     const responseC = (await job.getSubmissionResponses(submissionA))[1];
-
-    // One claim pays pool share + bonus slice + returned stake in a single tx.
-    const bBefore = await usdc.balanceOf(agentB.address);
-    await job.connect(agentB).claimInteractionReward(responseB);
-    const bAfter = await usdc.balanceOf(agentB.address);
-    // pool 5 (fee 0.5) + pot 5 (fee 0.5) + stake 2
-    expect(bAfter - bBefore).to.equal(ethers.parseUnits("11", 6));
     expect((await job.getResponse(responseB)).buildOnBonusClaimed).to.equal(true);
+    expect((await job.getResponse(responseC)).buildOnBonusClaimed).to.equal(true);
 
-    const cBefore = await usdc.balanceOf(agentC.address);
-    await job.connect(agentC).claimInteractionReward(responseC);
-    const cAfter = await usdc.balanceOf(agentC.address);
-    expect(cAfter - cBefore).to.equal(ethers.parseUnits("11", 6));
-    expect(await job.buildOnBonusRemaining(submissionA)).to.equal(0);
-    expect(await job.buildOnResponderCount(submissionA)).to.equal(0);
-    expect(await job.getInteractionPoolRemaining(0)).to.equal(0);
+    // Each responder: pool share 5 (fee 0.5) + pot slice 5 (fee 0.5) + stake 2.
+    expect((await usdc.balanceOf(agentB.address)) - bBefore).to.equal(ethers.parseUnits("11", 6));
+    expect((await usdc.balanceOf(agentC.address)) - cBefore).to.equal(ethers.parseUnits("11", 6));
 
-    // The winner claims 90 minus the 10% platform fee; the escrow is exactly solvent.
-    const aBefore = await usdc.balanceOf(agentA.address);
-    await job.connect(agentA).claimCredential(0);
-    const aAfter = await usdc.balanceOf(agentA.address);
-    expect(aAfter - aBefore).to.equal(ethers.parseUnits("81", 6));
+    // Winner: 90 minus the 10% platform fee; the escrow is exactly solvent.
+    expect((await usdc.balanceOf(agentA.address)) - aBefore).to.equal(ethers.parseUnits("81", 6));
     expect((await job.getJob(0)).paidOutUSDC).to.equal(ethers.parseUnits("100", 6));
     // treasury: two pool fees + two bonus fees + winner fee
     expect((await usdc.balanceOf(treasury.address))).to.equal(
       ethers.parseUnits("1000000", 6) + ethers.parseUnits("11", 6)
     );
+
+    // Everything is already paid: manual claim paths revert.
+    await expect(job.connect(agentA).claimCredential(0)).to.be.reverted;
+    await expect(job.connect(agentB).claimInteractionReward(responseB)).to.be.reverted;
   });
 
   it("a critique on the winner earns pool share but no winner-pot slice", async function () {
@@ -449,7 +467,13 @@ describe("Interaction Economy", function () {
 
     const revealEnd = Number(await job.getRevealPhaseEnd(0));
     await time.increaseTo(revealEnd + 1);
-    await job.connect(client).finalizeWinners(0, [agentA.address], [ethers.parseUnits("100", 6)]);
+
+    const responseId = (await job.getSubmissionResponses(submissionA))[0];
+    const bBefore = await usdc.balanceOf(agentB.address);
+    await expect(job.connect(client).finalizeWinners(0, [agentA.address], [ethers.parseUnits("100", 6)]))
+      .to.emit(job, "InteractionRewardClaimed")
+      .withArgs(responseId, agentB.address, ethers.parseUnits("9", 6));
+    const bAfter = await usdc.balanceOf(agentB.address);
 
     // Only build-ons share the 10% pot: the winner keeps everything here.
     expect(await job.buildOnBonusRemaining(submissionA)).to.equal(0);
@@ -457,22 +481,15 @@ describe("Interaction Economy", function () {
     expect((await job.getSubmission(0, agentA.address)).allocatedReward).to.equal(
       ethers.parseUnits("100", 6)
     );
-
-    const responseId = (await job.getSubmissionResponses(submissionA))[0];
-    const bBefore = await usdc.balanceOf(agentB.address);
-    await expect(job.connect(agentB).claimInteractionReward(responseId))
-      .to.emit(job, "InteractionRewardClaimed")
-      .withArgs(responseId, agentB.address, ethers.parseUnits("9", 6));
-    const bAfter = await usdc.balanceOf(agentB.address);
-    // sole responder: pool 10 (fee 1) + stake 2, no bonus
+    // Sole responder: pool 10 (fee 1) + stake 2, no bonus.
     expect(bAfter - bBefore).to.equal(ethers.parseUnits("11", 6));
     expect((await job.getResponse(responseId)).buildOnBonusClaimed).to.equal(false);
 
-    await job.connect(agentA).claimCredential(0);
     expect((await job.getJob(0)).paidOutUSDC).to.equal(ethers.parseUnits("100", 6));
+    await expect(job.connect(agentB).claimInteractionReward(responseId)).to.be.reverted;
   });
 
-  it("slashing a build-on after finalization redistributes its pot slice", async function () {
+  it("finalization returns stakes and pays the build-on pot; later slashing reverts", async function () {
     const { job, client, agentA, agentB, agentC, usdc } = await deployFixture();
     await createJobWithEconomy(job, client, { reward: "100", interactionPoolPercent: 0 });
     const submissionA = await submit(job, agentA, "https://example.com/winner");
@@ -481,27 +498,28 @@ describe("Interaction Economy", function () {
     await job.connect(agentB).respondToSubmission(submissionA, 0, "ipfs://build-b");
     await job.connect(agentC).respondToSubmission(submissionA, 0, "ipfs://build-c");
 
-    const revealEnd = Number(await job.getRevealPhaseEnd(0));
-    await time.increaseTo(revealEnd + 1);
-    await job.connect(client).finalizeWinners(0, [agentA.address], [ethers.parseUnits("100", 6)]);
-    expect(await job.buildOnResponderCount(submissionA)).to.equal(2);
-
     const responseB = (await job.getSubmissionResponses(submissionA))[0];
     const responseC = (await job.getSubmissionResponses(submissionA))[1];
-    await job.connect(client).slashResponseStake(responseC);
-    expect(await job.buildOnResponderCount(submissionA)).to.equal(1);
-
-    // The survivor now divides the whole pot by one.
+    const revealEnd = Number(await job.getRevealPhaseEnd(0));
+    await time.increaseTo(revealEnd + 1);
     const bBefore = await usdc.balanceOf(agentB.address);
-    await job.connect(agentB).claimInteractionReward(responseB);
-    const bAfter = await usdc.balanceOf(agentB.address);
-    expect(bAfter - bBefore).to.equal(ethers.parseUnits("11", 6)); // pot 10 (fee 1) + stake 2
+    const cBefore = await usdc.balanceOf(agentC.address);
+    await job.connect(client).finalizeWinners(0, [agentA.address], [ethers.parseUnits("100", 6)]);
+
+    // Pot and stakes are released inside the finalize transaction itself:
+    // two eligible responders split the pot (5 each, fee 0.5) + stake 2.
+    expect((await usdc.balanceOf(agentB.address)) - bBefore).to.equal(ethers.parseUnits("6.5", 6));
+    expect((await usdc.balanceOf(agentC.address)) - cBefore).to.equal(ethers.parseUnits("6.5", 6));
     expect(await job.buildOnBonusRemaining(submissionA)).to.equal(0);
+    expect(await job.buildOnResponderCount(submissionA)).to.equal(0);
+    expect((await job.getResponse(responseC)).stakeReturned).to.equal(true);
 
-    await expect(job.connect(agentC).claimInteractionReward(responseC)).to.be.reverted;
+    // Everything is already processed: slashing and re-claiming revert.
+    await expect(job.connect(client).slashResponseStake(responseC)).to.be.reverted;
+    await expect(job.connect(agentB).claimInteractionReward(responseB)).to.be.reverted;
   });
 
-  it("slashing a build-on before finalization excludes it from the pot count", async function () {
+  it("a build-on slashed before finalization takes the whole pot", async function () {
     const { job, client, agentA, agentB, agentC, usdc } = await deployFixture();
     await createJobWithEconomy(job, client, { reward: "100", interactionPoolPercent: 0 });
     const submissionA = await submit(job, agentA, "https://example.com/winner");
@@ -514,20 +532,21 @@ describe("Interaction Economy", function () {
 
     const revealEnd = Number(await job.getRevealPhaseEnd(0));
     await time.increaseTo(revealEnd + 1);
+    const bBefore = await usdc.balanceOf(agentB.address);
+    const cBefore = await usdc.balanceOf(agentC.address);
     await job.connect(client).finalizeWinners(0, [agentA.address], [ethers.parseUnits("100", 6)]);
 
-    // The slashed response never counts: one responder, whole pot.
-    expect(await job.buildOnResponderCount(submissionA)).to.equal(1);
-    expect(await job.buildOnBonusRemaining(submissionA)).to.equal(ethers.parseUnits("10", 6));
-
-    const responseB = (await job.getSubmissionResponses(submissionA))[0];
-    const bBefore = await usdc.balanceOf(agentB.address);
-    await job.connect(agentB).claimInteractionReward(responseB);
-    const bAfter = await usdc.balanceOf(agentB.address);
-    expect(bAfter - bBefore).to.equal(ethers.parseUnits("11", 6));
+    // The slashed response never counts: the survivor divides the pot by one
+    // (a two-way split would have paid 6.5 instead of 11).
+    expect((await usdc.balanceOf(agentB.address)) - bBefore).to.equal(ethers.parseUnits("11", 6));
+    expect(await job.buildOnBonusRemaining(submissionA)).to.equal(0);
+    expect(await job.buildOnResponderCount(submissionA)).to.equal(0);
+    // The slashed responder gets nothing at settlement: stake already forfeited.
+    expect(await usdc.balanceOf(agentC.address)).to.equal(cBefore);
+    expect((await job.getResponse(responseC)).stakeReturned).to.equal(false);
   });
 
-  it("settleRevealPhase pays the build-on pot and stakes in a batch", async function () {
+  it("finalization batch-pays the build-on pot and stakes; settle stays idempotent", async function () {
     const { job, client, agentA, agentB, agentC, treasury, usdc } = await deployFixture();
     await createJobWithEconomy(job, client, { reward: "100", interactionPoolPercent: 0 });
     const submissionA = await submit(job, agentA, "https://example.com/winner");
@@ -538,22 +557,29 @@ describe("Interaction Economy", function () {
 
     const revealEnd = Number(await job.getRevealPhaseEnd(0));
     await time.increaseTo(revealEnd + 1);
-    await job.connect(client).finalizeWinners(0, [agentA.address], [ethers.parseUnits("100", 6)]);
 
     const bBefore = await usdc.balanceOf(agentB.address);
     const cBefore = await usdc.balanceOf(agentC.address);
     const treasuryBefore = await usdc.balanceOf(treasury.address);
-    await expect(job.connect(client).settleRevealPhase(0)).to.emit(job, "RevealPhaseSettled");
+    await expect(job.connect(client).finalizeWinners(0, [agentA.address], [ethers.parseUnits("100", 6)]))
+      .to.emit(job, "RevealPhaseSettled");
     const bAfter = await usdc.balanceOf(agentB.address);
     const cAfter = await usdc.balanceOf(agentC.address);
     const treasuryAfter = await usdc.balanceOf(treasury.address);
 
-    // Each responder: half the pot (5, fee 0.5) + returned stake 2.
+    // Each responder: half the pot (5, fee 0.5) + returned stake 2. Treasury
+    // gets the two pot fees (1) plus the winner's platform fee (9).
     expect(bAfter - bBefore).to.equal(ethers.parseUnits("6.5", 6));
     expect(cAfter - cBefore).to.equal(ethers.parseUnits("6.5", 6));
-    expect(treasuryAfter - treasuryBefore).to.equal(ethers.parseUnits("1", 6));
+    expect(treasuryAfter - treasuryBefore).to.equal(ethers.parseUnits("10", 6));
     expect(await job.buildOnBonusRemaining(submissionA)).to.equal(0);
     expect(await job.buildOnResponderCount(submissionA)).to.equal(0);
+
+    // A late settle re-emits the event but pays nothing twice.
+    await expect(job.connect(client).settleRevealPhase(0)).to.emit(job, "RevealPhaseSettled");
+    expect(await usdc.balanceOf(agentB.address)).to.equal(bAfter);
+    expect(await usdc.balanceOf(agentC.address)).to.equal(cAfter);
+    expect(await usdc.balanceOf(treasury.address)).to.equal(treasuryAfter);
   });
 
   it("alternatives share the priced slot but earn no winner-pot slice", async function () {
@@ -568,23 +594,23 @@ describe("Interaction Economy", function () {
 
     const revealEnd = Number(await job.getRevealPhaseEnd(0));
     await time.increaseTo(revealEnd + 1);
+
+    const responseB = (await job.getSubmissionResponses(submissionA))[0];
+    const responseC = (await job.getSubmissionResponses(submissionA))[1];
+    const bBefore = await usdc.balanceOf(agentB.address);
+    const cBefore = await usdc.balanceOf(agentC.address);
     await job.connect(client).finalizeWinners(0, [agentA.address], [ethers.parseUnits("100", 6)]);
 
     // Only BuildsOn responses split the pot: one responder, whole 10%.
-    expect(await job.buildOnResponderCount(submissionA)).to.equal(1);
-    const responseB = (await job.getSubmissionResponses(submissionA))[0];
-    const responseC = (await job.getSubmissionResponses(submissionA))[1];
-
-    const bBefore = await usdc.balanceOf(agentB.address);
-    await job.connect(agentB).claimInteractionReward(responseB);
+    // Build-on: pot 10 (fee 1) + stake 2.
     expect((await usdc.balanceOf(agentB.address)) - bBefore).to.equal(ethers.parseUnits("11", 6));
-
-    // The alternative has nothing to claim but still gets its stake back.
-    await expect(job.connect(agentC).claimInteractionReward(responseC)).to.be.reverted;
-    const cBefore = await usdc.balanceOf(agentC.address);
-    await job.connect(client).settleRevealPhase(0);
+    // The alternative has no pot slice: stake back only.
     expect((await usdc.balanceOf(agentC.address)) - cBefore).to.equal(ethers.parseUnits("2", 6));
     expect((await job.getResponse(responseC)).buildOnBonusClaimed).to.equal(false);
+    expect(await job.buildOnResponderCount(submissionA)).to.equal(0);
+
+    await expect(job.connect(agentB).claimInteractionReward(responseB)).to.be.reverted;
+    await expect(job.connect(agentC).claimInteractionReward(responseC)).to.be.reverted;
   });
 
   it("submitDirect combines accept and submit in one tx", async function () {

@@ -26,6 +26,7 @@ type DeploymentConfig = {
     usdc: ContractConfig;
     jobContract: ContractConfig;
     job: ContractConfig;
+    prevJobContract?: ContractConfig;
     githubSource: ContractConfig;
     communitySource: ContractConfig;
     agentTaskSource: ContractConfig;
@@ -50,6 +51,17 @@ async function getAbi(contractName: string): Promise<unknown[]> {
 function normalizeAddress(value: string | undefined) {
   if (!value) return "";
   return value.trim();
+}
+
+function readExistingConfig(filePath: string): DeploymentConfig | null {
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as DeploymentConfig;
+    if (!parsed?.contracts?.jobContract?.address) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
 }
 
 async function main() {
@@ -289,9 +301,30 @@ async function main() {
   };
 
   const deploymentsFilePath = path.resolve(__dirname, `../deployments/${network.name}.json`);
-  writeJson(deploymentsFilePath, deploymentConfig);
-
   const frontendConfigPath = path.resolve(__dirname, "../../frontend/src/lib/generated/contracts.json");
+
+  // Carry the outgoing job contract forward as prevJobContract so jobs
+  // created before this redeploy stay visible and claimable in the feed.
+  const existing =
+    readExistingConfig(frontendConfigPath) ?? readExistingConfig(deploymentsFilePath);
+  // The outgoing jobContract becomes the new prevJobContract (one prior
+  // version back); keep the older prev only if jobContract didn't change.
+  const currentEntry = existing?.contracts.jobContract;
+  const stalePrev = existing?.contracts.prevJobContract;
+  const changed = (c?: { address?: string }) =>
+    !!c?.address && c.address.toLowerCase() !== jobAddress.toLowerCase();
+  const outgoingJob = changed(currentEntry) ? currentEntry : stalePrev;
+  if (changed(outgoingJob)) {
+    deploymentConfig.contracts.prevJobContract = {
+      address: outgoingJob!.address,
+      abi: outgoingJob!.abi ?? (await getAbi("ERC8183Job"))
+    };
+    console.log(`Preserved previous ERC8183Job as prevJobContract: ${outgoingJob!.address}`);
+  } else {
+    console.log("No previous ERC8183Job with a different address; prevJobContract omitted.");
+  }
+
+  writeJson(deploymentsFilePath, deploymentConfig);
   writeJson(frontendConfigPath, deploymentConfig);
 
   console.log("Deployment files written to:");

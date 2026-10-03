@@ -855,15 +855,19 @@ contract ERC8183Job is ICredentialSource {
         require(winners.length <= job.maxApprovals, "too many winners");
 
         uint256 totalReward = 0;
-        for (uint256 i = 0; i < winners.length; i++) {
+        uint256 winnerCount = winners.length;
+        for (uint256 i = 0; i < winnerCount; ) {
             address winner = winners[i];
             uint256 rewardAmount = rewardAmounts[i];
 
             require(isFinalist[jobId][winner], "not a finalist");
             require(rewardAmount > 0, "reward must be positive");
 
-            for (uint256 j = i + 1; j < winners.length; j++) {
+            for (uint256 j = i + 1; j < winnerCount; ) {
                 require(winners[j] != winner, "duplicate winner");
+                unchecked {
+                    ++j;
+                }
             }
 
             Submission storage sub = submissions[jobId][winner];
@@ -871,11 +875,14 @@ contract ERC8183Job is ICredentialSource {
             require(sub.status != SubmissionStatus.Rejected, "winner rejected");
 
             totalReward += rewardAmount;
+            unchecked {
+                ++i;
+            }
         }
 
         require(totalReward <= job.rewardUSDC, "reward exceeds escrow");
 
-        for (uint256 i = 0; i < winners.length; i++) {
+        for (uint256 i = 0; i < winnerCount; ) {
             Submission storage sub = submissions[jobId][winners[i]];
             if (sub.status != SubmissionStatus.Approved) {
                 job.approvedCount += 1;
@@ -890,10 +897,13 @@ contract ERC8183Job is ICredentialSource {
             uint256 winnerGross = rewardAmounts[i];
             uint256[] memory responseIds = submissionResponses[sub.submissionId];
             uint256 eligible = 0;
-            for (uint256 j = 0; j < responseIds.length; j++) {
+            for (uint256 j = 0; j < responseIds.length; ) {
                 SubmissionResponse storage response = responses[responseIds[j]];
                 if (response.responseType == ResponseType.BuildsOn && !response.stakeSlashed) {
                     eligible += 1;
+                }
+                unchecked {
+                    ++j;
                 }
             }
             if (eligible > 0) {
@@ -905,10 +915,22 @@ contract ERC8183Job is ICredentialSource {
                 }
             }
             sub.allocatedReward = winnerGross;
+
+            // Finalization is the claim: pay the winner in this same
+            // transaction so no separate claim step exists.
+            _payoutWinner(job, jobId, sub, winners[i]);
+            unchecked {
+                ++i;
+            }
         }
 
         job.status = JobStatus.Approved;
         emit WinnersFinalized(jobId, winners, rewardAmounts);
+
+        // And settle here too: return every response stake and pay
+        // interaction rewards plus build-on bonus shares in this same
+        // transaction - no separate settlement step.
+        _settleResponses(job, jobId);
     }
 
     function claimCredential(uint256 jobId) external returns (uint256 credentialRecordId) {
@@ -925,23 +947,40 @@ contract ERC8183Job is ICredentialSource {
             "credential cooldown active"
         );
 
-        uint256 grossReward = submission.allocatedReward + submission.buildOnBonus;
+        credentialRecordId = _payoutWinner(job, jobId, submission, msg.sender);
+    }
+
+    /**
+     * @dev Pays a winning submission its allocated reward (platform fee
+     * withheld), marks it claimed, and mints its credential. Shared by the
+     * manual claimCredential path and finalizeWinners' automatic payout so
+     * recipients are paid either way with identical accounting.
+     */
+    function _payoutWinner(
+        Job storage job,
+        uint256 jobId,
+        Submission storage submission,
+        address winner
+    ) internal returns (uint256 credentialRecordId) {
+        // The buildOnBonus field is never written anywhere (it predates the
+        // strict 90/10 split, which reserves the pot per submission instead),
+        // so only the allocated reward is owed here.
+        uint256 grossReward = submission.allocatedReward;
         require(grossReward > 0, "no reward allocated");
         uint256 available = job.rewardUSDC - job.paidOutUSDC;
         require(available >= grossReward, "insufficient escrow");
 
         submission.credentialClaimed = true;
-        submission.buildOnBonus = 0;
         job.claimedCount += 1;
         job.paidOutUSDC += grossReward;
-        lastCredentialClaim[msg.sender] = block.timestamp;
+        lastCredentialClaim[winner] = block.timestamp;
 
-        (uint256 platformFee, uint256 agentReward) = _payShare(msg.sender, grossReward);
+        (uint256 platformFee, uint256 agentReward) = _payShare(winner, grossReward);
 
-        credentialRecordId = ICredentialHook(hook).onActivityComplete(msg.sender, jobId, "job", 100);
+        credentialRecordId = ICredentialHook(hook).onActivityComplete(winner, jobId, "job", 100);
 
-        emit RewardPaid(jobId, msg.sender, grossReward, platformFee, agentReward);
-        emit CredentialClaimed(jobId, msg.sender, credentialRecordId, 100);
+        emit RewardPaid(jobId, winner, grossReward, platformFee, agentReward);
+        emit CredentialClaimed(jobId, winner, credentialRecordId, 100);
     }
 
     function getJob(uint256 jobId) external view returns (Job memory) {
@@ -1242,22 +1281,41 @@ contract ERC8183Job is ICredentialSource {
             "not ready for settlement"
         );
 
-        address[] memory finalists = selectedFinalists[jobId];
+        _settleResponses(job, jobId);
+    }
 
-        for (uint256 i = 0; i < finalists.length; i++) {
+    /**
+     * @dev Returns every unslashed response's stake and pays its interaction
+     * reward and build-on bonus share. Shared by the permissionless
+     * settleRevealPhase (grace path for tasks that were never finalized) and
+     * finalizeWinners' automatic settlement. Responses can only exist on
+     * finalist submissions (reveal-phase gating in _createResponse), so
+     * iterating finalists covers every interactor. Idempotent: responses
+     * already processed are skipped.
+     */
+    function _settleResponses(Job storage job, uint256 jobId) internal {
+        address[] memory finalists = selectedFinalists[jobId];
+        uint256 finalistCount = finalists.length;
+
+        for (uint256 i = 0; i < finalistCount; ) {
             uint256 submissionId = submissions[jobId][finalists[i]].submissionId;
             uint256[] memory responseIds = submissionResponses[submissionId];
+            uint256 responseCount = responseIds.length;
 
-            for (uint256 j = 0; j < responseIds.length; j++) {
-                uint256 responseId = responseIds[j];
-                SubmissionResponse storage response = responses[responseId];
+            for (uint256 j = 0; j < responseCount; ) {
+                SubmissionResponse storage response = responses[responseIds[j]];
 
-                if (response.stakeSlashed) {
-                    continue;
+                if (!response.stakeSlashed) {
+                    _returnStakeOnce(response);
+                    _releaseResponseRewards(response, job);
                 }
 
-                _returnStakeOnce(response);
-                _releaseResponseRewards(response, job);
+                unchecked {
+                    ++j;
+                }
+            }
+            unchecked {
+                ++i;
             }
         }
 

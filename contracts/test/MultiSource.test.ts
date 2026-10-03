@@ -132,7 +132,6 @@ describe("MultiSource Integration", function () {
     await job.connect(client).selectFinalists(0, [agent.address], FIVE_DAYS);
     await time.increase(5 * 24 * 60 * 60 + 1);
     await job.connect(client).finalizeWinners(0, [agent.address], [ethers.parseUnits("100", 6)]);
-    await job.connect(agent).claimCredential(0);
 
     // Source 2: GitHub
     await github.connect(agent).submitActivity(0, "https://github.com/org/repo/pull/2", "org/repo");

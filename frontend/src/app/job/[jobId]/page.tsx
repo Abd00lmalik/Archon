@@ -1733,7 +1733,9 @@ export default function JobDetailsPage() {
       const tx = await contract.finalizeWinners(BigInt(jobId), winners, amounts);
       await tx.wait();
       const txHash = tx.hash as string;
-      setStatusMessage(`Finalize tx: ${txHash}`);
+      setStatusMessage(
+        `Finalized - winners paid and all stakes/rewards released automatically. Tx: ${txHash}`
+      );
       clearTaskCaches();
       await loadTask();
       await loadHeatmap();

@@ -93,7 +93,7 @@ describe("Archon Hook + ERC8183Job", function () {
     ).to.be.reverted;
   });
 
-  it("pays reward + mints weighted credential when approved submitter claims", async function () {
+  it("pays reward + mints weighted credential automatically at finalization", async function () {
     const { registry, usdc, job, client, agentA, treasury } = await deployFixture();
     await createJob(job, client);
 
@@ -101,12 +101,13 @@ describe("Archon Hook + ERC8183Job", function () {
     await acceptAndPromote(job, client, 0, [agentA.address]);
     await job.connect(client).selectFinalists(0, [agentA.address], FIVE_DAYS);
     await time.increase(5 * 24 * 60 * 60 + 1);
-    await job.connect(client).finalizeWinners(0, [agentA.address], [ethers.parseUnits("100", 6)]);
 
     const treasuryBefore = await usdc.balanceOf(treasury.address);
     const agentBefore = await usdc.balanceOf(agentA.address);
 
-    await expect(job.connect(agentA).claimCredential(0))
+    await expect(
+      job.connect(client).finalizeWinners(0, [agentA.address], [ethers.parseUnits("100", 6)])
+    )
       .to.emit(registry, "CredentialIssued")
       .withArgs(agentA.address, 0, 1, anyValue, "job", 100, await hookIssuer(job))
       .and.to.emit(job, "RewardPaid");
@@ -122,6 +123,9 @@ describe("Archon Hook + ERC8183Job", function () {
 
     expect(await usdc.balanceOf(treasury.address)).to.equal(treasuryBefore + expectedFee);
     expect(await usdc.balanceOf(agentA.address)).to.equal(agentBefore + expectedAgent);
+
+    // Already paid at finalization: the manual claim path is now a guard.
+    await expect(job.connect(agentA).claimCredential(0)).to.be.reverted;
   });
 
   it("rejects unregistered source contracts at hook boundary", async function () {

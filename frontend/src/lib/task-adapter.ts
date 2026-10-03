@@ -323,7 +323,9 @@ function withCapabilities(
       canFinalizeWinners: source.caps.finalizeWinners && task.status === 4 && revealEnded,
       canInteract: source.caps.respondToSubmission && task.status === 4 && !revealEnded,
       canRespondWithAuthorization: source.caps.respondWithAuthorization,
-      canSettleRevealPhase: source.caps.settleRevealPhase && (task.status === 5 || (task.status === 4 && revealEnded)),
+      canSettleRevealPhase:
+        source.caps.settleRevealPhase &&
+        ((task.status === 4 && revealEnded) || (source.version !== "current" && task.status === 5)),
       hasSignalMap: source.caps.signalMap && (task.status === 4 || task.status === 5),
       showsSubmissionsToAll: !source.caps.hiddenSubmissions || task.status >= 4
     }
