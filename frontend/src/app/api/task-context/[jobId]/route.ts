@@ -254,9 +254,13 @@ async function verifyPayment(parsed: unknown, requirement: PaymentRequirement): 
   return verifyEip3009Authorization(parsed, requirement);
 }
 
-function parseTaskParam(raw: string): { jobId: number; source: "current" | "v1" | "prev-v2" } {
+function parseTaskParam(raw: string): {
+  jobId: number;
+  source: "current" | "v1" | "prev-v2" | "prev-v2b";
+} {
   if (raw.startsWith("v1-")) return { jobId: Number(raw.replace("v1-", "")), source: "v1" };
   if (raw.startsWith("pv2-")) return { jobId: Number(raw.replace("pv2-", "")), source: "prev-v2" };
+  if (raw.startsWith("pv3-")) return { jobId: Number(raw.replace("pv3-", "")), source: "prev-v2b" };
   if (raw.startsWith("v2-")) return { jobId: Number(raw.replace("v2-", "")), source: "current" };
 
   const displayId = Number(raw);
@@ -268,6 +272,8 @@ function parseTaskParam(raw: string): { jobId: number; source: "current" | "v1" 
   if (displayId === 0) return { jobId: 0, source: "current" };
   if (displayId >= 1 && displayId <= 11) return { jobId: displayId - 1, source: "v1" };
   if (displayId === 12) return { jobId: 0, source: "prev-v2" };
+  // Second-previous contract (PrevV2b) uses the offset-100 display range.
+  if (displayId >= 101 && displayId <= 120) return { jobId: displayId - 101, source: "prev-v2b" };
   return { jobId: displayId - 13, source: "current" };
 }
 
@@ -276,8 +282,23 @@ async function readTask(rawJobId: string) {
   if (!Number.isFinite(jobId)) throw new Error("Invalid task id");
 
   const provider = new ethers.JsonRpcProvider(RPC_URL);
-  const contracts = (contractsJson as { contracts?: Record<string, { address?: string; abi?: ethers.InterfaceAbi }> }).contracts ?? {};
-  const jobConfig = contracts.jobContract ?? contracts.job;
+  const contracts = (contractsJson as {
+    contracts?: Record<string, unknown> & {
+      prevJobContracts?: Array<{ address?: string; abi?: ethers.InterfaceAbi }>;
+      prevJobContract?: { address?: string; abi?: ethers.InterfaceAbi };
+    };
+  }).contracts ?? {};
+  const jobConfig = (contracts.jobContract ?? contracts.job) as
+    | { address?: string; abi?: ethers.InterfaceAbi }
+    | undefined;
+  // Previous contract addresses come from the deploy-written array (newest
+  // first); legacy single-field configs and the hardcoded archive address are
+  // fallbacks only.
+  const prevEntries = (contracts.prevJobContracts ?? []).filter((entry) => entry?.address);
+  const prevSingle = contracts.prevJobContract?.address ? [contracts.prevJobContract] : [];
+  const prevAll = prevEntries.length > 0 ? prevEntries : prevSingle;
+  const prevAddressAt = (index: number): string | undefined =>
+    prevAll[index]?.address ?? (index === 0 ? PREV_V2_ADDRESS : undefined);
   const readCurrentShape = (job: Record<string, unknown> & unknown[]) => ({
     jobId,
     title: String(job.title ?? job[2] ?? ""),
@@ -289,8 +310,10 @@ async function readTask(rawJobId: string) {
     submissionCount: Number(job.submissionCount ?? job[9] ?? 0)
   });
 
-  if (jobConfig?.abi && source === "prev-v2") {
-    const previousV2 = new ethers.Contract(PREV_V2_ADDRESS, jobConfig.abi, provider);
+  if (jobConfig?.abi && (source === "prev-v2" || source === "prev-v2b")) {
+    const prevAddress = prevAddressAt(source === "prev-v2" ? 0 : 1);
+    if (!prevAddress) throw new Error("Task not found");
+    const previousV2 = new ethers.Contract(prevAddress, jobConfig.abi, provider);
     const job = await previousV2.getJob(jobId);
     const client = String(job.client ?? job[1] ?? "");
     if (client && client !== ethers.ZeroAddress) {

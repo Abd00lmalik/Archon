@@ -53,6 +53,8 @@ type ContractsJsonShape = {
   contracts: {
     jobContract: JobContractConfig;
     prevJobContract?: Partial<JobContractConfig>;
+    /** All prior job contracts, newest-first. */
+    prevJobContracts?: Array<Partial<JobContractConfig>>;
   };
 };
 
@@ -140,26 +142,46 @@ function hasAbiFunction(abi: unknown[], name: string): boolean {
 function deploymentSources(): RawSource[] {
   const contracts = (contractsJson as ContractsJsonShape).contracts;
   const currentAbi = contracts.jobContract.abi as unknown[];
-  const prev = contracts.prevJobContract?.address
-    ? [{
-        id: "prev",
-        source: "PrevV2" as const,
-        address: contracts.prevJobContract.address as string,
-        abi: (contracts.prevJobContract.abi ?? currentAbi) as unknown[],
-        version: "previous" as const,
-        caps: {
-          submit: true,
-          hiddenSubmissions: true,
-          selectFinalists: true,
-          autoStartReveal: true,
-          finalizeWinners: true,
-          respondToSubmission: true,
-          respondWithAuthorization: hasAbiFunction((contracts.prevJobContract.abi ?? currentAbi) as unknown[], "respondWithAuthorization"),
-          settleRevealPhase: hasAbiFunction((contracts.prevJobContract.abi ?? currentAbi) as unknown[], "settleRevealPhase"),
-          signalMap: true
-        }
-      }]
-    : [];
+
+  // Previous job contracts, newest-first. The array written by deploy.ts is
+  // authoritative; older configs only carry the single prevJobContract field.
+  const prevEntries: Array<{ id: string; address: string; abi: unknown[] }> = [];
+  const fromArray = (contracts.prevJobContracts ?? []).filter(
+    (entry): entry is Partial<JobContractConfig> => Boolean(entry?.address)
+  );
+  fromArray.forEach((entry, index) => {
+    prevEntries.push({
+      id: index === 0 ? "prev" : `prev-${index}`,
+      address: entry.address as string,
+      abi: (entry.abi ?? currentAbi) as unknown[]
+    });
+  });
+  if (prevEntries.length === 0 && contracts.prevJobContract?.address) {
+    prevEntries.push({
+      id: "prev",
+      address: contracts.prevJobContract.address as string,
+      abi: (contracts.prevJobContract.abi ?? currentAbi) as unknown[]
+    });
+  }
+
+  const prev = prevEntries.map((entry, index) => ({
+    id: entry.id,
+    source: (index === 0 ? "PrevV2" : "PrevV2b") as TaskSource,
+    address: entry.address,
+    abi: entry.abi,
+    version: "previous" as const,
+    caps: {
+      submit: true,
+      hiddenSubmissions: true,
+      selectFinalists: true,
+      autoStartReveal: true,
+      finalizeWinners: true,
+      respondToSubmission: true,
+      respondWithAuthorization: hasAbiFunction(entry.abi, "respondWithAuthorization"),
+      settleRevealPhase: hasAbiFunction(entry.abi, "settleRevealPhase"),
+      signalMap: true
+    }
+  }));
 
   return [
     {

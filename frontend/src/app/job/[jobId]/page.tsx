@@ -52,6 +52,23 @@ type ViewMode = "signal" | "list" | "timeline";
 
 const LIST_PAGE_SIZE = 5;
 
+function isReadFailure(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const action =
+    "action" in error ? String((error as { action?: unknown }).action ?? "").toLowerCase() : "";
+  if (action === "call") return true;
+  const message =
+    "message" in error ? String((error as { message?: unknown }).message ?? "") : "";
+  const data = "data" in error ? String((error as { data?: unknown }).data ?? "") : "";
+  // getJob(uint256) selector - the post-transaction verification read that
+  // flakes on flaky RPCs.
+  return (
+    message.includes("0xbf22c457") ||
+    data.includes("0xbf22c457") ||
+    (message.includes("missing revert data") && message.includes("getJob"))
+  );
+}
+
 function errorText(error: unknown, fallback: string) {
   const message =
     error instanceof Error
@@ -59,6 +76,13 @@ function errorText(error: unknown, fallback: string) {
       : typeof error === "object" && error !== null && "message" in error
         ? String((error as { message?: unknown }).message ?? fallback)
         : fallback;
+
+  if (isReadFailure(error)) {
+    return (
+      "Couldn't read on-chain state (the RPC returned no data). This was a read failing, not your transaction - your transaction was not affected. Refresh to see the latest state. Raw error: " +
+      message
+    );
+  }
 
   if (message.includes("missing revert data") || message.includes("CALL_EXCEPTION")) {
     return (
@@ -69,6 +93,27 @@ function errorText(error: unknown, fallback: string) {
   }
 
   return message;
+}
+
+// A confirmed transaction must never be reported as failed just because the
+// follow-up verification read flaked: retry it, then let the caller decide.
+async function readWithRetry<T>(
+  read: () => Promise<T>,
+  attempts = 3,
+  delayMs = 1500
+): Promise<T> {
+  let lastError: unknown = new Error("read failed");
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await read();
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+  }
+  throw lastError;
 }
 
 function humanizeError(error: unknown): string {
@@ -790,6 +835,19 @@ export default function JobDetailsPage() {
     [safeSubmissions, promotedAgents]
   );
 
+  // Submissions with no accept/reject verdict from any reviewer. Reveal start
+  // stays gated until every submission has a verdict - only meaningful on the
+  // current source (legacy deployments predate review verdicts and never load
+  // them, so callers gate on taskSourceId === "current" as well).
+  const unreviewedSubmissions = useMemo(
+    () =>
+      safeSubmissions.filter((submission) => {
+        const row = verdictsBySid.get(submission.submissionId);
+        return !row || !Object.values(row).some((verdict) => verdict === 1 || verdict === 2);
+      }),
+    [safeSubmissions, verdictsBySid]
+  );
+
   const timelineSubmissions = useMemo(
     () =>
       safeSubmissions.filter((submission) => {
@@ -1303,6 +1361,11 @@ export default function JobDetailsPage() {
         );
         return;
       }
+    } else if (viewerCritiquedIds.has(selectedSubmission.submissionId)) {
+      setErrorMessage(
+        "You already critiqued this submission - a wallet cannot also build on or offer an alternative to what it critiqued."
+      );
+      return;
     } else if (viewerUsedPricedSlot) {
       setErrorMessage(
         "You already used your build-on/alternative slot for this task - each wallet gets one."
@@ -1389,6 +1452,22 @@ export default function JobDetailsPage() {
       }
       if (!(status === 0 || status === 1 || status === 2)) {
         return { can: false, reason: `Wrong status: ${status}` };
+      }
+      if (taskSourceId === "current") {
+        if (!triageReady) {
+          return {
+            can: false,
+            reason: "Review state still loading (or failed to load) - refresh and retry"
+          };
+        }
+        if (unreviewedSubmissions.length > 0) {
+          return {
+            can: false,
+            reason: `${unreviewedSubmissions.length} submission${
+              unreviewedSubmissions.length === 1 ? " has" : "s have"
+            } no review verdict yet - review everything before reveal`
+          };
+        }
       }
 
       const selected = Array.from((await contract.getSelectedFinalists(BigInt(currentJobId)).catch(() => [])) as string[]);
@@ -1618,6 +1697,20 @@ export default function JobDetailsPage() {
       if (unique.length > threshold) {
         throw new Error(`Too many finalists selected (${unique.length}/${threshold}).`);
       }
+      if (taskSourceId === "current") {
+        if (!triageReady) {
+          throw new Error(
+            "Start reveal blocked: review state is still loading (or failed to load). Refresh and try again."
+          );
+        }
+        if (unreviewedSubmissions.length > 0) {
+          throw new Error(
+            `Start reveal blocked: ${unreviewedSubmissions.length} submission${
+              unreviewedSubmissions.length === 1 ? " still has" : "s still have"
+            } no review verdict. Give every submission a verdict first.`
+          );
+        }
+      }
       const contract = await getTaskWriteContract();
       const tx = await contract.selectFinalists(BigInt(jobId), unique, BigInt(revealDurationSeconds));
       await tx.wait();
@@ -1627,13 +1720,24 @@ export default function JobDetailsPage() {
       // promoted finalists immediately, without waiting on a fresh (possibly
       // flaky) getSelectedFinalists read.
       setSelectedFinalists(unique);
-      clearTaskCaches();
-      await loadTask();
-      await loadHeatmap();
-      const freshJob = await contract.getJob(BigInt(jobId));
-      const freshStatus = Number(freshJob.status ?? freshJob[14] ?? 0);
-      if (freshStatus !== 4) {
-        setFinalistError(`Finalists selected but reveal not active yet (status ${freshStatus}).`);
+      // The tx is confirmed - everything below is a best-effort refresh. A
+      // flaky RPC read must never surface as "Transaction reverted".
+      try {
+        clearTaskCaches();
+        await loadTask();
+        await loadHeatmap();
+      } catch {
+        // Stale cache is fine; the refresh above already noted progress.
+      }
+      try {
+        const freshJob = await readWithRetry(() => contract.getJob(BigInt(jobId)));
+        const freshStatus = Number(freshJob.status ?? freshJob[14] ?? 0);
+        if (freshStatus !== 4) {
+          setFinalistError(`Finalists selected but reveal not active yet (status ${freshStatus}).`);
+        }
+      } catch {
+        // Verification read still failing after retries: the confirmed tx
+        // already succeeded, so do not surface an error.
       }
     } catch (error) {
       const message = errorText(error, "Failed selecting finalists");
@@ -1676,16 +1780,26 @@ export default function JobDetailsPage() {
       }
 
       await new Promise((resolve) => setTimeout(resolve, 2000));
-      const freshJob = await contract.getJob(BigInt(jobId));
-      const freshStatus = Number(freshJob.status ?? freshJob[14] ?? 0);
-      if (freshStatus !== 4) {
+      let freshStatus: number | null = null;
+      try {
+        const freshJob = await readWithRetry(() => contract.getJob(BigInt(jobId)));
+        freshStatus = Number(freshJob.status ?? freshJob[14] ?? 0);
+      } catch {
+        // receipt.status === 1 already proved the transaction landed; a
+        // flaky verification read must not turn success into an error.
+      }
+      if (freshStatus !== null && freshStatus !== 4) {
         throw new Error(`Reveal did not start — status is ${freshStatus}, expected 4`);
       }
 
       setStatusMessage(`Reveal phase started automatically: ${tx.hash}`);
-      clearTaskCaches();
-      await loadTask();
-      await loadHeatmap();
+      try {
+        clearTaskCaches();
+        await loadTask();
+        await loadHeatmap();
+      } catch {
+        // Best-effort refresh; the reload below reconciles.
+      }
       window.location.reload();
     } catch (error) {
       const message = errorText(error, "Failed to start auto-reveal").slice(0, 200);
@@ -1919,10 +2033,11 @@ export default function JobDetailsPage() {
       ? taskEconomy.poolRemaining / BigInt(taskEconomy.unclaimedResponseCount)
       : 0n;
   const viewerAlreadyUsedSlot = viewerUsedPricedSlot === true;
-  // Type-aware allowance: critiques are once per submission, while build-on
-  // and alternative share the single once-per-task slot. One-directional rule:
-  // a wallet that built on (or offered an alternative on) a submission may
-  // not critique that same submission.
+  // Mutual exclusion runs both ways: a wallet that built on (or offered an
+  // alternative on) a submission may not critique it, and a wallet that
+  // critiqued a submission may not build on or offer an alternative to it.
+  // Critiques are once per submission; build-on and alternative share the
+  // single once-per-task slot.
   const viewerCritiquedSelected = selectedSubmission
     ? viewerCritiquedIds.has(selectedSubmission.submissionId)
     : false;
@@ -1935,7 +2050,7 @@ export default function JobDetailsPage() {
   const responseTypeAllowed =
     responseType === RESPONSE_TYPE.Critiques
       ? !viewerCritiquedSelected && !viewerBuiltOnSelected
-      : !viewerAlreadyUsedSlot;
+      : !viewerAlreadyUsedSlot && !viewerCritiquedSelected;
   const canInteract = Boolean(
     task?.caps.canInteract &&
       showInteractionAction &&
@@ -1966,7 +2081,9 @@ export default function JobDetailsPage() {
               : viewerAlreadyUsedSlot && responseType !== RESPONSE_TYPE.Critiques
                 ? "You already used your build-on/alternative slot for this task - switch to CRITIQUES to critique each finalist once."
                 : viewerCritiquedSelected
-                  ? "You already critiqued this submission - each submission accepts one critique per wallet."
+                  ? responseType !== RESPONSE_TYPE.Critiques
+                    ? "You already critiqued this submission - a wallet cannot also build on or offer an alternative to what it critiqued."
+                    : "You already critiqued this submission - each submission accepts one critique per wallet."
                   : responseType === RESPONSE_TYPE.Critiques && viewerBuiltOnSelected
                     ? "You already built on this submission - a wallet cannot also critique what it built on."
                     : "";
@@ -2779,11 +2896,29 @@ export default function JobDetailsPage() {
                 the {finalistThreshold} finalist threshold. Anyone can trigger the reveal phase automatically, selecting
                 every non-rejected submission for the reveal.
                 </div>
+              {taskSourceId === "current" &&
+              (!triageReady || unreviewedSubmissions.length > 0) ? (
+                <div
+                  className="mb-3 text-[12px]"
+                  style={{ color: "var(--arc)", lineHeight: 1.5 }}
+                >
+                  {!triageReady
+                    ? "Review state is still loading - reveal start stays blocked until it confirms every submission has a verdict."
+                    : `${unreviewedSubmissions.length} submission${
+                        unreviewedSubmissions.length === 1 ? " has" : "s have"
+                      } no review verdict yet - review everything first; reveal start stays blocked until then.`}
+                </div>
+              ) : null}
               <button
                 type="button"
                 className="btn-primary w-full"
                 onClick={() => void handleAutoStartReveal()}
-                disabled={revealStarting || !signer}
+                disabled={
+                  revealStarting ||
+                  !signer ||
+                  (taskSourceId === "current" &&
+                    (!triageReady || unreviewedSubmissions.length > 0))
+                }
                 style={{ opacity: revealStarting ? 0.6 : 1 }}
               >
                 {revealStarting ? "Starting Reveal Phase..." : "Start Reveal Phase Automatically"}

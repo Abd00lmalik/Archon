@@ -184,12 +184,23 @@ describe("Submission Relationships", function () {
     expect(await job.hasResponded(0, agentC.address)).to.equal(false);
   });
 
-  it("alternatives block a critique of the target; critique-then-build-on stays allowed", async function () {
-    const { job, client, agentA, agentB, agentC } = await deployFixture();
+  it("alternatives block a critique of the target; critique-then-build-on is blocked too", async function () {
+    const { job, client, agentA, agentB, agentC, others } = await deployFixture();
     await createJob(job, client);
     const submissionId = await submitBaseSubmission(job, agentA);
     const otherSubmissionId = await submitBaseSubmission(job, agentC);
-    await enterRevealPhase(job, client, [agentA.address, agentC.address]);
+    // A third finalist keeps a legal build-on target available after the
+    // same-target pair gets blocked.
+    await job.connect(others[0]).acceptJob(0);
+    await job.connect(others[0]).submitDeliverable(0, "https://example.com/third");
+    const thirdSubmissionId = Number(
+      (await job.getSubmission(0, others[0].address)).submissionId
+    );
+    await enterRevealPhase(job, client, [
+      agentA.address,
+      agentC.address,
+      others[0].address
+    ]);
 
     // An alternative on `otherSubmissionId` blocks a critique of it...
     await job.connect(agentB).respondToSubmission(otherSubmissionId, 2, "ipfs://alternative");
@@ -201,11 +212,19 @@ describe("Submission Relationships", function () {
     await job.connect(agentB).respondToSubmission(submissionId, 1, "ipfs://critique-other");
     expect(await job.hasCritiqued(submissionId, agentB.address)).to.equal(true);
 
-    // Critique -> build-on (the opposite direction) stays allowed.
+    // Critique -> build-on on the SAME submission is blocked: both directions
+    // of the mutual exclusion now hold.
     await job.connect(agentA).respondToSubmission(otherSubmissionId, 1, "ipfs://critique-first");
-    await job.connect(agentA).respondToSubmission(otherSubmissionId, 0, "ipfs://builds-after-critique");
+    await expect(
+      job.connect(agentA).respondToSubmission(otherSubmissionId, 0, "ipfs://builds-after-critique")
+    ).to.be.reverted;
+    expect(await job.hasResponded(0, agentA.address)).to.equal(false);
+
+    // The critique did not spend the build-on slot: a different, un-critiqued
+    // target still works.
+    await job.connect(agentA).respondToSubmission(thirdSubmissionId, 0, "ipfs://builds-on-third");
     expect(await job.hasResponded(0, agentA.address)).to.equal(true);
-    expect(await job.pricedSlotTarget(0, agentA.address)).to.equal(otherSubmissionId);
+    expect(await job.pricedSlotTarget(0, agentA.address)).to.equal(thirdSubmissionId);
   });
 
   it("responding requires 2 USDC stake", async function () {

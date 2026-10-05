@@ -95,56 +95,6 @@ function mapResponseType(responseType: number): "critique" | "builds_on" | "othe
   return "other";
 }
 
-async function loadResponseIds(
-  contract: {
-    getResponses?: (submissionId: bigint | number, overrides?: ReadOverrides) => Promise<unknown[]>;
-    getSubmissionResponses?: (
-      submissionId: bigint | number,
-      overrides?: ReadOverrides
-    ) => Promise<Array<bigint | number>>;
-    submissionResponseCount?: (
-      submissionId: bigint | number,
-      overrides?: ReadOverrides
-    ) => Promise<bigint | number>;
-    submissionResponses?: (
-      submissionId: bigint | number,
-      index: bigint | number,
-      overrides?: ReadOverrides
-    ) => Promise<bigint | number>;
-  },
-  submissionId: bigint | number,
-  overrides?: ReadOverrides
-): Promise<Array<bigint | number>> {
-  if (contract.getResponses) {
-    const rows = await contract.getResponses(submissionId, overrides).catch(() => null);
-    if (rows && Array.isArray(rows)) {
-      return rows
-        .map((row) => (row as Record<string, unknown> & unknown[]).responseId ?? (row as unknown[])[0])
-        .filter((value): value is bigint | number => value !== null && value !== undefined);
-    }
-  }
-
-  if (contract.getSubmissionResponses) {
-    const explicit = await contract.getSubmissionResponses(submissionId, overrides).catch(() => null);
-    if (explicit) return Array.from(explicit);
-  }
-
-  const count = Number(
-    contract.submissionResponseCount
-      ? await contract.submissionResponseCount(submissionId, overrides).catch(() => 0n)
-      : 0n
-  );
-
-  const ids: Array<bigint | number> = [];
-  for (let index = 0; index < count; index += 1) {
-    const responseId = contract.submissionResponses
-      ? await contract.submissionResponses(submissionId, index, overrides).catch(() => null)
-      : null;
-    if (responseId !== null && responseId !== undefined) ids.push(responseId);
-  }
-  return ids;
-}
-
 type ResponseRow = Record<string, unknown> & unknown[];
 
 type JobContractShape = {
@@ -153,19 +103,11 @@ type JobContractShape = {
   getSubmission?: (taskId: number, agent: string, overrides?: ReadOverrides) => Promise<unknown>;
   submissions?: (taskId: number, agent: string, overrides?: ReadOverrides) => Promise<unknown>;
   getSelectedFinalists?: (taskId: number, overrides?: ReadOverrides) => Promise<string[]>;
-  getResponses?: (
-    submissionId: bigint | number,
-    overrides?: ReadOverrides
-  ) => Promise<unknown[]>;
+  getJob?: (taskId: number, overrides?: ReadOverrides) => Promise<unknown>;
   getSubmissionResponses?: (
     submissionId: bigint | number,
     overrides?: ReadOverrides
   ) => Promise<Array<bigint | number>>;
-  submissionResponses?: (
-    submissionId: bigint | number,
-    index: bigint | number,
-    overrides?: ReadOverrides
-  ) => Promise<bigint | number>;
   submissionResponseCount?: (
     submissionId: bigint | number,
     overrides?: ReadOverrides
@@ -177,39 +119,45 @@ type BatchContext = { provider: Provider; target: string; abi: InterfaceAbi; blo
 
 type SubmissionResponseData = { rows: ResponseRow[]; count: number | null };
 
-async function fallbackLoadResponses(
-  jobContract: JobContractShape,
-  map: Map<string, SubmissionResponseData>,
-  submissionIds: bigint[],
-  overrides?: ReadOverrides
-): Promise<void> {
-  await mapLimit(submissionIds, 6, async (sid) => {
-    const key = sid.toString();
-    const existing = map.get(key);
-    if (existing && existing.rows.length > 0) return;
-    try {
-      let rows: ResponseRow[] = [];
-      if (jobContract.getResponses) {
-        const raw = await jobContract.getResponses(sid, overrides).catch(() => null);
-        if (Array.isArray(raw)) rows = raw as ResponseRow[];
-      }
-      if (rows.length === 0) {
-        const ids = await loadResponseIds(jobContract, sid, overrides).catch(() => []);
-        const fetched = await Promise.all(
-          ids.map(async (rid) => {
-            const raw = await jobContract.getResponse?.(rid, overrides).catch(() => null);
-            return raw ? (raw as ResponseRow) : null;
-          })
-        );
-        rows = fetched.filter((row): row is ResponseRow => row !== null);
-      }
-      map.set(key, { rows, count: existing?.count ?? null });
-    } catch {
-      map.set(key, { rows: [], count: existing?.count ?? null });
-    }
-  });
+function toBigints(values: unknown): bigint[] {
+  return Array.from((values ?? []) as ArrayLike<unknown>).map((value) => BigInt(value as string));
 }
 
+async function loadIdsAndCount(
+  jobContract: JobContractShape,
+  sid: bigint,
+  overrides?: ReadOverrides
+): Promise<{ ids: bigint[] | null; count: number | null }> {
+  const ids = jobContract.getSubmissionResponses
+    ? toBigints(await withRetry(() => jobContract.getSubmissionResponses!(sid, overrides)))
+    : null;
+  const count = jobContract.submissionResponseCount
+    ? Number(await withRetry(() => jobContract.submissionResponseCount!(sid, overrides)))
+    : null;
+  return { ids, count };
+}
+
+async function loadResponseRow(
+  jobContract: JobContractShape,
+  rid: bigint,
+  overrides?: ReadOverrides
+): Promise<ResponseRow> {
+  const raw = await withRetry(() => jobContract.getResponse!(rid, overrides));
+  if (!raw) throw new Error(`Signal map: response ${rid} returned no data`);
+  const row = raw as ResponseRow;
+  const rowId = row.responseId ?? row[0];
+  if (rowId === null || rowId === undefined) {
+    throw new Error(`Signal map: response ${rid} is missing its id`);
+  }
+  return row;
+}
+
+/**
+ * Load every submission's response rows. Fail-loud: any read that still fails
+ * after retries throws instead of silently returning fewer rows - a partially
+ * loaded map changes percentages between refreshes, and the caller keeps its
+ * last-good map on error.
+ */
 async function collectResponses(
   jobContract: JobContractShape,
   submissionIds: bigint[],
@@ -219,53 +167,167 @@ async function collectResponses(
   for (const sid of submissionIds) map.set(sid.toString(), { rows: [], count: null });
   if (submissionIds.length === 0) return map;
 
+  const canIds = typeof jobContract.getSubmissionResponses === "function";
+  const canCount = typeof jobContract.submissionResponseCount === "function";
+  // Legacy sources without the response-read surface expose no interactions.
+  if (!canIds && !canCount) return map;
+
   // All reads in this batch derive their pinning from the same blockTag so a
   // fallback after a failed multicall chunk still reads the same block.
   const overrides = atBlock(batch?.blockTag);
 
+  // Phase 1: response-id lists plus cross-check counts, batched in one
+  // multicall; per-entry failures fall back to direct retrying reads.
+  const idsBySid = new Map<string, bigint[]>();
+  const countBySid = new Map<string, number>();
+  const phase1Failed: bigint[] = [];
+
   if (batch) {
-    const requests: MulticallRequest[] = submissionIds.flatMap((sid) => [
-      { target: batch.target, abi: batch.abi, functionName: "getResponses", args: [sid] },
-      { target: batch.target, abi: batch.abi, functionName: "submissionResponseCount", args: [sid] }
-    ]);
-
-    try {
-      const results = await multicall(batch.provider, requests, 50, batch.blockTag);
-      const unresolved: bigint[] = [];
-      submissionIds.forEach((sid, index) => {
-        const key = sid.toString();
-        const rowsResult = results[index * 2];
-        const countResult = results[index * 2 + 1];
-
-        const rows =
-          rowsResult?.ok && Array.isArray(rowsResult.value)
-            ? (Array.from(rowsResult.value as ArrayLike<unknown>) as ResponseRow[])
-            : null;
-
-        const rawCount =
-          countResult?.ok && countResult.value !== null && countResult.value !== undefined
-            ? Array.isArray(countResult.value)
-              ? countResult.value[0]
-              : countResult.value
-            : null;
-        const count = rawCount === null ? null : Number(rawCount);
-
-        const settled = (rows !== null && rows.length > 0) || count === 0;
-        if (settled) {
-          map.set(key, { rows: rows ?? [], count });
-        } else {
-          if (count !== null) map.set(key, { rows: [], count });
-          unresolved.push(sid);
+    const requests: MulticallRequest[] = submissionIds.flatMap((sid) => {
+      const row: MulticallRequest[] = [];
+      if (canIds) {
+        row.push({
+          target: batch.target,
+          abi: batch.abi,
+          functionName: "getSubmissionResponses",
+          args: [sid]
+        });
+      }
+      if (canCount) {
+        row.push({
+          target: batch.target,
+          abi: batch.abi,
+          functionName: "submissionResponseCount",
+          args: [sid]
+        });
+      }
+      return row;
+    });
+    const results = await multicall(batch.provider, requests, 50, batch.blockTag);
+    let cursor = 0;
+    for (const sid of submissionIds) {
+      let ids: bigint[] | null = null;
+      let count: number | null = null;
+      if (canIds) {
+        const result = results[cursor];
+        cursor += 1;
+        if (result?.ok) ids = toBigints(result.value);
+      }
+      if (canCount) {
+        const result = results[cursor];
+        cursor += 1;
+        if (result?.ok && result.value !== null && result.value !== undefined) {
+          count = Number(result.value);
         }
-      });
-      if (unresolved.length) await fallbackLoadResponses(jobContract, map, unresolved, overrides);
-      return map;
-    } catch {
-      // Multicall unavailable or rejected - fall through to direct reads.
+      }
+      if ((canIds && ids === null) || (canCount && count === null)) {
+        phase1Failed.push(sid);
+      } else {
+        if (ids !== null) idsBySid.set(sid.toString(), ids);
+        if (count !== null) countBySid.set(sid.toString(), count);
+      }
+    }
+  } else {
+    phase1Failed.push(...submissionIds);
+  }
+
+  if (phase1Failed.length > 0) {
+    await mapLimit(phase1Failed, 6, async (sid) => {
+      const loaded = await loadIdsAndCount(jobContract, sid, overrides);
+      if (loaded.ids !== null) idsBySid.set(sid.toString(), loaded.ids);
+      if (loaded.count !== null) countBySid.set(sid.toString(), loaded.count);
+    });
+  }
+
+  // Completeness: the id list must be readable (primary source) and must agree
+  // with the count cross-check. A mismatch after retries means mixed reads.
+  for (const sid of submissionIds) {
+    const key = sid.toString();
+    if (canIds && !idsBySid.has(key)) {
+      throw new Error(`Signal map: response ids unreadable for submission ${key} after retries.`);
+    }
+    if (canIds && canCount) {
+      const ids = idsBySid.get(key) ?? [];
+      const count = countBySid.get(key);
+      if (count !== undefined && count !== ids.length) {
+        throw new Error(
+          `Signal map: inconsistent response counts for submission ${key} (${ids.length} ids vs ${count} count).`
+        );
+      }
     }
   }
 
-  await fallbackLoadResponses(jobContract, map, submissionIds, overrides);
+  // Phase 2: fetch every response row by id.
+  const allIds: bigint[] = [];
+  for (const ids of idsBySid.values()) allIds.push(...ids);
+
+  if (allIds.length === 0) {
+    for (const sid of submissionIds) {
+      const key = sid.toString();
+      map.set(key, { rows: [], count: countBySid.get(key) ?? (canCount ? 0 : null) });
+    }
+    return map;
+  }
+
+  if (typeof jobContract.getResponse !== "function") {
+    if (canIds) {
+      throw new Error("Signal map: contract exposes response ids but no getResponse reader.");
+    }
+    for (const sid of submissionIds) {
+      const key = sid.toString();
+      map.set(key, { rows: [], count: countBySid.get(key) ?? null });
+    }
+    return map;
+  }
+
+  const rowById = new Map<string, ResponseRow>();
+  const loadRows = async (rids: bigint[]): Promise<void> => {
+    await mapLimit(rids, 6, async (rid) => {
+      rowById.set(rid.toString(), await loadResponseRow(jobContract, rid, overrides));
+    });
+  };
+
+  if (batch) {
+    const requests: MulticallRequest[] = allIds.map((rid) => ({
+      target: batch.target,
+      abi: batch.abi,
+      functionName: "getResponse",
+      args: [rid]
+    }));
+    const results = await multicall(batch.provider, requests, 50, batch.blockTag);
+    const failed: bigint[] = [];
+    results.forEach((result, index) => {
+      const rid = allIds[index];
+      const row = result?.ok && result.value ? (result.value as ResponseRow) : null;
+      const rowId = row ? row.responseId ?? row[0] : null;
+      if (row && rowId !== null && rowId !== undefined) {
+        rowById.set(rid.toString(), row);
+      } else {
+        failed.push(rid);
+      }
+    });
+    if (failed.length > 0) await loadRows(failed);
+  } else {
+    await loadRows(allIds);
+  }
+
+  // Distribute rows back to their submissions; a missing row is a failed read.
+  for (const sid of submissionIds) {
+    const key = sid.toString();
+    if (!canIds) {
+      map.set(key, { rows: [], count: countBySid.get(key) ?? null });
+      continue;
+    }
+    const rows: ResponseRow[] = [];
+    for (const rid of idsBySid.get(key) ?? []) {
+      const row = rowById.get(rid.toString());
+      if (!row) {
+        throw new Error(`Signal map: response ${rid} missing for submission ${key} after retries.`);
+      }
+      rows.push(row);
+    }
+    map.set(key, { rows, count: countBySid.get(key) ?? rows.length });
+  }
   return map;
 }
 
@@ -290,16 +352,32 @@ export async function buildSignalMapData(
     }
   }
   if (rawSubmissions.length === 0) {
-    for (let idx = 0; idx < 100; idx += 1) {
-      try {
-        const agent = await jobContract.submittedAgents?.(jobId, idx, overrides);
+    // Batched getter empty or failed: enumerate submittedAgents instead.
+    // Reads here are fail-loud too - skipping a submission silently changes
+    // the tile set between refreshes. The mapping's array getter reverts past
+    // its end, so bound the loop with the job's own submissionCount (which
+    // increments together with every push at submit time).
+    if (jobContract.submittedAgents) {
+      let bound = 0;
+      if (jobContract.getJob) {
+        const rawJob = await withRetry(() => jobContract.getJob!(jobId, overrides));
+        bound = Number(
+          (rawJob as { submissionCount?: unknown } & ArrayLike<unknown>).submissionCount ??
+            (rawJob as ArrayLike<unknown>)[9] ??
+            0
+        );
+      }
+      if (!Number.isFinite(bound) || bound < 0) bound = 0;
+      for (let idx = 0; idx < bound; idx += 1) {
+        const agent = await withRetry(() => jobContract.submittedAgents!(jobId, idx, overrides));
         if (!agent || isZeroAddress(agent)) break;
-        const raw =
-          (await jobContract.getSubmission?.(jobId, agent, overrides).catch(() => null)) ??
-          (await jobContract.submissions?.(jobId, agent, overrides).catch(() => null));
+        let raw: unknown = null;
+        if (jobContract.getSubmission) {
+          raw = await withRetry(() => jobContract.getSubmission!(jobId, agent, overrides));
+        } else if (jobContract.submissions) {
+          raw = await withRetry(() => jobContract.submissions!(jobId, agent, overrides));
+        }
         if (raw && isValidSubmission(raw)) rawSubmissions.push(raw);
-      } catch {
-        break;
       }
     }
   }
@@ -564,7 +642,14 @@ async function buildTaskHeatmapAt(
     })
   );
 
-  people.sort((a, b) => b.percentage - a.percentage);
+  // Deterministic order across refreshes: percentage, then raw activity, then
+  // submission id as the unique tiebreaker.
+  people.sort(
+    (a, b) =>
+      b.percentage - a.percentage ||
+      b.totalReceived - a.totalReceived ||
+      Number(a.submissionId) - Number(b.submissionId)
+  );
 
   return {
     people,

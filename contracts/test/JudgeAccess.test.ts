@@ -214,13 +214,18 @@ describe("Judge Access + Reviewed Flags", function () {
   });
 
   it("critiques are once per submission while build-ons spend the once-per-task slot", async function () {
-    const { job, client, judgeA, judgeB, agentA, agentB, stranger } = await deployFixture();
+    const { job, client, judgeA, judgeB, agentA, agentB, stranger, owner } = await deployFixture();
 
     const submissionId = await submit(job, agentA, "https://example.com/a");
     const submissionB = await submit(job, stranger, "https://example.com/b");
+    // A third, never-critiqued target so the build-on slot can be exercised
+    // independently of the critique rules.
+    const submissionC = await submit(job, owner, "https://example.com/c");
     await job.connect(client).setJudges(0, [judgeA.address]);
-    await acceptAndPromote(job, client, 0, [agentA.address, stranger.address]);
-    await job.connect(judgeA).selectFinalists(0, [agentA.address, stranger.address], FIVE_DAYS);
+    await acceptAndPromote(job, client, 0, [agentA.address, stranger.address, owner.address]);
+    await job
+      .connect(judgeA)
+      .selectFinalists(0, [agentA.address, stranger.address, owner.address], FIVE_DAYS);
 
     // Critique: once per submission, independent across finalists.
     await job.connect(agentB).respondToSubmission(submissionId, 1, "ipfs://critique-1");
@@ -231,8 +236,18 @@ describe("Judge Access + Reviewed Flags", function () {
     await job.connect(agentB).respondToSubmission(submissionB, 1, "ipfs://critique-b");
     expect(await job.hasCritiqued(submissionB, agentB.address)).to.equal(true);
 
-    // Build-on/alternative: one priced slot per task - and critiques did not spend it.
-    await job.connect(agentB).respondToSubmission(submissionId, 0, "ipfs://build-on");
+    // Both directions are blocked: no building on a submission you critiqued.
+    // (The build-on slot is still free here, so only the critique rule fires.)
+    await expect(
+      job.connect(agentB).respondToSubmission(submissionId, 0, "ipfs://build-on-a")
+    ).to.be.reverted;
+    await expect(
+      job.connect(agentB).respondToSubmission(submissionB, 0, "ipfs://build-on-b")
+    ).to.be.reverted;
+
+    // Build-on/alternative: one priced slot per task, spent on a fresh target -
+    // and critiques did not spend it.
+    await job.connect(agentB).respondToSubmission(submissionC, 0, "ipfs://build-on");
     expect(await job.hasResponded(0, agentB.address)).to.equal(true);
     await expect(
       job.connect(agentB).respondToSubmission(submissionB, 0, "ipfs://build-again")
@@ -241,7 +256,8 @@ describe("Judge Access + Reviewed Flags", function () {
       job.connect(agentB).respondToSubmission(submissionB, 2, "ipfs://alternative")
     ).to.be.reverted;
 
-    // A different wallet still gets its own single interaction.
+    // A different wallet still gets its own single interaction: judgeB has not
+    // critiqued submissionB and has a fresh slot, so its build-on succeeds.
     await job.connect(judgeB).respondToSubmission(submissionB, 0, "ipfs://second-wallet");
     expect(await job.hasResponded(0, judgeB.address)).to.equal(true);
   });

@@ -27,6 +27,8 @@ type DeploymentConfig = {
     jobContract: ContractConfig;
     job: ContractConfig;
     prevJobContract?: ContractConfig;
+    /** All prior job contracts, newest-first; capped at the 2 newest. */
+    prevJobContracts?: ContractConfig[];
     githubSource: ContractConfig;
     communitySource: ContractConfig;
     agentTaskSource: ContractConfig;
@@ -303,25 +305,50 @@ async function main() {
   const deploymentsFilePath = path.resolve(__dirname, `../deployments/${network.name}.json`);
   const frontendConfigPath = path.resolve(__dirname, "../../frontend/src/lib/generated/contracts.json");
 
-  // Carry the outgoing job contract forward as prevJobContract so jobs
-  // created before this redeploy stay visible and claimable in the feed.
+  // Carry outgoing job contracts forward as prevJobContracts so jobs created
+  // before this redeploy stay visible and claimable in the feed. Order is
+  // newest-first; keep only the 2 newest so the feed stays bounded.
   const existing =
     readExistingConfig(frontendConfigPath) ?? readExistingConfig(deploymentsFilePath);
-  // The outgoing jobContract becomes the new prevJobContract (one prior
-  // version back); keep the older prev only if jobContract didn't change.
   const currentEntry = existing?.contracts.jobContract;
-  const stalePrev = existing?.contracts.prevJobContract;
-  const changed = (c?: { address?: string }) =>
-    !!c?.address && c.address.toLowerCase() !== jobAddress.toLowerCase();
-  const outgoingJob = changed(currentEntry) ? currentEntry : stalePrev;
-  if (changed(outgoingJob)) {
-    deploymentConfig.contracts.prevJobContract = {
-      address: outgoingJob!.address,
-      abi: outgoingJob!.abi ?? (await getAbi("ERC8183Job"))
-    };
-    console.log(`Preserved previous ERC8183Job as prevJobContract: ${outgoingJob!.address}`);
+  const outgoingChanged =
+    Boolean(currentEntry?.address) &&
+    currentEntry!.address.toLowerCase() !== jobAddress.toLowerCase();
+  const candidates: ContractConfig[] = [
+    ...(outgoingChanged && currentEntry ? [currentEntry] : []),
+    ...(existing?.contracts.prevJobContracts ?? []),
+    ...(existing?.contracts.prevJobContract ? [existing.contracts.prevJobContract] : [])
+  ];
+  const seenAddresses = new Set<string>([jobAddress.toLowerCase()]);
+  const prevJobContracts: ContractConfig[] = [];
+  for (const candidate of candidates) {
+    if (!candidate?.address) continue;
+    const key = candidate.address.toLowerCase();
+    if (seenAddresses.has(key)) continue;
+    seenAddresses.add(key);
+    prevJobContracts.push({
+      address: candidate.address,
+      abi: candidate.abi ?? (await getAbi("ERC8183Job"))
+    });
+  }
+  if (prevJobContracts.length > 2) {
+    const dropped = prevJobContracts.length - 2;
+    console.warn(
+      `Keeping the 2 newest previous ERC8183Job contracts; dropping ${dropped} older entr${dropped === 1 ? "y" : "ies"}.`
+    );
+    prevJobContracts.length = 2;
+  }
+  if (prevJobContracts.length > 0) {
+    deploymentConfig.contracts.prevJobContracts = prevJobContracts;
+    // Legacy single-field mirror for older readers: newest previous contract.
+    deploymentConfig.contracts.prevJobContract = prevJobContracts[0];
+    console.log(
+      `Preserved previous ERC8183Job contracts (newest-first): ${prevJobContracts
+        .map((entry) => entry.address)
+        .join(", ")}`
+    );
   } else {
-    console.log("No previous ERC8183Job with a different address; prevJobContract omitted.");
+    console.log("No previous ERC8183Job with a different address; prevJobContracts omitted.");
   }
 
   writeJson(deploymentsFilePath, deploymentConfig);

@@ -1097,6 +1097,9 @@ contract ERC8183Job is ICredentialSource {
             );
         } else {
             require(!hasResponded[taskId][responder], "build-on slot already used in this task");
+            // Mirror of the critique-side rule: a wallet may not build on a
+            // submission it already critiqued.
+            require(!hasCritiqued[parentSubmissionId][responder], "already critiqued this submission");
         }
 
         responseId = nextResponseId;
