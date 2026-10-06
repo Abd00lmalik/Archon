@@ -81,7 +81,7 @@ async function main() {
   const seedOperator =
     (process.env.SEED_OPERATOR ?? "false").toLowerCase() === "true";
 
-  const platformFeeBps = Number(process.env.PLATFORM_FEE_BPS ?? "1000");
+  const platformFeeBps = Number(process.env.PLATFORM_FEE_BPS ?? "100");
   if (Number.isNaN(platformFeeBps) || platformFeeBps < 0 || platformFeeBps > 2000) {
     throw new Error("PLATFORM_FEE_BPS must be between 0 and 2000");
   }
@@ -186,8 +186,35 @@ async function main() {
   const milestoneEscrowAddress = await milestoneEscrow.getAddress();
   console.log(`MilestoneEscrow: ${milestoneEscrowAddress}`);
 
-  const arbitratorCandidates = [deployer.address, ...signers.slice(1, 4).map((signer) => signer.address)];
-  const uniqueArbitrators = [...new Set(arbitratorCandidates.filter((address) => !!address))];
+  const envArbitrators = (process.env.ARBITRATOR_ADDRESSES ?? "")
+    .split(",")
+    .map((address) => address.trim())
+    .filter((address) => address.length > 0);
+  for (const address of envArbitrators) {
+    if (!ethers.isAddress(address)) {
+      throw new Error(`ARBITRATOR_ADDRESSES contains an invalid address: ${address}`);
+    }
+  }
+  const arbitratorCandidates = [
+    deployer.address,
+    ...envArbitrators,
+    ...signers.slice(1, 4).map((signer) => signer.address)
+  ];
+  const seenArbitrators = new Set<string>();
+  const uniqueArbitrators: string[] = [];
+  for (const candidate of arbitratorCandidates) {
+    const key = candidate.toLowerCase();
+    if (!seenArbitrators.has(key)) {
+      seenArbitrators.add(key);
+      uniqueArbitrators.push(candidate);
+    }
+  }
+  if (uniqueArbitrators.length < 3) {
+    console.warn(
+      `WARNING: only ${uniqueArbitrators.length} unique arbitrator(s) available; disputes require at least 3. ` +
+        "Set ARBITRATOR_ADDRESSES (comma-separated) or configure more signers."
+    );
+  }
   for (let i = 0; i < uniqueArbitrators.length && i < 3; i++) {
     try {
       await (await milestoneEscrow.addArbitrator(uniqueArbitrators[i])).wait();

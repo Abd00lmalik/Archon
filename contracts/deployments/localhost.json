@@ -4,10 +4,10 @@
   "rpcUrl": "http://127.0.0.1:8545",
   "usdcAddress": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
   "platformTreasury": "0x25265b9dBEb6c653b0CA281110Bb0697a9685107",
-  "platformFeeBps": 1000,
+  "platformFeeBps": 100,
   "platform": {
     "treasury": "0x25265b9dBEb6c653b0CA281110Bb0697a9685107",
-    "feeBps": 1000
+    "feeBps": 100
   },
   "contracts": {
     "sourceRegistry": {

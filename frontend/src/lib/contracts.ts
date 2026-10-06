@@ -2252,6 +2252,36 @@ export async function fetchDispute(milestoneId: number): Promise<MilestoneDisput
   }
 }
 
+// Every dispute on the escrow, not just the connected account's: arbitrators
+// who are not parties to a milestone still need it in the Disputes tab.
+export async function fetchAllMilestoneDisputes(): Promise<Record<number, MilestoneDisputeRecord>> {
+  const disputes: Record<number, MilestoneDisputeRecord> = {};
+  if (!deployment.contracts.milestoneEscrow || contractAddresses.milestoneEscrow === ZERO_ADDRESS) {
+    return disputes;
+  }
+  try {
+    const contract = getMilestoneEscrowContract(getReadProvider());
+    const total = Number(await contract.nextMilestoneId());
+    const capped = Math.min(total, 500);
+    const rows = await Promise.all(
+      Array.from({ length: capped }, async (_, milestoneId) => {
+        try {
+          if (!(await contract.hasDispute(milestoneId))) return null;
+          return [milestoneId, await fetchDispute(milestoneId)] as const;
+        } catch {
+          return null;
+        }
+      })
+    );
+    for (const row of rows) {
+      if (row && row[1]) disputes[row[0]] = row[1];
+    }
+    return disputes;
+  } catch {
+    return disputes;
+  }
+}
+
 export async function fetchDisputeWindowSeconds(): Promise<number> {
   if (!deployment.contracts.milestoneEscrow || contractAddresses.milestoneEscrow === ZERO_ADDRESS) return 48 * 3600;
   try {

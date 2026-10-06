@@ -5,10 +5,10 @@
   "rpcUrl": "https://rpc.testnet.arc.network",
   "usdcAddress": "0x3600000000000000000000000000000000000000",
   "platformTreasury": "0x25265b9dBEb6c653b0CA281110Bb0697a9685107",
-  "platformFeeBps": 1000,
+  "platformFeeBps": 100,
   "platform": {
     "treasury": "0x25265b9dBEb6c653b0CA281110Bb0697a9685107",
-    "feeBps": 1000
+    "feeBps": 100
   },
   "contracts": {
     "sourceRegistry": {

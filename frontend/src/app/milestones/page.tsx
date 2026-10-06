@@ -6,8 +6,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   contractAddresses,
   expectedChainId,
-  fetchDispute,
+  fetchAllMilestoneDisputes,
   fetchDisputeWindowSeconds,
+  fetchMilestoneArbitratorCount,
   fetchMilestoneFunded,
   fetchMilestonesByClient,
   fetchMilestonesByFreelancer,
@@ -16,6 +17,7 @@ import {
   formatTimestamp,
   formatUsdc,
   MILESTONE_ESCROW_ABI,
+  MilestoneDisputeRecord,
   MilestoneRecord,
   txApproveUsdcIfNeeded,
   txFundMilestone,
@@ -54,14 +56,43 @@ function formatCountdown(ms: number): string {
   return `${h}h ${m}m`;
 }
 
+// Revert strings are stripped on this network, so failures often arrive as
+// "missing revert data" with no reason. Map the reasons we can recognize and
+// fall back to a plain-language explanation instead of the raw ethers dump.
+const REVERT_HINTS: Array<[RegExp, string]> = [
+  [/need at least 3 arbitrators/i, "Disputes are unavailable: fewer than 3 arbitrators are registered."],
+  [/dispute window elapsed/i, "The 48-hour dispute window for this milestone has passed."],
+  [/dispute already exists/i, "A dispute already exists for this milestone."],
+  [/only parties can dispute/i, "Only the client or the freelancer can dispute this milestone."],
+  [/milestone not funded/i, "This milestone's funds are not in escrow."],
+  [/not submitted/i, "This milestone is not awaiting review (it must be Submitted)."],
+  [/already released/i, "This milestone's funds have already been released."],
+  [/only client can approve/i, "Only the milestone creator can approve and release funds."],
+  [/reason too short/i, "Dispute reason must be at least 20 characters."]
+];
+
+function describeMilestoneError(error: unknown, fallback: string): string {
+  const raw = error instanceof Error ? error.message : String(error ?? "");
+  const reason = (error as { reason?: unknown } | null)?.reason;
+  const haystack = `${raw} ${typeof reason === "string" ? reason : ""}`;
+  for (const [pattern, text] of REVERT_HINTS) {
+    if (pattern.test(haystack)) return text;
+  }
+  if (/missing revert data|could not coalesce|without a reason string|execution reverted/i.test(haystack)) {
+    return fallback;
+  }
+  return raw || fallback;
+}
+
 export default function MilestonesPage() {
   const { account, browserProvider, connect } = useWallet();
   const [tab, setTab] = useState<TabKey>("projects");
   const [clientMilestones, setClientMilestones] = useState<MilestoneRecord[]>([]);
   const [freelancerMilestones, setFreelancerMilestones] = useState<MilestoneRecord[]>([]);
   const [funded, setFunded] = useState<Record<number, boolean>>({});
-  const [disputes, setDisputes] = useState<Record<number, Awaited<ReturnType<typeof fetchDispute>>>>({});
+  const [disputes, setDisputes] = useState<Record<number, MilestoneDisputeRecord>>({});
   const [disputeWindow, setDisputeWindow] = useState(48 * 3600);
+  const [arbitratorCount, setArbitratorCount] = useState(0);
   const [deliverables, setDeliverables] = useState<Record<number, string>>({});
   const [disputeNotes, setDisputeNotes] = useState<Record<number, string>>({});
   const [busy, setBusy] = useState<number | null>(null);
@@ -125,29 +156,27 @@ export default function MilestonesPage() {
       setFreelancerMilestones([]);
       setFunded({});
       setDisputes({});
+      setArbitratorCount(0);
       return;
     }
     setLoading(true);
     setError("");
     try {
-      const [clientRows, freelancerRows, windowSeconds] = await Promise.all([
+      const [clientRows, freelancerRows, windowSeconds, arbCount] = await Promise.all([
         fetchMilestonesByClient(account),
         fetchMilestonesByFreelancer(account),
-        fetchDisputeWindowSeconds()
+        fetchDisputeWindowSeconds(),
+        fetchMilestoneArbitratorCount()
       ]);
       setClientMilestones(clientRows);
       setFreelancerMilestones(freelancerRows);
       setDisputeWindow(windowSeconds);
+      setArbitratorCount(arbCount);
       const combined = [...clientRows, ...freelancerRows];
       const ids = Array.from(new Set(combined.map((row) => row.milestoneId)));
       const fundedRows = await Promise.all(ids.map(async (id) => [id, await fetchMilestoneFunded(id)] as const));
       setFunded(Object.fromEntries(fundedRows));
-      const disputeRows = await Promise.all(ids.map(async (id) => [id, await fetchDispute(id)] as const));
-      const nextDisputes: Record<number, Awaited<ReturnType<typeof fetchDispute>>> = {};
-      for (const [id, row] of disputeRows) {
-        if (row) nextDisputes[id] = row;
-      }
-      setDisputes(nextDisputes);
+      setDisputes(await fetchAllMilestoneDisputes());
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load milestone data.");
     } finally {
@@ -247,11 +276,7 @@ export default function MilestonesPage() {
       const { contract } = await withMilestoneContract();
       const gasEst = (await contract.approveMilestone.estimateGas(
         BigInt(milestoneId)
-      ).catch((estimateError: unknown) => {
-        const message =
-          estimateError instanceof Error ? estimateError.message : String(estimateError ?? "Approval would revert");
-        throw new Error(message || "Approval would revert");
-      })) as bigint;
+      )) as bigint;
 
       const tx = (await contract.approveMilestone(BigInt(milestoneId), {
         gasLimit: (gasEst * 12n) / 10n
@@ -261,9 +286,12 @@ export default function MilestonesPage() {
       setStatus(`Milestone #${milestoneId} approved for project #${projectId}.`);
       await load();
     } catch (approveError) {
-      const message =
-        approveError instanceof Error ? approveError.message : String(approveError ?? "Approval failed");
-      setError(message);
+      setError(
+        describeMilestoneError(
+          approveError,
+          "Approval would revert. The milestone must be Submitted and its funds must not have been released yet."
+        )
+      );
     } finally {
       setApprovingMilestoneId(null);
     }
@@ -275,6 +303,27 @@ export default function MilestonesPage() {
       setError("Dispute reason must be at least 20 characters.");
       return;
     }
+    if (arbitratorCount < 3) {
+      setError("Disputes are unavailable: at least 3 arbitrators must be registered on the escrow contract.");
+      return;
+    }
+    const milestone = myMilestones.find((row) => row.milestoneId === milestoneId);
+    if (milestone && milestone.status !== 1) {
+      setError("This milestone is not awaiting review (it must be Submitted).");
+      return;
+    }
+    if (milestone && !funded[milestoneId]) {
+      setError("This milestone's funds are not in escrow.");
+      return;
+    }
+    if (disputes[milestoneId]) {
+      setError("A dispute already exists for this milestone.");
+      return;
+    }
+    if (milestone?.submittedAt && milestone.submittedAt * 1000 + disputeWindow * 1000 < Date.now()) {
+      setError("The 48-hour dispute window for this milestone has passed.");
+      return;
+    }
     setDisputingMilestoneId(milestoneId);
     setStatus("");
     setError("");
@@ -283,11 +332,7 @@ export default function MilestonesPage() {
       const gasEst = (await contract.raiseDispute.estimateGas(
         BigInt(milestoneId),
         reason
-      ).catch((estimateError: unknown) => {
-        const message =
-          estimateError instanceof Error ? estimateError.message : String(estimateError ?? "Dispute would revert");
-        throw new Error(message || "Dispute would revert");
-      })) as bigint;
+      )) as bigint;
 
       const tx = (await contract.raiseDispute(BigInt(milestoneId), reason, {
         gasLimit: (gasEst * 12n) / 10n
@@ -297,9 +342,12 @@ export default function MilestonesPage() {
       setStatus(`Dispute raised for milestone #${milestoneId} in project #${projectId}.`);
       await load();
     } catch (disputeError) {
-      const message =
-        disputeError instanceof Error ? disputeError.message : String(disputeError ?? "Dispute failed");
-      setError(message);
+      setError(
+        describeMilestoneError(
+          disputeError,
+          "Dispute would revert. The milestone must be Submitted, funded, undisputed, and inside its 48-hour dispute window."
+        )
+      );
     } finally {
       setDisputingMilestoneId(null);
     }
@@ -493,6 +541,12 @@ export default function MilestonesPage() {
       </div>
       {status ? <div className="archon-card border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">{status}</div> : null}
       {error ? <div className="archon-card border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</div> : null}
+      {account && !loading && arbitratorCount < 3 ? (
+        <div className="archon-card border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+          Dispute unavailable: only {arbitratorCount} of 3 required arbitrators are registered on the escrow
+          contract. A platform admin must register {3 - arbitratorCount} more before disputes can be raised.
+        </div>
+      ) : null}
 
       {tab === "projects" ? (
         <div className="archon-card p-6">
@@ -625,7 +679,8 @@ export default function MilestonesPage() {
                                 <button
                                   type="button"
                                   onClick={() => void handleDisputeMilestone(milestone.projectId, milestone.milestoneId)}
-                                  disabled={disputingMilestoneId === milestone.milestoneId}
+                                  disabled={disputingMilestoneId === milestone.milestoneId || arbitratorCount < 3}
+                                  title={arbitratorCount < 3 ? "At least 3 arbitrators must be registered before disputes can be raised." : undefined}
                                   style={{
                                     background: "#FF4A4A",
                                     color: "#fff",
