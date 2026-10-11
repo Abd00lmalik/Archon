@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 import { OPEN_TUTORIAL_EVENT } from "@/components/global-overlays";
 import { RouteAnnouncer } from "@/components/route-announcer";
 import { WrongNetworkBanner } from "@/components/wrong-network-banner";
-import { expectedChainId, shortAddress } from "@/lib/contracts";
+import { expectedChainId, fetchAnalyticsGateAddresses, shortAddress } from "@/lib/contracts";
 import { IconCheck } from "@/lib/icons";
 import { getTheme, Theme, toggleTheme } from "@/lib/theme";
 import { useWallet } from "@/lib/wallet-context";
@@ -30,12 +30,33 @@ export function NavBar() {
   const { account, chainId, openWalletPicker, disconnect } = useWallet();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [theme, setTheme] = useState<Theme>("dark");
+  const [analyticsAllowed, setAnalyticsAllowed] = useState(false);
 
   const isWrongNetwork = chainId !== null && chainId !== expectedChainId;
 
   useEffect(() => {
     setTheme(getTheme());
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!account) {
+      setAnalyticsAllowed(false);
+      return;
+    }
+    fetchAnalyticsGateAddresses()
+      .then((addresses) => {
+        if (!cancelled) setAnalyticsAllowed(addresses.includes(account.toLowerCase()));
+      })
+      .catch(() => {
+        if (!cancelled) setAnalyticsAllowed(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [account]);
+
+  const visibleLinks = NAV_LINKS.filter((link) => link.href !== "/analytics" || analyticsAllowed);
 
   return (
     <>
@@ -56,7 +77,7 @@ export function NavBar() {
           </Link>
 
           <div className="hidden items-center gap-1 md:flex">
-            {NAV_LINKS.map((link) => {
+            {visibleLinks.map((link) => {
               const active = pathname === link.href || (link.href !== "/" && pathname.startsWith(link.href));
               return (
                 <Link key={link.href} href={link.href} className={`nav-link ${active ? "active" : ""}`}>
@@ -161,7 +182,7 @@ export function NavBar() {
               className="border-t border-[var(--border)] bg-[var(--surface)] p-3 md:hidden"
             >
               <div className="grid gap-1">
-                {NAV_LINKS.map((link) => (
+                {visibleLinks.map((link) => (
                   <Link key={link.href} href={link.href} className="nav-link" onClick={() => setMobileOpen(false)}>
                     {link.label}
                   </Link>

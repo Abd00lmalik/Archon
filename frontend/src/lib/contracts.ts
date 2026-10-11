@@ -474,6 +474,7 @@ export const MILESTONE_ESCROW_ABI = [
   "function nextProjectId() view returns (uint256)",
   "function totalEscrowed() view returns (uint256)",
   "function platformFeeBps() view returns (uint256)",
+  "function owner() view returns (address)",
   "function getMilestone(uint256 milestoneId) view returns (tuple(uint256 milestoneId,uint256 projectId,address client,address freelancer,string title,string description,string deliverableHash,uint256 amount,uint256 deadline,uint256 createdAt,uint256 submittedAt,uint8 status,bool fundsReleased))",
   "function getDispute(uint256 milestoneId) view returns (tuple(uint256 milestoneId,address raisedBy,string reason,address[3] arbitrators,uint8[3] votes,uint8 votesReceived,uint8 outcome,uint256 raisedAt,bool resolved))",
   "function getMilestonesByProject(uint256 projectId) view returns (uint256[])",
@@ -2151,6 +2152,36 @@ export async function fetchMilestoneEscrowTotal(): Promise<bigint> {
   } catch {
     return 0n;
   }
+}
+
+export async function fetchMilestoneEscrowOwner(): Promise<string | null> {
+  if (!deployment.contracts.milestoneEscrow || contractAddresses.milestoneEscrow === ZERO_ADDRESS) {
+    return null;
+  }
+  try {
+    const contract = getMilestoneEscrowContract(getReadProvider());
+    const owner = (await contract.owner()) as string;
+    return owner && owner !== ZERO_ADDRESS ? owner : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchAnalyticsGateAddresses(): Promise<string[]> {
+  const addresses = new Set<string>();
+  const treasury = deployment.platformTreasury;
+  if (treasury && treasury !== ZERO_ADDRESS) addresses.add(treasury.toLowerCase());
+  try {
+    const settings = await fetchJobPlatformSettings();
+    if (settings.platformTreasury && settings.platformTreasury !== ZERO_ADDRESS) {
+      addresses.add(settings.platformTreasury.toLowerCase());
+    }
+  } catch {
+    // Job contract may be unavailable; static treasury above still applies.
+  }
+  const owner = await fetchMilestoneEscrowOwner();
+  if (owner) addresses.add(owner.toLowerCase());
+  return Array.from(addresses);
 }
 
 export async function fetchMilestonesByClient(clientAddress: string): Promise<MilestoneRecord[]> {

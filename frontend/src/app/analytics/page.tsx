@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { fetchAnalyticsData } from "@/lib/analytics";
+import { AnalyticsGate } from "@/components/analytics-gate";
 import {
   DailyActiveUsersChart,
   DailyTasksChart,
@@ -32,26 +33,29 @@ export default async function AnalyticsPage() {
 
   if (errorMsg || !data) {
     return (
-      <main className="page-container min-h-[70vh] flex flex-col items-center justify-center p-6">
-        <div className="panel max-w-md w-full border border-danger/30 bg-danger/5 p-6 rounded-2xl text-center space-y-4">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border-2 border-danger text-2xl font-bold text-danger">!</div>
-          <h2 className="heading text-xl font-bold text-text-primary">Analytics Unavailable</h2>
-          <p className="font-mono text-sm text-text-secondary">
-            {errorMsg || "Could not retrieve stats from blockchain contracts."}
-          </p>
-          <div className="pt-4">
-            <Link href="/" className="btn-primary inline-block">
-              Back to Home
-            </Link>
+      <AnalyticsGate>
+        <main className="page-container min-h-[70vh] flex flex-col items-center justify-center p-6">
+          <div className="panel max-w-md w-full border border-danger/30 bg-danger/5 p-6 rounded-2xl text-center space-y-4">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border-2 border-danger text-2xl font-bold text-danger">!</div>
+            <h2 className="heading text-xl font-bold text-text-primary">Analytics Unavailable</h2>
+            <p className="font-mono text-sm text-text-secondary">
+              {errorMsg || "Could not retrieve stats from blockchain contracts."}
+            </p>
+            <div className="pt-4">
+              <Link href="/" className="btn-primary inline-block">
+                Back to Home
+              </Link>
+            </div>
           </div>
-        </div>
-      </main>
+        </main>
+      </AnalyticsGate>
     );
   }
 
   const { metrics, statusBreakdown, dailySeries } = data;
 
   return (
+    <AnalyticsGate>
     <main className="page-container space-y-8 py-6">
       {/* Page Header */}
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border pb-6">
@@ -60,7 +64,7 @@ export default async function AnalyticsPage() {
             Archon Analytics
           </h1>
           <p className="font-mono text-xs text-text-muted mt-1 uppercase tracking-widest">
-            Public Performance & Ecosystem Activity
+            Platform Performance &amp; Ecosystem Activity
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -260,5 +264,6 @@ export default async function AnalyticsPage() {
         </Link>
       </div>
     </main>
+    </AnalyticsGate>
   );
 }
