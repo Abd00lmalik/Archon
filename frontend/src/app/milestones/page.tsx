@@ -8,6 +8,7 @@ import {
   expectedChainId,
   fetchAllMilestoneDisputes,
   fetchDisputeWindowSeconds,
+  fetchMilestone,
   fetchMilestoneArbitratorCount,
   fetchMilestoneFunded,
   fetchMilestonesByClient,
@@ -19,6 +20,7 @@ import {
   MILESTONE_ESCROW_ABI,
   MilestoneDisputeRecord,
   MilestoneRecord,
+  shortAddress,
   txApproveUsdcIfNeeded,
   txFundMilestone,
   txProposeMilestoneProject,
@@ -91,6 +93,7 @@ export default function MilestonesPage() {
   const [freelancerMilestones, setFreelancerMilestones] = useState<MilestoneRecord[]>([]);
   const [funded, setFunded] = useState<Record<number, boolean>>({});
   const [disputes, setDisputes] = useState<Record<number, MilestoneDisputeRecord>>({});
+  const [disputeMilestones, setDisputeMilestones] = useState<Record<number, MilestoneRecord>>({});
   const [disputeWindow, setDisputeWindow] = useState(48 * 3600);
   const [arbitratorCount, setArbitratorCount] = useState(0);
   const [deliverables, setDeliverables] = useState<Record<number, string>>({});
@@ -156,6 +159,7 @@ export default function MilestonesPage() {
       setFreelancerMilestones([]);
       setFunded({});
       setDisputes({});
+      setDisputeMilestones({});
       setArbitratorCount(0);
       return;
     }
@@ -176,7 +180,16 @@ export default function MilestonesPage() {
       const ids = Array.from(new Set(combined.map((row) => row.milestoneId)));
       const fundedRows = await Promise.all(ids.map(async (id) => [id, await fetchMilestoneFunded(id)] as const));
       setFunded(Object.fromEntries(fundedRows));
-      setDisputes(await fetchAllMilestoneDisputes());
+      const disputeMap = await fetchAllMilestoneDisputes();
+      setDisputes(disputeMap);
+      const milestoneRows = await Promise.all(
+        Object.keys(disputeMap).map(async (id) => [Number(id), await fetchMilestone(Number(id))] as const)
+      );
+      const nextDisputeMilestones: Record<number, MilestoneRecord> = {};
+      for (const [id, row] of milestoneRows) {
+        if (row) nextDisputeMilestones[id] = row;
+      }
+      setDisputeMilestones(nextDisputeMilestones);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load milestone data.");
     } finally {
@@ -768,12 +781,66 @@ export default function MilestonesPage() {
               {disputesList.map(({ milestoneId, dispute }) => {
                 const assignedIndex = account ? dispute?.arbitrators.findIndex((address) => address.toLowerCase() === account.toLowerCase()) ?? -1 : -1;
                 const canVote = assignedIndex >= 0 && dispute && dispute.votes[assignedIndex] === 0 && !dispute.resolved;
+                const milestone = disputeMilestones[milestoneId];
                 return (
                   <article key={milestoneId} className="rounded-xl border border-white/10 bg-[#111214] p-3 text-sm text-[#9CA3AF]">
-                    <p className="font-medium text-[#EAEAF0]">Milestone #{milestoneId}</p>
-                    <p className="mt-1">{dispute?.reason}</p>
-                    <p className="mt-1 text-xs">Votes: {dispute?.votesReceived}/3</p>
-                    <p className="text-xs">Outcome: {dispute?.outcome === 1 ? "Favor Freelancer" : dispute?.outcome === 2 ? "Favor Client" : "Pending"}</p>
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <p className="font-medium text-[#EAEAF0]">
+                        Milestone #{milestoneId}
+                        {milestone ? ` — ${milestone.title}` : ""}
+                      </p>
+                      {dispute?.resolved
+                        ? <span className="text-xs text-[#9EF6E8]">Resolved</span>
+                        : <span className="text-xs text-[#F5A623]">Disputed</span>}
+                    </div>
+
+                    {milestone ? (
+                      <div className="mt-2 rounded-lg border border-white/5 bg-[#0F1012] p-2 text-xs">
+                        <p>{milestone.description}</p>
+                        <p className="mt-2 text-[#7A9BB5]">
+                          Amount: {formatUsdc(milestone.amount)} USDC · Status: {statusLabel(milestone.status, true)} · Deadline: {formatTimestamp(milestone.deadline)}
+                        </p>
+                        <p className="mt-1 text-[#7A9BB5]">
+                          Client: {shortAddress(milestone.client)} · Freelancer: {shortAddress(milestone.freelancer)}
+                          {milestone.submittedAt ? ` · Submitted: ${formatTimestamp(milestone.submittedAt)}` : ""}
+                        </p>
+                        {milestone.deliverableHash ? (
+                          <div className="mt-2 rounded-md border border-[rgba(0,255,163,0.3)] bg-[rgba(0,255,163,0.08)] p-2">
+                            <div className="text-[#7A9BB5]">Freelancer deliverable:</div>
+                            <a href={milestone.deliverableHash} target="_blank" rel="noreferrer" className="break-all text-[#00FFA3]">{milestone.deliverableHash}</a>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <p className="mt-2 text-xs text-[#7A9BB5]">Milestone details unavailable.</p>
+                    )}
+
+                    <div className="mt-2">
+                      <p className="text-xs uppercase tracking-wide text-[#7A9BB5]">Dispute reason</p>
+                      <p className="mt-1">{dispute?.reason}</p>
+                      {dispute ? (
+                        <p className="mt-1 text-xs">
+                          Raised by {shortAddress(dispute.raisedBy)} · {formatTimestamp(dispute.raisedAt)}
+                        </p>
+                      ) : null}
+                    </div>
+
+                    <div className="mt-2 text-xs">
+                      <p>Votes: {dispute?.votesReceived}/3 · Outcome: {dispute?.outcome === 1 ? "Favor Freelancer" : dispute?.outcome === 2 ? "Favor Client" : "Pending"}</p>
+                      {dispute ? (
+                        <ul className="mt-1 space-y-0.5">
+                          {dispute.arbitrators.map((address, index) => (
+                            <li key={address}>
+                              {shortAddress(address)}
+                              {account && address.toLowerCase() === account.toLowerCase() ? " (you)" : ""}
+                              {" — "}
+                              {dispute.votes[index] === 1 ? "Favor Freelancer" : dispute.votes[index] === 2 ? "Favor Client" : "Not voted"}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </div>
+
                     {canVote ? <div className="mt-2 flex gap-2"><button type="button" className="archon-button-primary px-3 py-2 text-xs" disabled={busy === milestoneId} onClick={() => void onVote(milestoneId, 1)}>Favor Freelancer</button><button type="button" className="archon-button-secondary px-3 py-2 text-xs" disabled={busy === milestoneId} onClick={() => void onVote(milestoneId, 2)}>Favor Client</button></div> : null}
                   </article>
                 );
