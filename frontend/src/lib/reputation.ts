@@ -5,6 +5,12 @@ import {
   fetchLegacyCredentials,
   fetchLegacyScore
 } from "@/lib/legacy-contracts";
+import contractsJson from "./generated/contracts.json";
+
+// The legacy registry only exists on Arc Testnet; on mainnet reputation is
+// computed solely from the current ValidationRegistry.
+const IS_ARC_TESTNET =
+  ((contractsJson as { chainId?: number }).chainId ?? 5042) === 5042002;
 
 export const SOURCE_WEIGHTS = {
   job: 100,
@@ -128,8 +134,8 @@ export async function fetchUnifiedScore(
   const legacyProvider = "getBlockNumber" in provider ? (provider as JsonRpcProvider) : getReadProvider();
   const [v2Credentials, legacyScore, legacyCredentials] = await Promise.all([
     fetchCredentialsForAgent(address),
-    fetchLegacyScore(legacyProvider, address),
-    fetchLegacyCredentials(legacyProvider, address)
+    IS_ARC_TESTNET ? fetchLegacyScore(legacyProvider, address) : Promise.resolve(0),
+    IS_ARC_TESTNET ? fetchLegacyCredentials(legacyProvider, address) : Promise.resolve([])
   ]);
   const v2Score = calculateWeightedScore(v2Credentials);
   const totalScore = Math.min(v2Score + legacyScore, 2000);

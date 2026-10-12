@@ -143,25 +143,33 @@ function deploymentSources(): RawSource[] {
   const contracts = (contractsJson as ContractsJsonShape).contracts;
   const currentAbi = contracts.jobContract.abi as unknown[];
 
+  // The V1 archive and prev-job deployments only exist on Arc Testnet.
+  // On mainnet (fresh chain) the feed must list ONLY the current job
+  // contract, otherwise stale testnet tasks leak into the task list.
+  const chainId = (contractsJson as { chainId?: number }).chainId ?? 5042;
+  const isArcTestnet = chainId === 5042002;
+
   // Previous job contracts, newest-first. The array written by deploy.ts is
   // authoritative; older configs only carry the single prevJobContract field.
   const prevEntries: Array<{ id: string; address: string; abi: unknown[] }> = [];
-  const fromArray = (contracts.prevJobContracts ?? []).filter(
-    (entry): entry is Partial<JobContractConfig> => Boolean(entry?.address)
-  );
-  fromArray.forEach((entry, index) => {
-    prevEntries.push({
-      id: index === 0 ? "prev" : `prev-${index}`,
-      address: entry.address as string,
-      abi: (entry.abi ?? currentAbi) as unknown[]
+  if (isArcTestnet) {
+    const fromArray = (contracts.prevJobContracts ?? []).filter(
+      (entry): entry is Partial<JobContractConfig> => Boolean(entry?.address)
+    );
+    fromArray.forEach((entry, index) => {
+      prevEntries.push({
+        id: index === 0 ? "prev" : `prev-${index}`,
+        address: entry.address as string,
+        abi: (entry.abi ?? currentAbi) as unknown[]
+      });
     });
-  });
-  if (prevEntries.length === 0 && contracts.prevJobContract?.address) {
-    prevEntries.push({
-      id: "prev",
-      address: contracts.prevJobContract.address as string,
-      abi: (contracts.prevJobContract.abi ?? currentAbi) as unknown[]
-    });
+    if (prevEntries.length === 0 && contracts.prevJobContract?.address) {
+      prevEntries.push({
+        id: "prev",
+        address: contracts.prevJobContract.address as string,
+        abi: (contracts.prevJobContract.abi ?? currentAbi) as unknown[]
+      });
+    }
   }
 
   const prev = prevEntries.map((entry, index) => ({
@@ -184,31 +192,35 @@ function deploymentSources(): RawSource[] {
   }));
 
   return [
-    {
-      id: "archive",
-      source: "V1" as const,
-      address: V1_JOB_ADDRESS,
-      abi: V1_JOB_ABI,
-      version: "archive",
-      caps: {
-        submit: true,
-        hiddenSubmissions: false,
-        selectFinalists: false,
-        autoStartReveal: false,
-        finalizeWinners: false,
-        respondToSubmission: false,
-        respondWithAuthorization: false,
-        settleRevealPhase: false,
-        signalMap: false
-      }
-    },
+    ...(isArcTestnet
+      ? [
+          {
+            id: "archive",
+            source: "V1" as const,
+            address: V1_JOB_ADDRESS,
+            abi: V1_JOB_ABI,
+            version: "archive" as const,
+            caps: {
+              submit: true,
+              hiddenSubmissions: false,
+              selectFinalists: false,
+              autoStartReveal: false,
+              finalizeWinners: false,
+              respondToSubmission: false,
+              respondWithAuthorization: false,
+              settleRevealPhase: false,
+              signalMap: false
+            }
+          }
+        ]
+      : []),
     ...prev,
     {
       id: "current",
       source: "CurrV2" as const,
       address: contracts.jobContract.address as string,
       abi: currentAbi,
-      version: "current",
+      version: "current" as const,
       caps: {
         submit: true,
         hiddenSubmissions: true,

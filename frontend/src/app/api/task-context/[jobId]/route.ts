@@ -268,9 +268,16 @@ function parseTaskParam(raw: string): {
   const displayId = Number(raw);
   if (!Number.isFinite(displayId)) return { jobId: NaN, source: "current" };
 
-  // Canonical display IDs match the task feed: archived tasks first, recovered
-  // reveal task next, then current deployment tasks. Prefixes remain available
-  // for old links and raw contract IDs.
+  const chainId = (contractsJson as { chainId?: number }).chainId ?? 5042;
+  // On Arc Mainnet there are no archived deployments: display id N is simply
+  // current-contract job N-1 (matching the zero-offset feed numbering).
+  if (chainId !== 5042002) {
+    return { jobId: displayId - 1, source: "current" };
+  }
+
+  // Canonical display IDs match the testnet task feed: archived tasks first,
+  // recovered reveal task next, then current deployment tasks. Prefixes remain
+  // available for old links and raw contract IDs.
   if (displayId === 0) return { jobId: 0, source: "current" };
   if (displayId >= 1 && displayId <= 11) return { jobId: displayId - 1, source: "v1" };
   if (displayId === 12) return { jobId: 0, source: "prev-v2" };

@@ -283,7 +283,11 @@ async function _loadRecentHistory(jobContract: Contract, identityContract: Contr
         _addEvent(event);
       });
 
-    if (_events.length < 3) {
+    // The archived testnet deployments only exist on Arc Testnet; on mainnet
+    // there is no "earlier tasks" history to surface.
+    const isArcTestnet =
+      ((contractsJson as { chainId?: number }).chainId ?? 5042) === 5042002;
+    if (isArcTestnet && _events.length < 3) {
       const legacyCount = await fetchLegacyTaskCount(provider);
       if (legacyCount > 0) {
         _addEvent({
