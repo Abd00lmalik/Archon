@@ -1,5 +1,14 @@
 import { ethers } from "ethers";
-import { ERC20_ABI, JOB_ABI, MILESTONE_ESCROW_ABI, AGENT_TASK_SOURCE_ABI } from "./abis.js";
+import {
+  AGENT_TASK_SOURCE_ABI,
+  COMMUNITY_SOURCE_ABI,
+  ERC20_ABI,
+  JOB_ABI,
+  MILESTONE_ESCROW_ABI,
+  PEER_ATTESTATION_ABI,
+  SOURCE_REGISTRY_ABI,
+  VALIDATION_REGISTRY_ABI
+} from "./abis.js";
 import { type ArchonConfig, resolveNetwork, resolvePrivateKey, type ArchonNetworkConfig } from "./config.js";
 import {
   buildAuthorizationWindow,
@@ -174,6 +183,22 @@ export class ArchonClient {
 
   agentTaskContract(runner?: ethers.ContractRunner): ethers.Contract {
     return new ethers.Contract(this.network.addresses.agentTaskSource, AGENT_TASK_SOURCE_ABI, runner ?? this.provider);
+  }
+
+  communityContract(runner?: ethers.ContractRunner): ethers.Contract {
+    return new ethers.Contract(this.network.addresses.communitySource, COMMUNITY_SOURCE_ABI, runner ?? this.provider);
+  }
+
+  peerAttestationContract(runner?: ethers.ContractRunner): ethers.Contract {
+    return new ethers.Contract(this.network.addresses.peerAttestationSource, PEER_ATTESTATION_ABI, runner ?? this.provider);
+  }
+
+  validationRegistryContract(runner?: ethers.ContractRunner): ethers.Contract {
+    return new ethers.Contract(this.network.addresses.validationRegistry, VALIDATION_REGISTRY_ABI, runner ?? this.provider);
+  }
+
+  sourceRegistryContract(runner?: ethers.ContractRunner): ethers.Contract {
+    return new ethers.Contract(this.network.addresses.sourceRegistry, SOURCE_REGISTRY_ABI, runner ?? this.provider);
   }
 
   async sendTx(
@@ -926,5 +951,82 @@ export class ArchonClient {
       async () => (await source.refundExpiredTask(BigInt(taskId))) as ethers.TransactionResponse,
       source.interface
     );
+  }
+
+  // ---- community + credentials + attestations ----
+
+  async submitCommunityApplication(params: {
+    activityDescription: string;
+    evidenceLink: string;
+    platform: string;
+  }): Promise<TxResult> {
+    const wallet = this.requireWallet();
+    const community = this.communityContract(wallet);
+    return this.sendTx(
+      "submitCommunityApplication",
+      async () =>
+        (await community.submitApplication(
+          params.activityDescription,
+          params.evidenceLink,
+          params.platform
+        )) as ethers.TransactionResponse,
+      community.interface
+    );
+  }
+
+  async claimCommunityCredential(activityId: number | bigint): Promise<TxResult> {
+    const wallet = this.requireWallet();
+    const community = this.communityContract(wallet);
+    return this.sendTx(
+      "claimCommunityCredential",
+      async () => (await community.claimCredential(BigInt(activityId))) as ethers.TransactionResponse,
+      community.interface
+    );
+  }
+
+  async peerAttest(recipient: string, category: string, note: string): Promise<TxResult> {
+    const wallet = this.requireWallet();
+    const attest = this.peerAttestationContract(wallet);
+    return this.sendTx(
+      "peerAttest",
+      async () => (await attest.attest(recipient, category, note)) as ethers.TransactionResponse,
+      attest.interface
+    );
+  }
+
+  async getCredentials(agent?: string): Promise<number[]> {
+    const registry = this.validationRegistryContract();
+    const ids = (await registry.getCredentials(agent ?? this.address ?? ethers.ZeroAddress)) as bigint[];
+    return ids.map((id) => toNumber(id));
+  }
+
+  async hasCredential(agent: string, activityId: number | bigint, sourceType?: string): Promise<boolean> {
+    const registry = this.validationRegistryContract();
+    try {
+      if (sourceType) {
+        return Boolean(await registry.hasCredentialForSource(agent, BigInt(activityId), sourceType));
+      }
+      return Boolean(await registry.hasCredential(agent, BigInt(activityId)));
+    } catch {
+      return false;
+    }
+  }
+
+  async getSourceInfo(sourceType: string): Promise<{ registered: boolean; operator: string; profileURI: string }> {
+    const registry = this.sourceRegistryContract();
+    const raw = (await registry.getSourceInfo(sourceType)) as { registered: boolean; operator: string; profileURI: string } & unknown[];
+    return {
+      registered: Boolean(raw.registered ?? raw[0]),
+      operator: String(raw.operator ?? raw[1] ?? ""),
+      profileURI: String(raw.profileURI ?? raw[2] ?? "")
+    };
+  }
+
+  async isApprovedOperator(sourceType: string, operator: string): Promise<boolean> {
+    try {
+      return Boolean(await this.sourceRegistryContract().isApprovedOperator(sourceType, operator));
+    } catch {
+      return false;
+    }
   }
 }

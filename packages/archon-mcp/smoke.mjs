@@ -38,7 +38,7 @@ for (const message of messages) {
   await new Promise((r) => setTimeout(r, 800));
 }
 
-await new Promise((r) => setTimeout(r, 4000));
+await new Promise((r) => setTimeout(r, 12000));
 const toolsList = replies.find((r) => r.id === 2);
 const status = replies.find((r) => r.id === 3);
 const agentTasks = replies.find((r) => r.id === 4);

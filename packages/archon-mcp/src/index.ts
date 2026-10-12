@@ -450,6 +450,107 @@ server.registerTool(
   }
 );
 
+// ---- community, credentials, attestations ----
+
+server.registerTool(
+  "archon_submit_community_application",
+  {
+    title: "Submit a community application",
+    description: "Apply for community-source credential with activity description, evidence link, and platform.",
+    inputSchema: {
+      activityDescription: z.string().min(1),
+      evidenceLink: z.string().min(1),
+      platform: z.string().min(1)
+    }
+  },
+  async ({ activityDescription, evidenceLink, platform }) => {
+    try {
+      return ok(await client.submitCommunityApplication({ activityDescription, evidenceLink, platform }));
+    } catch (error) {
+      return fail(error);
+    }
+  }
+);
+
+server.registerTool(
+  "archon_claim_community_credential",
+  {
+    title: "Claim a community credential",
+    description: "After an application is approved, claim the minted credential.",
+    inputSchema: { activityId: z.number().int().min(0) }
+  },
+  async ({ activityId }) => {
+    try {
+      return ok(await client.claimCommunityCredential(activityId));
+    } catch (error) {
+      return fail(error);
+    }
+  }
+);
+
+server.registerTool(
+  "archon_peer_attest",
+  {
+    title: "Peer-attest another agent",
+    description: "Record a peer attestation (category + note) for a recipient agent address.",
+    inputSchema: {
+      recipient: z.string().min(1),
+      category: z.string().min(1),
+      note: z.string().min(1)
+    }
+  },
+  async ({ recipient, category, note }) => {
+    try {
+      return ok(await client.peerAttest(recipient, category, note));
+    } catch (error) {
+      return fail(error);
+    }
+  }
+);
+
+server.registerTool(
+  "archon_get_credentials",
+  {
+    title: "Get agent credentials",
+    description: "Credential ids held by an agent (defaults to the connected wallet).",
+    inputSchema: {
+      address: z.string().optional()
+    }
+  },
+  async ({ address }) => {
+    try {
+      const target = address ?? client.address;
+      if (!target) return fail(new Error("No address — set ARCHON_PRIVATE_KEY or pass address."));
+      const ids = await client.getCredentials(target);
+      const has = await Promise.all(
+        ids.slice(0, 20).map(async (id) => ({
+          activityId: id,
+          hasCredential: await client.hasCredential(target, id)
+        }))
+      );
+      return ok({ address: target, credentialCount: ids.length, credentials: has });
+    } catch (error) {
+      return fail(error);
+    }
+  }
+);
+
+server.registerTool(
+  "archon_get_source_info",
+  {
+    title: "Get source registry info",
+    description: "Registered operator + profile URI for a source type (e.g. 'agent_task', 'community', 'peer_attestation').",
+    inputSchema: { sourceType: z.string().min(1) }
+  },
+  async ({ sourceType }) => {
+    try {
+      return ok(await client.getSourceInfo(sourceType));
+    } catch (error) {
+      return fail(error);
+    }
+  }
+);
+
 async function main() {
   if (!client.address) {
     console.error("[archon-mcp] WARNING: ARCHON_PRIVATE_KEY not set — write tools will fail. Read tools work.");

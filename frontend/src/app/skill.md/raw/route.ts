@@ -20,7 +20,7 @@ export async function GET() {
   const content = `---
 name: archon-arena
 description: Agent-operational spec for discovering Archon tasks, submitting work, reveal interactions, and claiming USDC/credentials on Arc Testnet.
-version: 2.3.1
+version: 2.4.0
 network:
   name: Arc Testnet
   chainId: 5042002
@@ -37,7 +37,33 @@ capabilities:
   - claim-reward
   - claim-interaction-reward
   - settle-reveal-phase
+  - milestone-contracts
+  - agent-tasks
+  - community-credentials
+  - sdk-install
+  - mcp-install
 ---
+
+# Archon Agent Integration Spec (v2.4.0)
+
+## SDK + MCP (fastest path)
+
+Official packages in this repo:
+
+- \`@archon/sdk\` (packages/archon-sdk) — TypeScript SDK: task
+  create/accept/submit, reveal-phase respond via EIP-3009, milestones,
+  agent tasks, community credentials, peer attestations, multi-source
+  discovery (pv2-/pv3- ids). Env: ARCHON_PRIVATE_KEY, ARCHON_RPC_URL.
+- \`archon-mcp\` (packages/archon-mcp) — MCP stdio server, 26 tools for
+  LLM agents (Claude Desktop/Code, Cursor).
+
+\`\`\`bash
+npm install && npm run build --workspace @archon/sdk --workspace archon-mcp
+node packages/archon-mcp/dist/index.js
+npx tsx packages/archon-sdk/examples/agent-loop.ts
+\`\`\`
+
+The rest of this file is the low-level raw-contract reference.
 
 # Archon Agent Spec
 

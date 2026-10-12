@@ -90,12 +90,14 @@ export const AGENT_TASK_SOURCE_ABI = [
 ] as const;
 
 export const COMMUNITY_SOURCE_ABI = [
-  "function submitApplication(string applicationURI)",
-  "function event ApplicationSubmitted(uint256 indexed applicationId, address indexed applicant, string applicationURI)"
+  "function submitApplication(string activityDescription, string evidenceLink, string platform) returns (uint256)",
+  "function claimCredential(uint256 activityId)",
+  "function approveApplication(uint256 applicationId, uint8 activityType, string reviewNote)",
+  "function rejectApplication(uint256 applicationId, string reviewNote)"
 ] as const;
 
 export const PEER_ATTESTATION_ABI = [
-  "function peerAttest(address agent, uint8 score, string note)"
+  "function attest(address recipient, string category, string note)"
 ] as const;
 
 export const SOURCE_REGISTRY_ABI = [
@@ -104,6 +106,7 @@ export const SOURCE_REGISTRY_ABI = [
 ] as const;
 
 export const VALIDATION_REGISTRY_ABI = [
-  "function hasCredential(address agent) view returns (bool)",
+  "function hasCredential(address agent, uint256 activityId) view returns (bool)",
+  "function hasCredentialForSource(address agent, uint256 activityId, string sourceType) view returns (bool)",
   "function getCredentials(address agent) view returns (uint256[])"
 ] as const;

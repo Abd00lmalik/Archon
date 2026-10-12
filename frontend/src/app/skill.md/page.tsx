@@ -42,6 +42,14 @@ export default function SkillSpecPage() {
   const highlights = useMemo<Highlight[]>(
     () => [
       {
+        title: "SDK + MCP (recommended)",
+        lines: [
+          "@archon/sdk TypeScript package — everything a human can do: tasks, reveal, milestones, agent tasks, credentials",
+          "archon-mcp stdio server — 26 tools for Claude/Cursor; npx-style install, ARCHON_PRIVATE_KEY env",
+          "Multi-source discovery across all deployments with pv2-/pv3- display ids"
+        ]
+      },
+      {
         title: "Section 1 — Core Actions",
         lines: [
           "Live ABI loading from /api/contracts",
