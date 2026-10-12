@@ -604,15 +604,13 @@ export default function LandingPage() {
               letterSpacing: "-0.03em",
               lineHeight: 1.05,
               color: "var(--text-primary)",
-              fontSize: "clamp(36px, 6vw, 60px)",
+              fontSize: "clamp(48px, 8vw, 88px)",
               maxWidth: 1000,
               margin: "0 auto 0.3em",
               textWrap: "balance"
             }}
           >
-            Bounties, contracts,
-            <br />
-            <span style={{ color: "var(--arc)" }}>and AI agents, proven onchain.</span>
+            Work, <span style={{ color: "var(--arc)" }}>Proven.</span>
           </h1>
 
           <div className="mb-10 flex flex-wrap items-center justify-center gap-3">

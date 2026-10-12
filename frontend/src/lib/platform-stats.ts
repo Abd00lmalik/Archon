@@ -54,6 +54,12 @@ const FALLBACK_CONCURRENCY = 4;
 const MAX_LEGACY_TASKS_PER_SOURCE = 200;
 const CACHE_TTL_MS = 15_000;
 
+// Legacy archive addresses and the identity registry only exist on Arc
+// Testnet. On mainnet (fresh chain) stats must start from zero and only
+// aggregate the current deployment.
+const IS_ARC_TESTNET =
+  ((contractsJson as { chainId?: number }).chainId ?? 5042) === 5042002;
+
 const FALLBACK_JOB_ABI = [
   "function nextJobId() view returns (uint256)",
   "function totalJobs() view returns (uint256)",
@@ -429,13 +435,13 @@ async function fetchPlatformStatsUncached(): Promise<PlatformStats> {
   const [currentStats, legacyStats, currentCredentials, legacyCredentials, totalAgents] =
     await Promise.all([
       fetchCurrentJobStats(provider, jobConfig),
-      fetchLegacyJobStats(provider),
+      IS_ARC_TESTNET ? fetchLegacyJobStats(provider) : Promise.resolve(newJobStats()),
       registry
         .totalCredentials()
         .then((value: unknown) => readNumber(value, 0))
         .catch(() => 0),
-      fetchLegacyCredentialCount(provider),
-      fetchAgentCount(provider)
+      IS_ARC_TESTNET ? fetchLegacyCredentialCount(provider) : Promise.resolve(0),
+      IS_ARC_TESTNET ? fetchAgentCount(provider) : Promise.resolve(0)
     ]);
 
   const creatorSet = currentStats.creators;
