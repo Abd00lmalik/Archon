@@ -1,2 +1,0 @@
-[archon-mcp] WARNING: ARCHON_PRIVATE_KEY not set — write tools will fail. Read tools work.
-[archon-mcp] ready on chain 5042002 as (read-only)
