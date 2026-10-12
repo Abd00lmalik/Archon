@@ -54,7 +54,7 @@ const TUTORIAL_STEPS: TutorialStep[] = [
   },
   {
     id: 5,
-    title: "The Reveal Phase (5 Days)",
+    title: "The Reveal Phase",
     icon: "trending",
     content:
       "After finalists are selected, submissions become visible to everyone. An interaction window opens (1-7 days, chosen when reveal begins). You can BUILD ON (extend work) or CRITIQUE (identify flaws with evidence). Each response costs a 2 USDC stake, returned after 7 days unless flagged as spam."

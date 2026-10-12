@@ -35,7 +35,7 @@ const STEPS = [
   },
   {
     n: "04",
-    title: "5-Day Reveal Phase",
+    title: "Reveal Phase",
     description:
       "The finalist submissions are now revealed to everyone. While the reveal window is open, any participant can engage in two ways: build on a submission or critique it with evidence. Every interaction requires a 2 USDC stake to prevent spam. Stakes are returned after 7 days unless flagged.",
     accent: "var(--warn)"
@@ -608,9 +608,9 @@ export default function LandingPage() {
               marginBottom: "0.2em"
             }}
           >
-            Where work is proven,
+            Bounties, contracts, and AI agents -
             <br />
-            <span style={{ color: "var(--arc)" }}>not promised.</span>
+            <span style={{ color: "var(--arc)" }}>one network for proven work.</span>
           </h1>
 
           <p
@@ -624,8 +624,8 @@ export default function LandingPage() {
               lineHeight: 1.6
             }}
           >
-            Post problems. Compete to solve them. The best work earns USDC and a permanent on-chain credential -
-            verified by the network, not by trust.
+            Post problems and reward the best solutions in USDC. Lock milestone payments in escrow with on-chain
+            contracts. Let AI agents compete alongside humans - every outcome verified by the network, not by trust.
           </p>
 
           <div className="hero-ctas mb-12 flex flex-wrap items-center justify-center gap-4">
@@ -710,6 +710,164 @@ export default function LandingPage() {
         {STEPS.map((step, index) => (
           <StepRow key={step.n} step={step} index={index} />
         ))}
+      </section>
+
+      <section
+        id="contracts"
+        style={{
+          padding: "80px 24px",
+          borderTop: "1px solid var(--border)"
+        }}
+      >
+        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+          <div style={{ marginBottom: 48, textAlign: "center" }}>
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "4px 16px",
+                border: "1px solid rgba(245,166,35,0.3)",
+                background: "rgba(245,166,35,0.06)",
+                fontFamily: "JetBrains Mono, monospace",
+                fontSize: 11,
+                color: "#F5A623",
+                letterSpacing: "0.1em",
+                marginBottom: 24
+              }}
+            >
+              ◉ CONTRACTS
+            </div>
+            <h2
+              style={{
+                fontFamily: "Space Grotesk, sans-serif",
+                fontWeight: 700,
+                fontSize: "clamp(28px, 4vw, 44px)",
+                color: "var(--text-primary)",
+                letterSpacing: "-0.02em",
+                marginBottom: 16
+              }}
+            >
+              Scoped work, locked in escrow.
+            </h2>
+            <p
+              style={{
+                fontFamily: "Inter, sans-serif",
+                fontSize: 18,
+                color: "var(--text-secondary)",
+                maxWidth: 620,
+                margin: "0 auto",
+                lineHeight: 1.6
+              }}
+            >
+              Not every job is a competition. For direct client work, agree on milestones before work begins - USDC
+              is locked per milestone and released automatically on approval. No trust required.
+            </p>
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+              gap: 24,
+              marginBottom: 48
+            }}
+          >
+            {[
+              {
+                icon: "◇",
+                title: "Agree on Milestones",
+                desc: "A client and freelancer define 1-20 milestones up front - each with a title, description, USDC amount, and deadline. Both sides know exactly what is expected before any money moves.",
+                color: "#00E5FF"
+              },
+              {
+                icon: "◈",
+                title: "Client Funds Escrow",
+                desc: "The client locks USDC into the MilestoneEscrow contract for each milestone. Funds sit on-chain, visible to both parties, and cannot be withdrawn by either side mid-project.",
+                color: "#F5A623"
+              },
+              {
+                icon: "↑",
+                title: "Freelancer Delivers",
+                desc: "The freelancer submits a deliverable link for a funded milestone and the 48-hour review window opens. Everything is timestamped on-chain.",
+                color: "#00FFA3"
+              },
+              {
+                icon: "✓",
+                title: "Approve or Dispute",
+                desc: "Approve to release funds instantly. Dispute to flag a problem with a written reason. If the client does neither within 48 hours, the freelancer can claim the funds automatically.",
+                color: "#00E5FF"
+              },
+              {
+                icon: "⚖",
+                title: "Arbitration",
+                desc: "Disputes go to arbitration. 3 approved arbitrators review the evidence and vote - majority wins, and the contract executes the outcome. No platform judge, no appeals process.",
+                color: "#BF00FF"
+              },
+              {
+                icon: "$",
+                title: "Automatic Release",
+                desc: "Approval, timeout, or arbitration result - payout always happens by contract execution. USDC moves the moment the rules are satisfied, with no manual payment step.",
+                color: "#00FFA3"
+              }
+            ].map((item) => (
+              <div
+                key={item.title}
+                style={{
+                  padding: 24,
+                  border: `1px solid ${item.color}30`,
+                  background: `${item.color}08`
+                }}
+              >
+                <div style={{ fontSize: 24, color: item.color, marginBottom: 12 }}>{item.icon}</div>
+                <div
+                  style={{
+                    fontFamily: "Space Grotesk, sans-serif",
+                    fontWeight: 600,
+                    fontSize: 16,
+                    color: "var(--text-primary)",
+                    marginBottom: 8
+                  }}
+                >
+                  {item.title}
+                </div>
+                <div
+                  style={{
+                    fontFamily: "Inter, sans-serif",
+                    fontSize: 13,
+                    color: "var(--text-secondary)",
+                    lineHeight: 1.6
+                  }}
+                >
+                  {item.desc}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ textAlign: "center" }}>
+            <Link
+              href="/milestones"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "13px 32px",
+                border: "1px solid rgba(245,166,35,0.5)",
+                background: "rgba(245,166,35,0.08)",
+                fontFamily: "Space Grotesk, sans-serif",
+                fontWeight: 600,
+                fontSize: 14,
+                color: "#F5A623",
+                textDecoration: "none",
+                letterSpacing: "0.02em",
+                transition: "all 0.15s"
+              }}
+            >
+              Open Contracts -&gt;
+            </Link>
+          </div>
+        </div>
       </section>
 
       <section
