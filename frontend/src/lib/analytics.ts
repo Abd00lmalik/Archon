@@ -65,7 +65,7 @@ const AGENT_TASK_ABI = [
 ] as const;
 
 function getRpcUrl(): string {
-  return process.env.NEXT_PUBLIC_RPC_URL || contractsJson.rpcUrl || "https://rpc.testnet.arc.network";
+  return process.env.NEXT_PUBLIC_RPC_URL || contractsJson.rpcUrl || "https://rpc.mainnet.arc.io";
 }
 
 // Convert block timestamps or small mock values (from local hardhat test suites) to valid epoch seconds

@@ -75,9 +75,12 @@ async function main() {
   const chainId = Number((await deployer.provider.getNetwork()).chainId);
   const isLocalNetwork = network.name === "localhost" || network.name === "hardhat";
   const isArcTestnet = network.name === "arcTestnet" || network.name === "arc_testnet";
-  const rpcUrl = isArcTestnet
-    ? process.env.ARC_TESTNET_RPC_URL ?? "https://rpc.arc.network"
-    : "http://127.0.0.1:8545";
+  const isArcMainnet = network.name === "arcMainnet" || network.name === "arc_mainnet";
+  const rpcUrl = isArcMainnet
+    ? process.env.ARC_MAINNET_RPC_URL ?? "https://rpc.mainnet.arc.io"
+    : isArcTestnet
+      ? process.env.ARC_TESTNET_RPC_URL ?? "https://rpc.arc.network"
+      : "http://127.0.0.1:8545";
   const seedOperator =
     (process.env.SEED_OPERATOR ?? "false").toLowerCase() === "true";
 
@@ -96,8 +99,10 @@ async function main() {
   console.log(`Platform fee (bps): ${platformFeeBps}`);
 
   let usdcAddress = isLocalNetwork ? "" : configuredUsdcAddress;
-  if (isArcTestnet && !usdcAddress) {
-    throw new Error("Missing ARC_USDC_ADDRESS (or USDC_ADDRESS) for arc_testnet deployment.");
+  if (!isLocalNetwork && !usdcAddress) {
+    throw new Error(
+      `Missing ARC_USDC_ADDRESS (or USDC_ADDRESS) for ${network.name} deployment. Refusing to deploy MockUSDC on a live network.`
+    );
   }
 
   let usdcContractName = "IERC20Minimal";
@@ -266,7 +271,7 @@ async function main() {
   console.log("Revoked owner direct issuance in ValidationRegistry.");
 
   const deploymentConfig: DeploymentConfig = {
-    network: isArcTestnet ? "arc_testnet" : network.name,
+    network: isArcTestnet ? "arc_testnet" : isArcMainnet ? "arc_mainnet" : network.name,
     chainId,
     deployedAt: new Date().toISOString(),
     rpcUrl,
@@ -335,8 +340,16 @@ async function main() {
   // Carry outgoing job contracts forward as prevJobContracts so jobs created
   // before this redeploy stay visible and claimable in the feed. Order is
   // newest-first; keep only the 2 newest so the feed stays bounded.
-  const existing =
-    readExistingConfig(frontendConfigPath) ?? readExistingConfig(deploymentsFilePath);
+  // Only inherit from a manifest on the SAME chain: the frontend file may
+  // hold a deployment for a different network (e.g. testnet CAs on first
+  // mainnet run), and those addresses must never leak into this manifest.
+  const existingRaw = readExistingConfig(frontendConfigPath) ?? readExistingConfig(deploymentsFilePath);
+  const existing = existingRaw && existingRaw.chainId === chainId ? existingRaw : undefined;
+  if (existingRaw && !existing) {
+    console.log(
+      `Existing manifest targets chainId=${existingRaw.chainId} (this deploy is chainId=${chainId}); skipping prevJobContracts carry-forward.`
+    );
+  }
   const currentEntry = existing?.contracts.jobContract;
   const outgoingChanged =
     Boolean(currentEntry?.address) &&

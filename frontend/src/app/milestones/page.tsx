@@ -477,7 +477,7 @@ export default function MilestonesPage() {
         lower.includes("-32603")
       ) {
         setError(
-          "The Arc testnet transaction pool is temporarily full. Wait 30-60 seconds and try again. Do not click multiple times."
+          "The Arc transaction pool is temporarily full. Wait 30-60 seconds and try again. Do not click multiple times."
         );
       } else if (lower.includes("user rejected") || lower.includes("4001")) {
         setError("Transaction rejected in wallet.");
@@ -590,7 +590,7 @@ export default function MilestonesPage() {
                             <div className="mt-2 text-[11px] text-[#00FFA3]">
                               Tx:{" "}
                               <a
-                                href={`https://explorer.testnet.arc.network/tx/${milestoneTxHashes[milestone.milestoneId]}`}
+                                href={`https://explorer.arc.io/tx/${milestoneTxHashes[milestone.milestoneId]}`}
                                 target="_blank"
                                 rel="noreferrer"
                                 style={{ color: "#00FFA3" }}

@@ -14,7 +14,7 @@ import { LEGACY_ADDRESSES, PREV_V2_ADDRESS } from "@/lib/legacy-contracts";
 // this Map with a shared store (Redis, Vercel KV, PlanetScale, etc.)
 // keyed on `${from.toLowerCase()}:${nonce.toLowerCase()}`.
 //
-// For the current testnet/demo context, in-memory is sufficient because:
+// For the current demo context, in-memory is sufficient because:
 // - authorizations have a short validBefore window (max 5 min)
 // - the risk window is bounded by process lifetime
 //
@@ -42,8 +42,8 @@ function _isNonceUsed(from: string, nonce: string): boolean {
 const PAYMENT_ADDRESS = process.env.PLATFORM_TREASURY_ADDRESS ?? "0x25265b9dBEb6c653b0CA281110Bb0697a9685107";
 const PAYMENT_AMOUNT = "10"; // 0.00001 USDC in 6-decimal units.
 const USDC_CONTRACT = "0x3600000000000000000000000000000000000000";
-const NETWORK = "eip155:5042002";
-const RPC_URL = "https://rpc.testnet.arc.network";
+const NETWORK = "eip155:5042";
+const RPC_URL = "https://rpc.mainnet.arc.io";
 const CIRCLE_GATEWAY_TESTNET_SETTLE_URL = "https://gateway-api-testnet.circle.com/gateway/v1/x402/settle";
 const CIRCLE_GATEWAY_MAINNET_SETTLE_URL = "https://gateway-api.circle.com/gateway/v1/x402/settle";
 
@@ -103,9 +103,9 @@ async function settleWithCircleGateway(parsed: unknown, requirement: PaymentRequ
   }
 
   const url =
-    process.env.CIRCLE_GATEWAY_ENV === "mainnet"
-      ? CIRCLE_GATEWAY_MAINNET_SETTLE_URL
-      : CIRCLE_GATEWAY_TESTNET_SETTLE_URL;
+    process.env.CIRCLE_GATEWAY_ENV === "testnet"
+      ? CIRCLE_GATEWAY_TESTNET_SETTLE_URL
+      : CIRCLE_GATEWAY_MAINNET_SETTLE_URL;
 
   const response = await fetch(url, {
     method: "POST",
@@ -192,9 +192,9 @@ function verifyEip3009Authorization(parsed: unknown, requirement: PaymentRequire
     // Domain constants — locked. Callers cannot override these values.
     // Accepting caller-supplied chainId or verifyingContract would allow
     // a signature made on a different chain/contract to pass verification.
-    const LOCKED_CHAIN_ID = 5042002; // Arc Testnet — immutable
+    const LOCKED_CHAIN_ID = 5042; // Arc Mainnet — immutable
     const LOCKED_USDC = "0x3600000000000000000000000000000000000000"; // Arc USDC — immutable
-    // Arc testnet USDC token name() == "USDC" (probed on-chain 2026-10).
+    // Arc USDC token name() == "USDC" (probed on-chain 2026-10).
     // Must match the domain the frontend/SDK sign with (contracts.ts uses "USDC").
     const LOCKED_DOMAIN_NAME = "USDC";
     const LOCKED_DOMAIN_VERSION = "2";
@@ -251,7 +251,7 @@ async function verifyPayment(parsed: unknown, requirement: PaymentRequirement): 
     return settleWithCircleGateway(parsed, requirement);
   }
 
-  // Testnet fallback: verify the signed authorization locally. This proves intent
+  // Fallback: verify the signed authorization locally. This proves intent
   // and recipient/amount correctness, but does not settle funds through Circle.
   return verifyEip3009Authorization(parsed, requirement);
 }

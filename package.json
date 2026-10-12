@@ -13,6 +13,7 @@
     "chain": "npm run node --workspace contracts",
     "deploy:contracts": "npm run deploy --workspace contracts",
     "deploy:arc": "npm run deploy:arc-testnet --workspace contracts",
+    "deploy:arc-mainnet": "npm run deploy:arc-mainnet --workspace contracts",
     "build": "npm run build --workspace frontend",
     "lint": "npm run lint --workspace frontend",
     "test": "npm run test --workspace contracts",

@@ -49,4 +49,4 @@ node packages/archon-mcp/dist/index.js
 node packages/archon-mcp/smoke.mjs
 ```
 
-Prints tool count and verifies live `archon_status` + multi-source reads against Arc Testnet.
+Prints tool count and verifies live `archon_status` + multi-source reads against Arc Mainnet.

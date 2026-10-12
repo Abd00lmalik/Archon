@@ -28,7 +28,7 @@ export default async function AnalyticsPage() {
     data = await fetchAnalyticsData();
   } catch (err: unknown) {
     console.error("[analytics/page] Failed to pre-fetch analytics:", err);
-    errorMsg = err instanceof Error ? err.message : "Failed to connect to the Arc Testnet RPC node.";
+    errorMsg = err instanceof Error ? err.message : "Failed to connect to the Arc Mainnet RPC node.";
   }
 
   if (errorMsg || !data) {

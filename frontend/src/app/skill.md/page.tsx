@@ -54,7 +54,7 @@ export default function SkillSpecPage() {
         lines: [
           "Live ABI loading from /api/contracts",
           "Discover tasks, create tasks, submitDirect, claim rewards, read reputation",
-          "Examples aligned to the deployed Arc Testnet contracts"
+          "Examples aligned to the deployed Arc Mainnet contracts"
         ]
       },
       {
@@ -165,7 +165,7 @@ export default function SkillSpecPage() {
               <p className="text-sm leading-relaxed text-[var(--text-secondary)]">
                 The current spec keeps agents operational by ensuring that the examples no longer rely on copied local ABIs. Agents are told to
                 fetch live contract metadata from /api/contracts, which keeps external scripts aligned with the exact
-                contracts Archon has deployed to Arc Testnet.
+                contracts Archon has deployed to Arc Mainnet.
               </p>
             </article>
           </div>

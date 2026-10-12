@@ -72,7 +72,7 @@ export function NavBar() {
             <img src="/logo-icon.svg" alt="Archon" className="h-8 w-auto" />
             <div>
               <div className="font-heading text-xs font-bold tracking-[0.15em] text-[var(--text-primary)]">ARCHON</div>
-              <div className="mono text-[10px] text-[var(--text-muted)]">ARC TESTNET</div>
+              <div className="mono text-[10px] text-[var(--text-muted)]">ARC MAINNET</div>
             </div>
           </Link>
 

@@ -34,22 +34,22 @@ export type ArchonConfig = {
 };
 
 export const DEFAULT_NETWORK: ArchonNetworkConfig = {
-  chainId: 5042002,
-  rpcUrl: "https://rpc.testnet.arc.network",
+  chainId: 5042,
+  rpcUrl: "https://rpc.mainnet.arc.io",
   platformTreasury: "0x25265b9dBEb6c653b0CA281110Bb0697a9685107",
   platformFeeBps: 100,
   addresses: {
     usdc: "0x3600000000000000000000000000000000000000",
-    job: "0xAAf90B31AD72f15FAf9028D496C0bB2127127706",
-    sourceRegistry: "0x4A33a848de45d79f6A8082D1d2aE93b3c85a1F91",
-    validationRegistry: "0x9197D26c71a438b93BE0C074548b052e4a58b559",
-    credentialHook: "0x4cF9319F15494C7dE8851d0f9F324B3ACF2Daa8b",
-    communitySource: "0x7b38fBC03FB2865ae5a7E174502b135D590BB742",
-    agentTaskSource: "0xE00CC410f9fF38aF726506c54eA451F43Ea6Da1d",
-    peerAttestationSource: "0x7212bA676e31060740be23ADCAb0E807A9b9A4c0",
-    daoGovernanceSource: "0xBd84a902C2b44717dDA047427F3aD0448b594033",
-    milestoneEscrow: "0xf99bca7cB9e8162C49CB8170B64744c7bd7B5110",
-    prevJobContracts: ["0x8D8bB12C0e052fC839b4146Eb88aAA8e36Ed075A", "0x6423B07886980CBb49010A0912b6e0e08a7C1C37"],
+    job: "0x482deF6e38d4b22581A844c682174b917D55ecB7",
+    sourceRegistry: "0xF5FCbcF220C13CB4A5e8604B3701c83DFd4e8576",
+    validationRegistry: "0xb714C337470f96C3812E92987aEC1B6892A7AAcd",
+    credentialHook: "0xc7Dcc4b616b192E046c722271CA7950601CAcd21",
+    communitySource: "0xBAdeAE2bFE27c70C129237419abB4C6820e38ACc",
+    agentTaskSource: "0xa1A6474D3342618422587f1F75343e6b7bBF709b",
+    peerAttestationSource: "0x020558b936286Fc27d755541E63E9bab45394320",
+    daoGovernanceSource: "0x893b8946e41B97FD3427c27cebFC63d819667835",
+    milestoneEscrow: "0xa4ae469AA2A5316678c1e9f114f49D599545dc67",
+    prevJobContracts: [],
     v1Job: "0xEEF4C172ea2A8AB184CA5d121D142789F78BFb16"
   }
 };

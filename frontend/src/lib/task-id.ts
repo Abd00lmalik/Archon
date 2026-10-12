@@ -1,4 +1,4 @@
-// Canonical task identity across all known testnet job deployments.
+// Canonical task identity across all known job deployments.
 // Display IDs remain the human-facing numbering system while routes use raw
 // contract IDs so current V2 task #0 resolves at /job/0.
 

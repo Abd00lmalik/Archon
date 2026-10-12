@@ -1,8 +1,9 @@
-import { ethers } from "hardhat";
+import { ethers, network } from "hardhat";
 import contracts from "../../frontend/src/lib/generated/contracts.json";
 
 async function main() {
-  console.log("\n=== Arc Testnet E2E Verification ===\n");
+  const networkLabel = network.config.chainId === 5042 ? "Arc Mainnet" : network.name;
+  console.log(`\n=== ${networkLabel} E2E Verification ===\n`);
   const c = contracts.contracts;
   const jobAddress = c.jobContract?.address ?? c.job?.address;
   if (!jobAddress) {
@@ -16,7 +17,7 @@ async function main() {
     contracts.platform?.treasury ??
     contracts.platformTreasury ??
     "0x25265b9dBEb6c653b0CA281110Bb0697a9685107";
-  const expectedFee = String(contracts.platform?.feeBps ?? contracts.platformFeeBps ?? 1000);
+  const expectedFee = String(contracts.platform?.feeBps ?? contracts.platformFeeBps ?? 100);
 
   const registry = await ethers.getContractAt(
     ["function totalCredentials() view returns (uint256)"],
@@ -63,7 +64,7 @@ async function main() {
     ["4. Job treasury = Safe", 
       (await job.platformTreasury()).toLowerCase() === 
       expectedTreasury.toLowerCase()],
-    ["5. Job fee = 1000bps", 
+    [`5. Job fee = ${expectedFee}bps`, 
       (await job.platformFeeBps()).toString() === expectedFee],
     ["6. AgentTask USDC = Arc USDC", 
       (await agentTask.usdc()).toLowerCase() === 

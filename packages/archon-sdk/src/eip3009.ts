@@ -19,7 +19,7 @@ export type Eip3009Domain = {
 };
 
 /**
- * Arc testnet USDC token `name()` is "USDC" (probed on-chain).
+ * Arc USDC token `name()` is "USDC" (probed on-chain).
  * Domain must match what the Archon contracts verify against.
  */
 export function usdcDomain(chainId: number, verifyingContract: string): Eip3009Domain {

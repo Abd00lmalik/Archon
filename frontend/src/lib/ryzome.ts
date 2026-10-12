@@ -7,7 +7,7 @@ export const RYZOME_SERVICE_MANIFEST = {
   version: "1.0.0",
   hookType: "job_completion",
   credentialStandard: "ERC-8004",
-  supportedNetworks: [31337, 5042002],
+  supportedNetworks: [31337, 5042],
   hookAddress: contractAddresses.credentialHook,
   registryAddress: contractAddresses.validationRegistry,
   arcTokenRequirement: "100"

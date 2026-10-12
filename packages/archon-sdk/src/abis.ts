@@ -5,7 +5,7 @@ export const ERC20_ABI = [
   "function decimals() view returns (uint8)"
 ] as const;
 
-/** Arc testnet USDC (FiatToken) also exposes EIP-3009 authorize funcs. */
+/** Arc USDC (FiatToken) also exposes EIP-3009 authorize funcs. */
 export const USDC_EIP3009_ABI = [
   "function permit(address owner,address spender,uint256 value,uint256 deadline,uint8 v,bytes32 r,bytes32 s)",
   "function transferWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce,bytes32 r,bytes32 s)"

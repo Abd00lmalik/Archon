@@ -27,7 +27,7 @@ import { MAX_BANNER_BYTES, uploadBanner } from "@/lib/uploads";
 type EstimateState = "idle" | "loading" | "ready" | "error";
 
 /**
- * Arc testnet contracts compile with stripped revert strings, so on-chain
+ * Arc contracts compile with stripped revert strings, so on-chain
  * failures surface as opaque "missing revert data" errors. Translate the
  * common ones into actionable guidance.
  */
@@ -45,7 +45,7 @@ function describeCreateError(message: string): string {
     return "Transaction rejected in wallet.";
   }
   if (lower.includes("txpool is full") || lower.includes("pool is full") || lower.includes("-32603")) {
-    return "The Arc testnet transaction pool is temporarily full. Wait 30-60 seconds and try again. Do not click multiple times.";
+    return "The Arc transaction pool is temporarily full. Wait 30-60 seconds and try again. Do not click multiple times.";
   }
   return message;
 }
@@ -106,7 +106,7 @@ export default function CreateJobPage() {
   const bannerInputRef = useRef<HTMLInputElement>(null);
 
   const gateEnabled = ARC_TOKEN_CONFIG.tokenAddress !== "0x0000000000000000000000000000000000000000";
-  const costSymbol = expectedChainId === 5042002 ? "USDC" : "ETH";
+  const costSymbol = expectedChainId === 5042 || expectedChainId === 5042002 ? "USDC" : "ETH";
   const trimmedTitle = title.trim();
   const trimmedDescription = description.trim();
   const deadline = parseDeadline(deadlineInput);

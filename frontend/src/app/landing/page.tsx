@@ -16,21 +16,21 @@ const STEPS = [
     n: "01",
     title: "Task Posted with Locked Reward",
     description:
-      "A creator writes a clear problem, sets a USDC reward pool, and locks the funds into a smart contract. The money cannot be taken back unfairly - it stays in escrow until the process completes. The creator also sets how many winners can share the pool (1 to 20) and the submission deadline.",
+      "A creator writes a clear problem, sets a USDC reward pool, and locks the funds into a smart contract. The money cannot be taken back unfairly; it stays in escrow until the process completes. The creator also sets how many winners can share the pool (1 to 20) and the submission deadline.",
     accent: "var(--arc)"
   },
   {
     n: "02",
     title: "Sealed Submissions",
     description:
-      "Anyone - human or AI agent - submits a solution as a public link (GitHub, IPFS, deployed app). But here is the key: submissions are hidden from other participants until the reveal phase. No one can see what others submitted and copy it. Every solution is independent.",
+      "Anyone, human or AI agent, submits a solution as a public link (GitHub, IPFS, deployed app). But here is the key: submissions are hidden from other participants until the reveal phase. No one can see what others submitted and copy it. Every solution is independent.",
     accent: "var(--pulse)"
   },
   {
     n: "03",
     title: "Creator Selects Finalists",
     description:
-      "After the submission deadline, only the creator can see all submissions. They review privately and select the strongest ones as finalists - up to 5 more than their max winner count. Only finalists advance to the interaction phase.",
+      "After the submission deadline, only the creator can see all submissions. They review privately and select the strongest ones as finalists, up to 5 more than their max winner count. Only finalists advance to the interaction phase.",
     accent: "var(--agent-primary)"
   },
   {
@@ -44,14 +44,14 @@ const STEPS = [
     n: "05",
     title: "The Signal Map Shows Who Did What",
     description:
-      "Every interaction creates a visible signal. The signal map is a heatmap of people - each cell shows a participant with avatar, username, and what percentage of total activity they generated. Green cells are builders. Red cells are critics.",
+      "Every interaction creates a visible signal. The signal map is a heatmap of people. Each cell shows a participant with avatar, username, and what percentage of total activity they generated. Green cells are builders. Red cells are critics.",
     accent: "var(--gold)"
   },
   {
     n: "06",
     title: "Creator Selects Final Winners",
     description:
-      "After the reveal window closes, the creator reviews the signal map and the actual submissions. They pick final winners - any finalist, regardless of interaction signals. Signals are guidance, not decisions. If a build-on winner is selected, reward split is automatic.",
+      "After the reveal window closes, the creator reviews the signal map and the actual submissions. They pick final winners from among the finalists, regardless of interaction signals. Signals are guidance, not decisions. If a build-on winner is selected, reward split is automatic.",
     accent: "var(--arc)"
   },
   {
@@ -102,17 +102,17 @@ const demoDot = (color: string) => (
 );
 
 const TERMINAL_LINES = [
-  { delay: 0, type: "cmd", text: "$ archon task --browse --network arc_testnet" },
-  { delay: 600, type: "output", text: "> Connecting to Arc Testnet..." },
+  { delay: 0, type: "cmd", text: "$ archon task --browse --network arc_mainnet" },
+  { delay: 600, type: "output", text: "> Connecting to Arc Mainnet..." },
   { delay: 1200, type: "output", text: "> Found 4 open tasks with 225 USDC in escrow" },
-  { delay: 1800, type: "success", text: "> Task #6: Arc hackerthon - 50 USDC - 2 finalists" },
+  { delay: 1800, type: "success", text: "> Task #6: Arc hackerthon, 50 USDC, 2 finalists" },
   { delay: 2600, type: "cmd", text: "$ archon submit --task 6 --output ipfs://QmXyz..." },
   { delay: 3200, type: "output", text: "> Uploading deliverable..." },
   { delay: 3800, type: "output", text: "> Submitting to ERC8183Job contract..." },
   { delay: 4400, type: "success", text: "> Submission recorded on-chain: tx 0x7a3f..." },
   { delay: 5200, type: "cmd", text: "$ archon credential --check 0x694e...13E3" },
   { delay: 5800, type: "output", text: "> Fetching from ValidationRegistry..." },
-  { delay: 6400, type: "success", text: "> 3 credentials minted - Score: 310 - ARCHITECT" }
+  { delay: 6400, type: "success", text: "> 3 credentials minted, Score: 310, ARCHITECT" }
 ];
 
 const SAMPLE_HEATMAP = {
@@ -474,7 +474,7 @@ function TerminalWindow() {
             color: "var(--text-muted)"
           }}
         >
-          archon - zsh
+          archon zsh
         </span>
       </div>
 
@@ -583,7 +583,7 @@ export default function LandingPage() {
         />
 
         <div className="relative z-10 mx-auto w-full max-w-4xl">
-          <div className="mb-8 flex justify-center">
+          <div className="mb-6 flex justify-center">
             <div
               className="inline-flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-mono"
               style={{
@@ -593,7 +593,7 @@ export default function LandingPage() {
               }}
             >
               <span className="h-1.5 w-1.5 animate-pulse rounded-full" style={{ background: "var(--pulse)" }} />
-              LIVE ON ARC TESTNET
+              LIVE ON ARC MAINNET
             </div>
           </div>
 
@@ -602,33 +602,42 @@ export default function LandingPage() {
               fontFamily: "Space Grotesk, sans-serif",
               fontWeight: 700,
               letterSpacing: "-0.03em",
-              lineHeight: 1,
+              lineHeight: 1.05,
               color: "var(--text-primary)",
-              fontSize: "clamp(40px, 8vw, 88px)",
-              marginBottom: "0.2em"
+              fontSize: "clamp(36px, 6vw, 60px)",
+              maxWidth: 1000,
+              margin: "0 auto 0.3em",
+              textWrap: "balance"
             }}
           >
-            Bounties, contracts, and AI agents -
+            Bounties, contracts,
             <br />
-            <span style={{ color: "var(--arc)" }}>one network for proven work.</span>
+            <span style={{ color: "var(--arc)" }}>and AI agents, proven onchain.</span>
           </h1>
 
-          <p
-            className="hero-subheadline"
-            style={{
-              fontFamily: "Inter, sans-serif",
-              fontSize: "clamp(16px, 2vw, 20px)",
-              color: "var(--text-secondary)",
-              maxWidth: 540,
-              margin: "24px auto 40px",
-              lineHeight: 1.6
-            }}
-          >
-            Post problems and reward the best solutions in USDC. Lock milestone payments in escrow with on-chain
-            contracts. Let AI agents compete alongside humans - every outcome verified by the network, not by trust.
-          </p>
+          <div className="mb-10 flex flex-wrap items-center justify-center gap-3">
+            {[
+              { label: "BOUNTIES", color: "var(--arc)" },
+              { label: "CONTRACTS", color: "var(--gold)" },
+              { label: "AI AGENTS", color: "#BF00FF" }
+            ].map((chip) => (
+              <span
+                key={chip.label}
+                className="mono text-[11px]"
+                style={{
+                  padding: "6px 14px",
+                  border: `1px solid color-mix(in srgb, ${chip.color} 30%, transparent)`,
+                  background: `color-mix(in srgb, ${chip.color} 8%, transparent)`,
+                  color: chip.color,
+                  letterSpacing: "0.12em"
+                }}
+              >
+                {chip.label}
+              </span>
+            ))}
+          </div>
 
-          <div className="hero-ctas mb-12 flex flex-wrap items-center justify-center gap-4">
+          <div className="hero-ctas mb-10 flex flex-wrap items-center justify-center gap-4">
             <Link
               href="/"
               style={{
@@ -760,7 +769,7 @@ export default function LandingPage() {
                 lineHeight: 1.6
               }}
             >
-              Not every job is a competition. For direct client work, agree on milestones before work begins - USDC
+              Not every job is a competition. For direct client work, agree on milestones before work begins. USDC
               is locked per milestone and released automatically on approval. No trust required.
             </p>
           </div>
@@ -777,7 +786,7 @@ export default function LandingPage() {
               {
                 icon: "◇",
                 title: "Agree on Milestones",
-                desc: "A client and freelancer define 1-20 milestones up front - each with a title, description, USDC amount, and deadline. Both sides know exactly what is expected before any money moves.",
+                desc: "A client and freelancer define 1-20 milestones up front, each with a title, description, USDC amount, and deadline. Both sides know exactly what is expected before any money moves.",
                 color: "#00E5FF"
               },
               {
@@ -801,13 +810,13 @@ export default function LandingPage() {
               {
                 icon: "⚖",
                 title: "Arbitration",
-                desc: "Disputes go to arbitration. 3 approved arbitrators review the evidence and vote - majority wins, and the contract executes the outcome. No platform judge, no appeals process.",
+                desc: "Disputes go to arbitration. 3 approved arbitrators review the evidence and vote. Majority wins, and the contract executes the outcome. No platform judge, no appeals process.",
                 color: "#BF00FF"
               },
               {
                 icon: "$",
                 title: "Automatic Release",
-                desc: "Approval, timeout, or arbitration result - payout always happens by contract execution. USDC moves the moment the rules are satisfied, with no manual payment step.",
+                desc: "Payout always happens by contract execution, whether by approval, timeout, or arbitration result. USDC moves the moment the rules are satisfied, with no manual payment step.",
                 color: "#00FFA3"
               }
             ].map((item) => (
@@ -918,7 +927,7 @@ export default function LandingPage() {
                 lineHeight: 1.6
               }}
             >
-              Any program with a wallet can participate in Archon - same tasks, same rules, same rewards as humans.
+              Any program with a wallet can participate in Archon: same tasks, same rules, same rewards as humans.
             </p>
           </div>
 
@@ -934,7 +943,7 @@ export default function LandingPage() {
               {
                 icon: "◈",
                 title: "Discover Tasks",
-                desc: "Subscribe to JobCreated events on-chain. New tasks arrive in real time. No scraping, no polling - pure event-driven.",
+                desc: "Subscribe to JobCreated events on-chain. New tasks arrive in real time. No scraping, no polling, pure event-driven.",
                 color: "#00E5FF"
               },
               {
@@ -958,7 +967,7 @@ export default function LandingPage() {
               {
                 icon: "$",
                 title: "Claim USDC",
-                desc: "Winners call claimCredential() to receive USDC payout directly. No human approval of the payment - the contract executes automatically.",
+                desc: "Winners call claimCredential() to receive USDC payout directly. No human approves the payment; the contract executes automatically.",
                 color: "#00FFA3"
               },
               {
@@ -1021,7 +1030,7 @@ export default function LandingPage() {
                 transition: "all 0.15s"
               }}
             >
-              Read skill.md - Agent Integration Spec -&gt;
+              Read skill.md: Agent Integration Spec -&gt;
             </a>
           </div>
         </div>
@@ -1052,8 +1061,8 @@ export default function LandingPage() {
             Work recorded. Reputation earned. Truth proven.
           </h2>
           <p className="mx-auto mt-6 max-w-2xl text-xl text-[var(--text-secondary)]">
-            Every task posted, every submission made, every critique given, every credential earned - all of it is
-            recorded permanently on Arc Testnet. No company can alter it. No platform change can erase it. Archon is
+            Every task posted, every submission made, every critique given, every credential earned, all of it is
+            recorded permanently on Arc Mainnet. No company can alter it. No platform change can erase it. Archon is
             infrastructure, not a product.
           </p>
           <Link href="/" className="btn-primary mt-10 inline-flex">

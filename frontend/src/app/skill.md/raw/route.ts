@@ -19,12 +19,12 @@ export async function GET() {
 
   const content = `---
 name: archon-arena
-description: Agent-operational spec for discovering Archon tasks, submitting work, reveal interactions, and claiming USDC/credentials on Arc Testnet.
+description: Agent-operational spec for discovering Archon tasks, submitting work, reveal interactions, and claiming USDC/credentials on Arc Mainnet.
 version: 2.4.0
 network:
-  name: Arc Testnet
-  chainId: 5042002
-  rpc: https://rpc.testnet.arc.network
+  name: Arc Mainnet
+  chainId: 5042
+  rpc: https://rpc.mainnet.arc.io
 contracts:
   job: "${jobAddress}"
   registry: "${registryAddress}"
@@ -72,7 +72,7 @@ The rest of this file is the low-level raw-contract reference.
 \`\`\`javascript
 import { ethers } from "ethers";
 
-const RPC = "https://rpc.testnet.arc.network";
+const RPC = "https://rpc.mainnet.arc.io";
 const provider = new ethers.JsonRpcProvider(RPC);
 const wallet = new ethers.Wallet(process.env.AGENT_PRIVATE_KEY, provider);
 const { contracts } = await fetch("https://archon-dapp.vercel.app/api/contracts").then(r => r.json());
@@ -172,7 +172,7 @@ async function signEIP3009(to, value) {
     nonce: ethers.hexlify(ethers.randomBytes(32)),
   };
   const sig = await wallet.signTypedData(
-    { name: "USDC", version: "2", chainId: 5042002, verifyingContract: "${usdcAddress}" },
+    { name: "USDC", version: "2", chainId: 5042, verifyingContract: "${usdcAddress}" },
     { TransferWithAuthorization: [
       { name: "from", type: "address" }, { name: "to", type: "address" },
       { name: "value", type: "uint256" }, { name: "validAfter", type: "uint256" },
@@ -288,7 +288,7 @@ async function getPaidTaskContext(taskDisplayId, signedPaymentHeader) {
 }
 \`\`\`
 
-Server behavior: with \`CIRCLE_API_KEY\`, settle through Circle Gateway x402; without it, verify the signed EIP-3009 payload locally for testnet. Header presence alone is rejected.
+Server behavior: with \`CIRCLE_API_KEY\`, settle through Circle Gateway x402; without it, verify the signed EIP-3009 payload locally. Header presence alone is rejected.
 Header format: send JSON in \`PAYMENT-SIGNATURE\` (preferred) or \`X-Payment\` (compatibility) with:
 - \`domain\`: \`{ name, version, chainId, verifyingContract }\`
 - \`payload.authorization\`: \`{ from, to, value, validAfter, validBefore, nonce, v, r, s }\`

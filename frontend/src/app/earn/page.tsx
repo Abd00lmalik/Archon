@@ -97,11 +97,11 @@ const TIERS = [
 ];
 
 const METAMASK_CONFIG = [
-  { field: "Network Name", value: "Arc Testnet" },
-  { field: "RPC URL", value: "https://rpc.testnet.arc.network" },
-  { field: "Chain ID", value: "5042002" },
+  { field: "Network Name", value: "Arc Mainnet" },
+  { field: "RPC URL", value: "https://rpc.mainnet.arc.io" },
+  { field: "Chain ID", value: "5042" },
   { field: "Currency Symbol", value: "USDC" },
-  { field: "Block Explorer", value: "https://testnet.arcscan.app" }
+  { field: "Block Explorer", value: "https://explorer.arc.io" }
 ];
 
 const USER_GUIDES: Guide[] = [
@@ -221,7 +221,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "What is Arc in this app?",
-    a: "Arc is the configured target network (Arc Testnet, chain ID 5042002) where Archon contracts and wallet flows run."
+    a: "Arc is the configured target network (Arc Mainnet, chain ID 5042) where Archon contracts and wallet flows run."
   },
   {
     q: "What USDC decimal model should I know?",
@@ -465,11 +465,7 @@ export default function EarnPage() {
               />
             </div>
             <p className="mt-3 text-sm text-[#9CA3AF]">
-              Get testnet USDC from{" "}
-              <a className="text-[#8FD9FF] underline underline-offset-4" href="https://faucet.arc.network" target="_blank" rel="noreferrer">
-                faucet.arc.network
-              </a>
-              .
+              Fund your wallet with USDC from an exchange or bridge. USDC is used for gas and rewards on Arc Mainnet.
             </p>
           </div>
         </div>
@@ -525,8 +521,8 @@ export default function EarnPage() {
                 ERC-8183 job contracts enforce task lifecycle proof from create to accept to submit to approve to claim.
               </p>
               <p>
-                Arc testnet values: chain ID 5042002, RPC <span className="arc-mono">https://rpc.testnet.arc.network</span>, explorer{" "}
-                <span className="arc-mono">https://testnet.arcscan.app</span>.
+                Arc mainnet values: chain ID 5042, RPC <span className="arc-mono">https://rpc.mainnet.arc.io</span>, explorer{" "}
+                <span className="arc-mono">https://explorer.arc.io</span>.
               </p>
             </div>
           </div>

@@ -7,6 +7,7 @@
     "node": "cross-env APPDATA=.hardhat-appdata LOCALAPPDATA=.hardhat-localappdata hardhat node",
     "deploy": "cross-env APPDATA=.hardhat-appdata LOCALAPPDATA=.hardhat-localappdata hardhat run scripts/deploy.ts --network localhost",
     "deploy:arc-testnet": "cross-env APPDATA=.hardhat-appdata LOCALAPPDATA=.hardhat-localappdata hardhat run scripts/deploy.ts --network arcTestnet",
+    "deploy:arc-mainnet": "cross-env APPDATA=.hardhat-appdata LOCALAPPDATA=.hardhat-localappdata hardhat run scripts/deploy.ts --network arcMainnet",
     "test": "cross-env APPDATA=.hardhat-appdata LOCALAPPDATA=.hardhat-localappdata hardhat test",
     "clean": "cross-env APPDATA=.hardhat-appdata LOCALAPPDATA=.hardhat-localappdata hardhat clean",
     "typecheck": "tsc --noEmit"

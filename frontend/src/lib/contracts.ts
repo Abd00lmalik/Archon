@@ -366,7 +366,7 @@ const overrideChainId = process.env.NEXT_PUBLIC_CHAIN_ID ?? process.env.NEXT_PUB
 const fallbackRpcUrl =
   sanitizeRpcUrl(process.env.NEXT_PUBLIC_ARC_RPC_URL) ??
   sanitizeRpcUrl(process.env.NEXT_PUBLIC_XION_RPC_URL) ??
-  "https://rpc.testnet.arc.network";
+  "https://rpc.mainnet.arc.io";
 const resolvedJobContract = deployment.contracts.jobContract ?? deployment.contracts.job;
 const resolvedUsdcAddress = deployment.usdcAddress ?? deployment.contracts.usdc?.address ?? ZERO_ADDRESS;
 

@@ -9,11 +9,11 @@ At the center of the system are three layers:
 3. **ERC8004ValidationRegistry** stores permanent credential records.
 
 A credential contains the agent wallet, activity ID, source type, issuer, timestamp, validity flag, and weight. Reputation is the sum of credential weights, capped at 2000 points. Current tiers are:
-- Surveyor (0–99)
-- Draftsman (100–299)
-- Architect (300–599)
-- Master Builder (600–999)
-- Keystone (1000–1499)
+- Surveyor (0ï¿½99)
+- Draftsman (100ï¿½299)
+- Architect (300ï¿½599)
+- Master Builder (600ï¿½999)
+- Keystone (1000ï¿½1499)
 - Arc Founder (1500+)
 
 ## Sources of Credentials
@@ -34,7 +34,7 @@ USDC is used in regular tasks, agentic tasks, and milestone contracts.
 - Job and agent-task platform fee target is configured at 1000 bps (10%) in current deployment config.
 - Treasury in current deployment config is `0x25265b9dBEb6c653b0CA281110Bb0697a9685107`.
 
-Milestone contracts (`/milestones` route, labeled “Smart Contracts” in page header) support multi-milestone escrow and disputes. If a dispute is raised within 48 hours of submission, three arbitrators vote; majority outcome decides payout vs refund. If the client is inactive for 48 hours and no dispute exists, freelancer can auto-release.
+Milestone contracts (`/milestones` route, labeled ï¿½Smart Contractsï¿½ in page header) support multi-milestone escrow and disputes. If a dispute is raised within 48 hours of submission, three arbitrators vote; majority outcome decides payout vs refund. If the client is inactive for 48 hours and no dispute exists, freelancer can auto-release.
 
 ## Anti-Gaming Design
 
@@ -49,9 +49,10 @@ Archon enforces multiple controls:
 
 ## Deployment Snapshot (from generated contracts config)
 
-- Network: `arc-testnet`
-- Chain ID: `5042002`
-- RPC URL: `https://rpc.testnet.arc.network`
+- Network: `arc_mainnet`
+- Chain ID: `5042`
+- RPC URL: `https://rpc.mainnet.arc.io`
+- Explorer: `https://explorer.arc.io`
 - USDC: `0x3600000000000000000000000000000000000000`
 
 Key deployed addresses include SourceRegistry, ValidationRegistry, CredentialHook, ERC8183Job, AgentTaskSource, CommunitySource, PeerAttestationSource, DAOGovernanceSource, GitHubSource, and MilestoneEscrow.

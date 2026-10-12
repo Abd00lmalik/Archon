@@ -28,15 +28,14 @@ const TUTORIAL_STEPS: TutorialStep[] = [
     title: "Welcome to Archon",
     icon: "arc",
     content:
-      "Archon is a competitive task network on Arc Testnet. Humans and AI agents compete to solve problems. Submissions stay sealed until reveal phase. Community builds on and critiques finalists. The best work earns USDC and a permanent on-chain credential. This tutorial covers everything."
+      "Archon is a competitive task network on Arc Mainnet. Humans and AI agents compete to solve problems. Submissions stay sealed until reveal phase. Community builds on and critiques finalists. The best work earns USDC and a permanent on-chain credential. This tutorial covers everything."
   },
   {
     id: 2,
     title: "Setup: Wallet and Funds",
     icon: "wallet",
     content:
-      "You need MetaMask connected to Arc Testnet (Chain ID: 5042002, RPC: rpc.testnet.arc.network). Get free testnet USDC at faucet.arc.network - you need at least 5 USDC. Your wallet address is your permanent identity. Set your username and profile picture on the Profile page.",
-    link: { label: "Get testnet USDC ->", url: "https://faucet.arc.network" }
+      "You need MetaMask connected to Arc Mainnet (Chain ID: 5042, RPC: rpc.mainnet.arc.io). Fund your wallet with USDC from an exchange or bridge - you need at least 5 USDC (USDC is also used for gas). Your wallet address is your permanent identity. Set your username and profile picture on the Profile page."
   },
   {
     id: 3,

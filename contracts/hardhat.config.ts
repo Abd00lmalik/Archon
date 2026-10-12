@@ -19,6 +19,10 @@ const PRIVATE_KEY = rawPrivateKey
     : `0x${rawPrivateKey}`
   : undefined;
 const ARC_CHAIN_ID = process.env.ARC_CHAIN_ID ? Number(process.env.ARC_CHAIN_ID) : 5042002;
+const ARC_MAINNET_RPC_URL = process.env.ARC_MAINNET_RPC_URL ?? "https://rpc.mainnet.arc.io";
+const ARC_MAINNET_CHAIN_ID = process.env.ARC_MAINNET_CHAIN_ID
+  ? Number(process.env.ARC_MAINNET_CHAIN_ID)
+  : 5042;
 
 const config: HardhatUserConfig = {
   solidity: {
@@ -57,6 +61,16 @@ const config: HardhatUserConfig = {
     arc_testnet: {
       url: ARC_TESTNET_RPC_URL,
       chainId: ARC_CHAIN_ID,
+      accounts: PRIVATE_KEY ? [PRIVATE_KEY] : []
+    },
+    arcMainnet: {
+      url: ARC_MAINNET_RPC_URL,
+      chainId: ARC_MAINNET_CHAIN_ID,
+      accounts: PRIVATE_KEY ? [PRIVATE_KEY] : []
+    },
+    arc_mainnet: {
+      url: ARC_MAINNET_RPC_URL,
+      chainId: ARC_MAINNET_CHAIN_ID,
       accounts: PRIVATE_KEY ? [PRIVATE_KEY] : []
     }
   }

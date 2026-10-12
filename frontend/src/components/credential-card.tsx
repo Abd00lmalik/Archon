@@ -105,11 +105,11 @@ export function CredentialCard({ credential, provider }: { credential: Credentia
             </div>
             <div>
               <div className="text-[var(--text-muted)]">Network</div>
-              <div>Arc Testnet</div>
+              <div>Arc Mainnet</div>
             </div>
             <div>
               <div className="text-[var(--text-muted)]">Chain</div>
-              <div className="mono">5042002</div>
+              <div className="mono">5042</div>
             </div>
           </div>
 
@@ -150,7 +150,7 @@ export function CredentialCard({ credential, provider }: { credential: Credentia
                 <div className="p-6 text-center">
                   <div className="mx-auto mb-4 w-fit" style={{ color: theme.accent }}>{sourceIcon(normalizedSource)}</div>
                   <h4 className="font-heading text-2xl">{title}</h4>
-                  <p className="mt-2 text-sm text-[var(--text-secondary)]">{theme.label} credential on Arc Testnet</p>
+                  <p className="mt-2 text-sm text-[var(--text-secondary)]">{theme.label} credential on Arc Mainnet</p>
                   <div className="mt-6 grid gap-2 text-left text-sm">
                     <div>Credential ID: #{credential.credentialId}</div>
                     <div>Weight: +{credential.weight} pts</div>

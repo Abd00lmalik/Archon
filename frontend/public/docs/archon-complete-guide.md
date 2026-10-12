@@ -1,4 +1,4 @@
-# ARCHON — COMPLETE PLATFORM DOCUMENTATION
+# ARCHON ï¿½ COMPLETE PLATFORM DOCUMENTATION
 
 ## SECTION 1: WHAT IS ARCHON?
 
@@ -954,12 +954,12 @@ return Math.min(total, 2000);
 ```
 
 #### Tier thresholds (from `reputation.ts`)
-- Surveyor: 0–99
-- Draftsman: 100–299
-- Architect: 300–599
-- Master Builder: 600–999
-- Keystone: 1000–1499
-- Arc Founder: 1500–2000
+- Surveyor: 0ï¿½99
+- Draftsman: 100ï¿½299
+- Architect: 300ï¿½599
+- Master Builder: 600ï¿½999
+- Keystone: 1000ï¿½1499
+- Arc Founder: 1500ï¿½2000
 
 #### Tier colors in current UI implementation
 - Source-type colors are explicit; tier-specific colors are not uniquely mapped per tier in code.
@@ -1084,7 +1084,7 @@ For each mechanism: attack blocked, logic, bypass difficulty.
 
 #### Common errors
 - Data load failure: inline red error card appears.
-- Stats load failure: stats show `—` silently for failed metrics.
+- Stats load failure: stats show `ï¿½` silently for failed metrics.
 
 #### Tips
 - Use `My Work` for a focused dashboard after accepting tasks.
@@ -1369,7 +1369,7 @@ Cooldown timer
 2. My Tasks
 - In Progress: output submission form.
 - Awaiting Validation: submitted output + estimated unlock countdown.
-- Validated — Claim Reward: net claim action with cooldown messaging.
+- Validated ï¿½ Claim Reward: net claim action with cooldown messaging.
 - Completed: history rows.
 
 3. Post a Task
@@ -1665,6 +1665,7 @@ Why separate funding
 
 #### Network flag
 - Local: `--network localhost`
+- Arc mainnet aliases in config: `arcMainnet` and `arc_mainnet`
 - Arc testnet aliases in config: `arcTestnet` and `arc_testnet`
 
 ### 5.2 Checking Platform Health
@@ -1673,7 +1674,7 @@ Why separate funding
 - Current equivalent checks can be run with:
 
 ```bash
-npx hardhat run scripts/e2e-check.ts --network arc_testnet
+npx hardhat run scripts/e2e-check.ts --network arc_mainnet
 ```
 
 What it checks (10 checks in current file):
@@ -1730,7 +1731,7 @@ $env:MODERATOR_ADDRESS="0x..."
 $env:DISPLAY_NAME="Platform Admin"
 $env:ROLE="Archon Founder"
 $env:PROFILE_URI="https://..."
-npx hardhat run scripts/admin/add-moderator.ts --network arc_testnet
+npx hardhat run scripts/admin/add-moderator.ts --network arc_mainnet
 ```
 
 What script does:
@@ -1763,7 +1764,7 @@ Use script:
 $env:ARBITRATOR_ADDRESS="0x..."
 # or signer index:
 $env:ARBITRATOR_INDEX="1"
-npx hardhat run scripts/admin/add-arbitrator.ts --network arc_testnet
+npx hardhat run scripts/admin/add-arbitrator.ts --network arc_mainnet
 ```
 
 Guidance:
@@ -1777,7 +1778,7 @@ Use script:
 ```bash
 $env:GOVERNOR_ADDRESS="0x..."
 $env:DAO_NAME="My DAO"
-npx hardhat run scripts/admin/add-governor.ts --network arc_testnet
+npx hardhat run scripts/admin/add-governor.ts --network arc_mainnet
 ```
 
 Effect:
@@ -1811,39 +1812,41 @@ Where fees go:
 
 ## SECTION 6: NETWORK AND DEPLOYMENT
 
-### 6.1 Arc Testnet Details (from current code/config)
-- Chain ID: `5042002`
-- RPC URL (current contracts JSON / env): `https://rpc.testnet.arc.network`
-- Block explorer used in UI: `https://testnet.arcscan.app`
+### 6.1 Arc Mainnet Details (from current code/config)
+- Chain ID: `5042`
+- RPC URL (current contracts JSON / env): `https://rpc.mainnet.arc.io`
+- Block explorer used in UI: `https://explorer.arc.io`
 - USDC ERC-20: `0x3600000000000000000000000000000000000000`
-- Faucet reference from requirements context: `faucet.arc.network`
+- Funding note:
+  - There is no faucet on mainnet. Fund your wallet with USDC from an exchange or bridge.
+  - USDC is the native gas token on Arc (18-decimal display in wallets).
 - Decimal note:
   - Native gas token display uses 18 decimals in wallet network config
   - ERC-20 USDC interactions in contracts/frontend use 6 decimals
 
 ### 6.2 All Deployed Contract Addresses (from `frontend/src/lib/generated/contracts.json`)
-- SourceRegistry: `0xa25C501C62e60EF1F03c37400b4FBDf2775d18Bf`
-- ValidationRegistry: `0xCC2813327a5e2ce43a7bf78ed59d2D21BBB66b1B`
-- CredentialHook: `0x23d66b8eb42Cc1f51F37b879A3dbC15252684Db2`
-- ERC8183Job: `0xE57DE7e8dA52e76f8Ab9b88697306Ef49Fa633b9`
-- GitHubSource: `0xa67851a3DaFF1a3082e30ab1E5bd0B3fDBE21b55`
-- CommunitySource: `0x0a7c1B0dB4Cc6bE3A95e5BC1B99065b91b725353`
-- AgentTaskSource: `0xbE7e13b78DA31b1249B52083C4B4eF02FE9a6A21`
-- MilestoneEscrow: `0xb958a8CC159D8E2d079E7f26B9D3E6E8340D5d78`
-- PeerAttestationSource: `0x6A42a8bFeBE96E94d06C5bcBfA303E984f85Ae27`
-- DAOGovernanceSource: `0xe42Bf6A67899a82E2AA7DE9DE74f8a30a338f457`
+- SourceRegistry: `0xF5FCbcF220C13CB4A5e8604B3701c83DFd4e8576`
+- ValidationRegistry: `0xb714C337470f96C3812E92987aEC1B6892A7AAcd`
+- CredentialHook: `0xc7Dcc4b616b192E046c722271CA7950601CAcd21`
+- ERC8183Job: `0x482deF6e38d4b22581A844c682174b917D55ecB7`
+- GitHubSource: `0x2B8b558aF5c3Eef2c90812D7a8276D4056c80046`
+- CommunitySource: `0xBAdeAE2bFE27c70C129237419abB4C6820e38ACc`
+- AgentTaskSource: `0xa1A6474D3342618422587f1F75343e6b7bBF709b`
+- MilestoneEscrow: `0xa4ae469AA2A5316678c1e9f114f49D599545dc67`
+- PeerAttestationSource: `0x020558b936286Fc27d755541E63E9bab45394320`
+- DAOGovernanceSource: `0x893b8946e41B97FD3427c27cebFC63d819667835`
 
 ### 6.3 MetaMask Setup for Users
 1. Open MetaMask.
 2. Network dropdown -> Add Network.
 3. Enter:
-   - Chain name: Arc Testnet
-   - RPC URL: `https://rpc.testnet.arc.network`
-   - Chain ID: `5042002`
+   - Chain name: Arc Mainnet
+   - RPC URL: `https://rpc.mainnet.arc.io`
+   - Chain ID: `5042`
    - Currency symbol: `USDC`
-   - Explorer: `https://testnet.arcscan.app`
-4. Save and switch to Arc Testnet.
-5. Get testnet funds.
+   - Explorer: `https://explorer.arc.io`
+4. Save and switch to Arc Mainnet.
+5. Fund your wallet with USDC from an exchange or bridge (USDC is also the gas token on Arc).
 6. Open Archon frontend and connect wallet.
 
 ### 6.4 Running Locally
@@ -1892,7 +1895,7 @@ npm run dev:frontend
 - Credential Hook: Contract gateway that accepts source completion and calls registry issue.
 - Escrow: Funds held by contract until release conditions are met.
 - USDC: Stablecoin used for rewards and milestone funding.
-- Arc Testnet: Target network for deployment in current config.
+- Arc Mainnet: Target network for deployment in current config.
 - Wallet: Blockchain account (public address + private key control).
 - Gas: Transaction execution cost paid on chain.
 - Smart Contract: On-chain program with deterministic rules.
@@ -1902,7 +1905,7 @@ npm run dev:frontend
 - Attestation: Peer-issued trust statement with strict limits.
 - DID: Decentralized identifier string derived from chain+address in frontend.
 - Deliverable Hash: Submitted reference link/hash proving output.
-- Platform Fee (basis points): Protocol cut where 1000 bps = 10%.
+- Platform Fee (basis points): Protocol cut, currently 100 bps (1%).
 - Operator: Wallet approved in SourceRegistry for source actions.
 - Moderator: Active reviewer profile in CommunitySource.
 - Sybil Attack: One actor using many wallets to fake decentralized trust.

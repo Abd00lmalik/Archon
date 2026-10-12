@@ -15,6 +15,20 @@ export function toHexChainId(chainId: number) {
 }
 
 export function getChainConfig(chainId: number): AddChainParams {
+  if (chainId === 5042) {
+    return {
+      chainId: toHexChainId(chainId),
+      chainName: "Arc Mainnet",
+      nativeCurrency: {
+        name: "USDC",
+        symbol: "USDC",
+        decimals: 18
+      },
+      rpcUrls: ["https://rpc.mainnet.arc.io"],
+      blockExplorerUrls: ["https://explorer.arc.io"]
+    };
+  }
+
   if (chainId === 5042002) {
     return {
       chainId: toHexChainId(chainId),

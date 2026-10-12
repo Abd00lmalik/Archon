@@ -3,7 +3,7 @@ import { Contract, Interface, InterfaceAbi, Provider } from "ethers";
 /**
  * Shared Multicall3 batching helpers.
  *
- * The Arc Testnet public RPC rejects or returns empty responses for bursts of
+ * The Arc public RPC rejects or returns empty responses for bursts of
  * individual calls, but accepts large batched `eth_call`s. Aggregating reads
  * through Multicall3 turns hundreds of per-entity requests into a handful of
  * chunked calls.

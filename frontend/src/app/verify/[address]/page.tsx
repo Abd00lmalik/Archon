@@ -117,7 +117,7 @@ export default function VerifyWalletPage() {
         <div className="mt-4 space-y-2 text-sm">
           <p className="break-all text-[#EAEAF0]">{address}</p>
           <a
-            href={`https://testnet.arcscan.app/address/${address}`}
+            href={`https://explorer.arc.io/address/${address}`}
             target="_blank"
             rel="noreferrer"
             className="text-[#8FD9FF] underline underline-offset-4"
@@ -144,7 +144,7 @@ export default function VerifyWalletPage() {
       </div>
 
       <div className="archon-card border border-emerald-400/30 bg-emerald-500/10 p-5 text-sm text-emerald-100">
-        <p className="font-medium">Verified on Arc Testnet</p>
+        <p className="font-medium">Verified on Arc Mainnet</p>
         <p className="mt-1 text-emerald-200/90">
           All credentials below are cryptographically verified on-chain and cannot be altered or deleted.
         </p>
