@@ -194,7 +194,9 @@ function verifyEip3009Authorization(parsed: unknown, requirement: PaymentRequire
     // a signature made on a different chain/contract to pass verification.
     const LOCKED_CHAIN_ID = 5042002; // Arc Testnet — immutable
     const LOCKED_USDC = "0x3600000000000000000000000000000000000000"; // Arc USDC — immutable
-    const LOCKED_DOMAIN_NAME = "USD Coin";
+    // Arc testnet USDC token name() == "USDC" (probed on-chain 2026-10).
+    // Must match the domain the frontend/SDK sign with (contracts.ts uses "USDC").
+    const LOCKED_DOMAIN_NAME = "USDC";
     const LOCKED_DOMAIN_VERSION = "2";
 
     // Belt-and-suspenders: confirm requirement.asset matches the locked USDC address

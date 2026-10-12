@@ -87,3 +87,33 @@ export type SubmitWorkParams = {
   jobId: bigint | number;
   deliverableLink: string;
 };
+
+export const RESPONSE_TYPE = {
+  BuildsOn: 0,
+  Critiques: 1,
+  Alternative: 2
+} as const;
+
+export type ResponseType = (typeof RESPONSE_TYPE)[keyof typeof RESPONSE_TYPE];
+
+export type TaskEconomyRecord = {
+  interactionStake: bigint;
+  interactionReward: bigint;
+  interactionPool: bigint;
+  interactionPoolFunded: boolean;
+  poolRemaining: bigint;
+};
+
+export type RespondResult = {
+  txHash: string;
+  path: "eip3009" | "approve_fallback";
+  stake: bigint;
+};
+
+export type MultiSourceTask = {
+  source: "current" | "prev-1" | "prev-2";
+  contract: string;
+  task: TaskRecord;
+  /** Display id with source prefix, e.g. "pv3-12" for current contract. */
+  displayId: string;
+};

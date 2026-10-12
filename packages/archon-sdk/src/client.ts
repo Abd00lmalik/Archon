@@ -1,8 +1,23 @@
 import { ethers } from "ethers";
 import { ERC20_ABI, JOB_ABI, MILESTONE_ESCROW_ABI, AGENT_TASK_SOURCE_ABI } from "./abis.js";
 import { type ArchonConfig, resolveNetwork, resolvePrivateKey, type ArchonNetworkConfig } from "./config.js";
+import {
+  buildAuthorizationWindow,
+  newAuthorizationNonce,
+  signTransferWithAuthorization,
+  usdcDomain
+} from "./eip3009.js";
 import { decodeRevertHint, errorMessage, withRetry } from "./errors.js";
-import type { CreateTaskParams, SubmissionRecord, TaskRecord, TxResult } from "./types.js";
+import type {
+  CreateTaskParams,
+  MultiSourceTask,
+  RespondResult,
+  ResponseType,
+  SubmissionRecord,
+  TaskEconomyRecord,
+  TaskRecord,
+  TxResult
+} from "./types.js";
 
 export type CreateTaskResult = TxResult & { jobId?: number };
 
@@ -257,5 +272,301 @@ export class ArchonClient {
     return this.sendTx("updateDeliverable", async () =>
       (await job.updateDeliverable(BigInt(jobId), deliverableLink)) as ethers.TransactionResponse
     );
+  }
+
+  // ---- reveal phase ----
+
+  async getRevealPhaseEnd(jobId: number | bigint): Promise<number> {
+    try {
+      const raw = (await this.jobContract().getRevealPhaseEnd(BigInt(jobId))) as bigint;
+      return toNumber(raw);
+    } catch {
+      return 0;
+    }
+  }
+
+  async getTaskEconomy(jobId: number | bigint): Promise<TaskEconomyRecord> {
+    const contract = this.jobContract();
+    try {
+      const [economyRaw, poolRemainingRaw] = await Promise.all([
+        contract.getTaskEconomy(BigInt(jobId)),
+        contract.getInteractionPoolRemaining(BigInt(jobId)).catch(() => 0n)
+      ]);
+      const economy = economyRaw as Record<string, unknown> & unknown[];
+      return {
+        interactionStake: BigInt((economy.interactionStake ?? economy[0] ?? 0n) as string | bigint),
+        interactionReward: BigInt((economy.interactionReward ?? economy[1] ?? 0n) as string | bigint),
+        interactionPool: BigInt((economy.interactionPool ?? economy[2] ?? 0n) as string | bigint),
+        interactionPoolFunded: Boolean(economy.interactionPoolFunded ?? economy[3] ?? false),
+        poolRemaining: BigInt(poolRemainingRaw as string | bigint)
+      };
+    } catch {
+      return {
+        interactionStake: 2_000_000n,
+        interactionReward: 0n,
+        interactionPool: 0n,
+        interactionPoolFunded: false,
+        poolRemaining: 0n
+      };
+    }
+  }
+
+  async getSelectedFinalists(jobId: number | bigint): Promise<string[]> {
+    try {
+      return Array.from((await this.jobContract().getSelectedFinalists(BigInt(jobId))) as string[]);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Reveal-phase interaction: respond to a submission as build-on (0),
+   * critique (1), or alternative (2). Prefers gasless EIP-3009 stake
+   * payment (respondWithAuthorization); falls back to approve + respondToSubmission.
+   */
+  async respond(params: {
+    parentSubmissionId: number | bigint;
+    responseType: ResponseType;
+    contentURI: string;
+  }): Promise<RespondResult> {
+    const wallet = this.requireWallet();
+    const job = this.jobContract(wallet);
+
+    let stakeAmount = 2_000_000n;
+    try {
+      const taskId = (await job.submissionIdToTaskId(BigInt(params.parentSubmissionId))) as bigint;
+      const economy = await this.getTaskEconomy(taskId);
+      if (economy.interactionStake > 0n) stakeAmount = economy.interactionStake;
+    } catch {
+      // Older deployments: DEFAULT_INTERACTION_STAKE is 2 USDC.
+    }
+
+    const supportsAuthorization =
+      typeof job.interface.hasFunction === "function" && job.interface.hasFunction("respondWithAuthorization");
+
+    if (supportsAuthorization) {
+      try {
+        const domain = usdcDomain(this.network.chainId, this.network.addresses.usdc);
+        const window = buildAuthorizationWindow();
+        const message = {
+          from: wallet.address,
+          to: this.network.addresses.job,
+          value: stakeAmount,
+          validAfter: window.validAfter,
+          validBefore: window.validBefore,
+          nonce: newAuthorizationNonce()
+        };
+        const { v, r, s } = await signTransferWithAuthorization(wallet, domain, message);
+        const result = await this.sendTx(
+          "respondWithAuthorization",
+          async () =>
+            (await job.respondWithAuthorization(
+              BigInt(params.parentSubmissionId),
+              params.responseType,
+              params.contentURI,
+              message.from,
+              message.to,
+              message.value,
+              message.validAfter,
+              message.validBefore,
+              message.nonce,
+              v,
+              r,
+              s
+            )) as ethers.TransactionResponse,
+          job.interface
+        );
+        return { txHash: result.hash, path: "eip3009", stake: stakeAmount };
+      } catch (error) {
+        // Fall through to classic approve path.
+        void errorMessage(error);
+      }
+    }
+
+    await this.ensureAllowance(this.network.addresses.job, stakeAmount);
+    const result = await this.sendTx(
+      "respondToSubmission",
+      async () =>
+        (await job.respondToSubmission(
+          BigInt(params.parentSubmissionId),
+          params.responseType,
+          params.contentURI
+        )) as ethers.TransactionResponse,
+      job.interface
+    );
+    return { txHash: result.hash, path: "approve_fallback", stake: stakeAmount };
+  }
+
+  async claimInteractionReward(responseId: number | bigint): Promise<TxResult> {
+    const wallet = this.requireWallet();
+    const job = this.jobContract(wallet);
+    return this.sendTx("claimInteractionReward", async () =>
+      (await job.claimInteractionReward(BigInt(responseId))) as ethers.TransactionResponse
+    );
+  }
+
+  async returnStake(responseId: number | bigint): Promise<TxResult> {
+    const wallet = this.requireWallet();
+    const job = this.jobContract(wallet);
+    return this.sendTx("returnResponseStake", async () =>
+      (await job.returnResponseStake(BigInt(responseId))) as ethers.TransactionResponse
+    );
+  }
+
+  async slashStake(responseId: number | bigint): Promise<TxResult> {
+    const wallet = this.requireWallet();
+    const job = this.jobContract(wallet);
+    return this.sendTx("slashResponseStake", async () =>
+      (await job.slashResponseStake(BigInt(responseId))) as ethers.TransactionResponse
+    );
+  }
+
+  async settleRevealPhase(jobId: number | bigint): Promise<TxResult> {
+    const wallet = this.requireWallet();
+    const job = this.jobContract(wallet);
+    return this.sendTx("settleRevealPhase", async () =>
+      (await job.settleRevealPhase(BigInt(jobId))) as ethers.TransactionResponse
+    );
+  }
+
+  // ---- reveal-phase client/creator actions ----
+
+  async selectFinalists(jobId: number | bigint, agents: string[], revealDurationSeconds: number): Promise<TxResult> {
+    const wallet = this.requireWallet();
+    const job = this.jobContract(wallet);
+    return this.sendTx("selectFinalists", async () =>
+      (await job.selectFinalists(BigInt(jobId), agents, BigInt(revealDurationSeconds))) as ethers.TransactionResponse
+    );
+  }
+
+  async setJudges(jobId: number | bigint, judges: string[]): Promise<TxResult> {
+    const wallet = this.requireWallet();
+    const job = this.jobContract(wallet);
+    return this.sendTx("setJudges", async () =>
+      (await job.setJudges(BigInt(jobId), judges)) as ethers.TransactionResponse
+    );
+  }
+
+  async setReviewed(jobId: number | bigint, submissionId: number | bigint, reviewed: boolean): Promise<TxResult> {
+    const wallet = this.requireWallet();
+    const job = this.jobContract(wallet);
+    return this.sendTx("setReviewed", async () =>
+      (await job.setReviewed(BigInt(jobId), BigInt(submissionId), reviewed)) as ethers.TransactionResponse
+    );
+  }
+
+  async autoStartReveal(jobId: number | bigint): Promise<TxResult> {
+    const wallet = this.requireWallet();
+    const job = this.jobContract(wallet);
+    return this.sendTx("autoStartReveal", async () =>
+      (await job.autoStartReveal(BigInt(jobId))) as ethers.TransactionResponse
+    );
+  }
+
+  async finalizeWinners(jobId: number | bigint, winners: string[], rewardAmounts: bigint[]): Promise<TxResult> {
+    const wallet = this.requireWallet();
+    const job = this.jobContract(wallet);
+    return this.sendTx("finalizeWinners", async () =>
+      (await job.finalizeWinners(BigInt(jobId), winners, rewardAmounts)) as ethers.TransactionResponse
+    );
+  }
+
+  async claimCredential(jobId: number | bigint): Promise<TxResult> {
+    const wallet = this.requireWallet();
+    const job = this.jobContract(wallet);
+    return this.sendTx("claimCredential", async () =>
+      (await job.claimCredential(BigInt(jobId))) as ethers.TransactionResponse
+    );
+  }
+
+  // ---- multi-source discovery ----
+
+  /**
+   * List tasks across current + previous job deployments.
+   * Source mapping matches frontend task-adapter:
+   *   current → plain id, prevJobContracts[0] → "pv2-", prevJobContracts[1] → "pv3-",
+   *   V1 hard-coded contract → "v1-".
+   */
+  async listAllTasks(limitPerSource = 25): Promise<MultiSourceTask[]> {
+    const sources: Array<{ source: MultiSourceTask["source"]; address: string }> = [
+      { source: "current", address: this.network.addresses.job }
+    ];
+    this.network.addresses.prevJobContracts.forEach((address, index) => {
+      if (!address) return;
+      sources.push({ source: index === 0 ? "prev-1" : "prev-2", address });
+    });
+
+    const all: MultiSourceTask[] = [];
+    for (const entry of sources) {
+      const contract = new ethers.Contract(entry.address, JOB_ABI, this.provider);
+      let count = 0;
+      try {
+        count = toNumber(await contract.nextJobId());
+      } catch {
+        continue;
+      }
+      const prefix = entry.source === "current" ? "" : entry.source === "prev-1" ? "pv2-" : "pv3-";
+      for (let i = count - 1; i >= 0 && all.filter((t) => t.source === entry.source).length < limitPerSource; i -= 1) {
+        try {
+          const raw = await contract.getJob(i);
+          all.push({
+            source: entry.source,
+            contract: entry.address,
+            task: parseTask(raw),
+            displayId: `${prefix}${i}`
+          });
+        } catch {
+          // Skip unreadable job.
+        }
+      }
+    }
+    return all;
+  }
+
+  /**
+   * Fetch one task by a display id ("12", "v1-0", "pv2-1", "pv3-0").
+   * Plain numeric ids resolve on the current contract.
+   */
+  async getTaskByDisplayId(displayId: string): Promise<MultiSourceTask | null> {
+    const raw = String(displayId ?? "").trim();
+    let address = this.network.addresses.job;
+    let localId: number;
+
+    if (raw.startsWith("v1-")) {
+      address = this.network.addresses.v1Job;
+      localId = Number(raw.slice(3));
+    } else if (raw.startsWith("pv2-")) {
+      address = this.network.addresses.prevJobContracts[0] ?? "";
+      localId = Number(raw.slice(4));
+    } else if (raw.startsWith("pv3-")) {
+      address = this.network.addresses.prevJobContracts[1] ?? "";
+      localId = Number(raw.slice(4));
+    } else {
+      localId = Number(raw);
+    }
+
+    if (!address || !Number.isInteger(localId) || localId < 0) return null;
+    const contract = new ethers.Contract(address, JOB_ABI, this.provider);
+    try {
+      const task = parseTask(await contract.getJob(localId));
+      const source: MultiSourceTask["source"] =
+        address === this.network.addresses.job
+          ? "current"
+          : address === this.network.addresses.prevJobContracts[0]
+            ? "prev-1"
+            : "prev-2";
+      return { source, contract: address, task, displayId: raw };
+    } catch {
+      return null;
+    }
+  }
+
+  async getSelectedFinalistsFrom(contractAddress: string, jobId: number | bigint): Promise<string[]> {
+    const contract = new ethers.Contract(contractAddress, JOB_ABI, this.provider);
+    try {
+      return Array.from((await contract.getSelectedFinalists(BigInt(jobId))) as string[]);
+    } catch {
+      return [];
+    }
   }
 }

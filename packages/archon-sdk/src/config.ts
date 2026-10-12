@@ -12,6 +12,8 @@ export type ArchonAddresses = {
   daoGovernanceSource: string;
   milestoneEscrow: string;
   prevJobContracts: string[];
+  /** Legacy V1 job contract (separate hard-coded address in task-adapter). */
+  v1Job: string;
 };
 
 export type ArchonNetworkConfig = {
@@ -47,7 +49,8 @@ export const DEFAULT_NETWORK: ArchonNetworkConfig = {
     peerAttestationSource: "0x7212bA676e31060740be23ADCAb0E807A9b9A4c0",
     daoGovernanceSource: "0xBd84a902C2b44717dDA047427F3aD0448b594033",
     milestoneEscrow: "0xf99bca7cB9e8162C49CB8170B64744c7bd7B5110",
-    prevJobContracts: ["0x8D8bB12C0e052fC839b4146Eb88aAA8e36Ed075A", "0x6423B07886980CBb49010A0912b6e0e08a7C1C37"]
+    prevJobContracts: ["0x8D8bB12C0e052fC839b4146Eb88aAA8e36Ed075A", "0x6423B07886980CBb49010A0912b6e0e08a7C1C37"],
+    v1Job: "0xEEF4C172ea2A8AB184CA5d121D142789F78BFb16"
   }
 };
 
@@ -96,7 +99,8 @@ export function resolveNetwork(config: ArchonConfig = {}): ArchonNetworkConfig {
         milestoneEscrow: manifestAddress(contracts, "milestoneEscrow") ?? network.addresses.milestoneEscrow,
         prevJobContracts: prev
           .map((entry: { address?: string } | undefined) => entry?.address)
-          .filter((address: string | undefined): address is string => Boolean(address))
+          .filter((address: string | undefined): address is string => Boolean(address)),
+        v1Job: network.addresses.v1Job
       }
     };
   }

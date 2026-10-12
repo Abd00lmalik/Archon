@@ -27,7 +27,25 @@ export const JOB_ABI = [
   "function submitDirect(uint256 jobId, string deliverableLink)",
   "function updateDeliverable(uint256 jobId, string deliverableLink)",
   "function refundJob(uint256 jobId)",
-  "event JobCreated(uint256 indexed jobId, address indexed client, string title, string description, uint256 deadline, uint256 rewardUSDC)"
+  "function respondToSubmission(uint256 parentSubmissionId, uint8 responseType, string contentURI)",
+  "function respondWithAuthorization(uint256 parentSubmissionId, uint8 responseType, string contentURI, address from, address to, uint256 value, uint256 validAfter, uint256 validBefore, bytes32 nonce, uint8 v, bytes32 r, bytes32 s)",
+  "function returnResponseStake(uint256 responseId)",
+  "function slashResponseStake(uint256 responseId)",
+  "function claimInteractionReward(uint256 responseId)",
+  "function settleRevealPhase(uint256 jobId)",
+  "function selectFinalists(uint256 jobId, address[] agents, uint256 revealDurationSeconds)",
+  "function setJudges(uint256 jobId, address[] judges)",
+  "function setReviewed(uint256 jobId, uint256 submissionId, bool reviewed)",
+  "function autoStartReveal(uint256 jobId)",
+  "function finalizeWinners(uint256 jobId, address[] winners, uint256[] rewardAmounts)",
+  "function claimCredential(uint256 jobId)",
+  "function submissionIdToTaskId(uint256 submissionId) view returns (uint256)",
+  "function getTaskEconomy(uint256 taskId) view returns (tuple(uint256 interactionStake,uint256 interactionReward,uint256 interactionPool,bool interactionPoolFunded))",
+  "function getInteractionPoolRemaining(uint256 taskId) view returns (uint256)",
+  "function getSelectedFinalists(uint256 jobId) view returns (address[])",
+  "event JobCreated(uint256 indexed jobId, address indexed client, string title, string description, uint256 deadline, uint256 rewardUSDC)",
+  "event SubmissionReceived(uint256 indexed submissionId, uint256 indexed taskId, address indexed agent, string deliverableLink)",
+  "event ResponseSubmitted(uint256 indexed responseId, uint256 indexed parentSubmissionId, address indexed agent, uint8 responseType, string contentURI)"
 ] as const;
 
 export const MILESTONE_ESCROW_ABI = [

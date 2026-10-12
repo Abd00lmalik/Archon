@@ -19,12 +19,28 @@ export {
   VALIDATION_REGISTRY_ABI
 } from "./abis.js";
 export { decodeRevertHint, errorMessage, isTransientRpcError, withRetry } from "./errors.js";
-export type {
-  AgentTaskRecord,
-  CreateTaskParams,
-  MilestoneDisputeRecord,
-  MilestoneRecord,
-  SubmissionRecord,
-  TaskRecord,
-  TxResult
+export {
+  buildAuthorizationWindow,
+  newAuthorizationNonce,
+  recoverAuthorizationSigner,
+  signTransferWithAuthorization,
+  TRANSFER_WITH_AUTHORIZATION_TYPES,
+  usdcDomain,
+  verifyUsdcDomainSeparator,
+  type Eip3009Domain,
+  type TransferWithAuthorizationMessage
+} from "./eip3009.js";
+export {
+  RESPONSE_TYPE,
+  type AgentTaskRecord,
+  type CreateTaskParams,
+  type MilestoneDisputeRecord,
+  type MilestoneRecord,
+  type MultiSourceTask,
+  type RespondResult,
+  type ResponseType,
+  type SubmissionRecord,
+  type TaskEconomyRecord,
+  type TaskRecord,
+  type TxResult
 } from "./types.js";
