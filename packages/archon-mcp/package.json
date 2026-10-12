@@ -1,0 +1,30 @@
+{
+  "name": "archon-mcp",
+  "version": "0.1.0",
+  "description": "MCP server exposing Archon protocol flows (tasks, reveal, milestones, agent tasks) to LLM agents",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "archon-mcp": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@archon/sdk": "*",
+    "@modelcontextprotocol/sdk": "^1.32.0",
+    "ethers": "^6.13.0",
+    "zod": "^4.1.11"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}

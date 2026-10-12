@@ -1,0 +1,25 @@
+
+<--- Last few GCs --->
+
+[23672:00000241419E6000]   330704 ms: Scavenge (interleaved) 4068.9 (4083.8) -> 4061.3 (4083.8) MB, pooled: 0 MB, 7.79 / 0.00 ms  (average mu = 0.338, current mu = 0.337) allocation failure; 
+[23672:00000241419E6000]   334609 ms: Mark-Compact (reduce) 4096.8 (4111.8) -> 4057.5 (4081.3) MB, pooled: 0 MB, 3316.41 / 0.00 ms  (+ 399.6 ms in 71 steps since start of marking, biggest step 13.3 ms, walltime since start of marking 3770 ms) (average mu 
+FATAL ERROR: Ineffective mark-compacts near heap limit Allocation failed - JavaScript heap out of memory
+----- Native stack trace -----
+
+ 1: 00007FF62628AD5F node::OnFatalError+1343
+ 2: 00007FF626ED32D7 v8::Function::NewInstance+423
+ 3: 00007FF626CD3997 v8::base::AddressSpaceReservation::AddressSpaceReservation+322071
+ 4: 00007FF626CD76A4 v8::base::AddressSpaceReservation::AddressSpaceReservation+337700
+ 5: 00007FF626CE663C v8::internal::StrongRootAllocatorBase::deallocate_impl+16604
+ 6: 00007FF626CE5E7B v8::internal::StrongRootAllocatorBase::deallocate_impl+14619
+ 7: 00007FF62814E7ED v8::base::UnsignedDivisionByConstant<unsigned __int64>+2791357
+ 8: 00007FF626CD1460 v8::base::AddressSpaceReservation::AddressSpaceReservation+312544
+ 9: 00007FF626CEBCEA X509_STORE_set_cleanup+5098
+10: 00007FF626CF7B48 uv_timer_set_repeat+19096
+11: 00007FF626D0F4EC uv_timer_set_repeat+115772
+12: 00007FF626D0F485 uv_timer_set_repeat+115669
+13: 00007FF6269E23CB v8::RegExp::GetFlags+17195
+14: 00007FF6269E1C4D v8::RegExp::GetFlags+15277
+15: 00007FF6269E2E58 v8::RegExp::GetFlags+19896
+16: 00007FF6268D5217 v8::String::Utf8Value::~Utf8Value+184503
+17: 000002417A07733A 
