@@ -166,6 +166,290 @@ server.registerTool(
   }
 );
 
+server.registerTool(
+  "archon_list_all_tasks",
+  {
+    title: "List tasks across all deployments",
+    description:
+      "List tasks from the current job contract and previous deployments (pv2-/pv3- display ids). Includes closed history.",
+    inputSchema: {
+      limitPerSource: z.number().int().min(1).max(100).default(25)
+    }
+  },
+  async ({ limitPerSource }) => {
+    try {
+      return ok(await client.listAllTasks(limitPerSource));
+    } catch (error) {
+      return fail(error);
+    }
+  }
+);
+
+server.registerTool(
+  "archon_respond",
+  {
+    title: "Reveal-phase response to a submission",
+    description:
+      "Respond to a submission during the reveal phase: build-on (0), critique (1), or alternative (2). Stakes 2 USDC via EIP-3009 (falls back to approve).",
+    inputSchema: {
+      parentSubmissionId: z.number().int().min(0),
+      responseType: z.number().int().min(0).max(2).describe("0=builds-on, 1=critique, 2=alternative"),
+      contentURI: z.string().min(1)
+    }
+  },
+  async ({ parentSubmissionId, responseType, contentURI }) => {
+    try {
+      return ok(await client.respond({ parentSubmissionId, responseType: responseType as 0 | 1 | 2, contentURI }));
+    } catch (error) {
+      return fail(error);
+    }
+  }
+);
+
+server.registerTool(
+  "archon_get_task_economy",
+  {
+    title: "Get task interaction economy",
+    description: "Interaction stake/reward/pool for a task plus reveal-phase end time.",
+    inputSchema: { taskId: z.number().int().min(0) }
+  },
+  async ({ taskId }) => {
+    try {
+      const [economy, revealPhaseEnd, finalists] = await Promise.all([
+        client.getTaskEconomy(taskId),
+        client.getRevealPhaseEnd(taskId),
+        client.getSelectedFinalists(taskId)
+      ]);
+      return ok({ economy, revealPhaseEnd, finalists });
+    } catch (error) {
+      return fail(error);
+    }
+  }
+);
+
+// ---- milestones ----
+
+server.registerTool(
+  "archon_list_milestones",
+  {
+    title: "List milestone-contract rows",
+    description: "Milestones where the given address is client or freelancer (defaults to the agent wallet).",
+    inputSchema: {
+      address: z.string().optional().describe("Defaults to the connected agent address")
+    }
+  },
+  async ({ address }) => {
+    try {
+      const party = address ?? client.address;
+      if (!party) return fail(new Error("No address — set ARCHON_PRIVATE_KEY or pass address."));
+      const [asClient, asFreelancer] = await Promise.all([
+        client.listMilestonesByClient(party),
+        client.listMilestonesByFreelancer(party)
+      ]);
+      const merged = new Map<number, (typeof asClient)[number]>();
+      for (const row of [...asClient, ...asFreelancer]) merged.set(row.milestoneId, row);
+      return ok(Array.from(merged.values()).sort((a, b) => b.milestoneId - a.milestoneId));
+    } catch (error) {
+      return fail(error);
+    }
+  }
+);
+
+server.registerTool(
+  "archon_get_milestone",
+  {
+    title: "Get a milestone + dispute state",
+    description: "Full milestone record plus its dispute (if any) and funded flag.",
+    inputSchema: { milestoneId: z.number().int().min(0) }
+  },
+  async ({ milestoneId }) => {
+    try {
+      const [milestone, dispute, funded] = await Promise.all([
+        client.getMilestone(milestoneId),
+        client.getMilestoneDispute(milestoneId),
+        client.isMilestoneFunded(milestoneId)
+      ]);
+      if (!milestone) return fail(new Error(`Milestone #${milestoneId} not found.`));
+      return ok({ milestone, dispute, funded });
+    } catch (error) {
+      return fail(error);
+    }
+  }
+);
+
+server.registerTool(
+  "archon_submit_milestone",
+  {
+    title: "Submit a milestone deliverable",
+    description: "Freelancer submits the deliverable link/hash for a funded milestone.",
+    inputSchema: {
+      milestoneId: z.number().int().min(0),
+      deliverableHash: z.string().min(1)
+    }
+  },
+  async ({ milestoneId, deliverableHash }) => {
+    try {
+      return ok(await client.submitMilestoneDeliverable(milestoneId, deliverableHash));
+    } catch (error) {
+      return fail(error);
+    }
+  }
+);
+
+server.registerTool(
+  "archon_approve_milestone",
+  {
+    title: "Approve a milestone (release funds)",
+    description: "Client approves a submitted milestone; escrow releases the amount (minus 1% platform fee).",
+    inputSchema: { milestoneId: z.number().int().min(0) }
+  },
+  async ({ milestoneId }) => {
+    try {
+      return ok(await client.approveMilestone(milestoneId));
+    } catch (error) {
+      return fail(error);
+    }
+  }
+);
+
+server.registerTool(
+  "archon_raise_milestone_dispute",
+  {
+    title: "Raise a milestone dispute",
+    description: "Dispute a submitted milestone within the dispute window. Requires >=3 assigned arbitrators.",
+    inputSchema: {
+      milestoneId: z.number().int().min(0),
+      reason: z.string().min(1)
+    }
+  },
+  async ({ milestoneId, reason }) => {
+    try {
+      return ok(await client.raiseMilestoneDispute(milestoneId, reason));
+    } catch (error) {
+      return fail(error);
+    }
+  }
+);
+
+server.registerTool(
+  "archon_vote_on_dispute",
+  {
+    title: "Vote on a milestone dispute",
+    description: "Arbitrator vote: 1 = favor freelancer, 2 = favor client. 2-of-3 majority resolves.",
+    inputSchema: {
+      milestoneId: z.number().int().min(0),
+      vote: z.union([z.literal(1), z.literal(2)])
+    }
+  },
+  async ({ milestoneId, vote }) => {
+    try {
+      return ok(await client.voteOnMilestoneDispute(milestoneId, vote));
+    } catch (error) {
+      return fail(error);
+    }
+  }
+);
+
+// ---- agent tasks ----
+
+server.registerTool(
+  "archon_list_agent_tasks",
+  {
+    title: "List agent tasks",
+    description: "AgentTaskSource tasks (optionally only open ones).",
+    inputSchema: {
+      openOnly: z.boolean().default(false),
+      limit: z.number().int().min(1).max(100).default(25)
+    }
+  },
+  async ({ openOnly, limit }) => {
+    try {
+      return ok(openOnly ? await client.listOpenAgentTasks(limit) : await client.listAgentTasks(limit));
+    } catch (error) {
+      return fail(error);
+    }
+  }
+);
+
+server.registerTool(
+  "archon_post_agent_task",
+  {
+    title: "Post an agent task",
+    description: "Create an AgentTaskSource task. Approves USDC to the source automatically.",
+    inputSchema: {
+      taskDescription: z.string().min(1),
+      inputData: z.string().min(1).describe("Input data URI / instructions"),
+      deadline: z.number().int().describe("Unix seconds"),
+      rewardUSDC: z.string().describe('Reward in USDC, e.g. "2"')
+    }
+  },
+  async ({ taskDescription, inputData, deadline, rewardUSDC }) => {
+    try {
+      return ok(
+        await client.postAgentTask({
+          taskDescription,
+          inputData,
+          deadline,
+          rewardUSDC: BigInt(Math.round(Number(rewardUSDC) * 1e6))
+        })
+      );
+    } catch (error) {
+      return fail(error);
+    }
+  }
+);
+
+server.registerTool(
+  "archon_claim_agent_task",
+  {
+    title: "Claim an agent task",
+    description: "Assign an open agent task to the agent wallet.",
+    inputSchema: { taskId: z.number().int().min(0) }
+  },
+  async ({ taskId }) => {
+    try {
+      return ok(await client.claimAgentTask(taskId));
+    } catch (error) {
+      return fail(error);
+    }
+  }
+);
+
+server.registerTool(
+  "archon_submit_agent_output",
+  {
+    title: "Submit agent-task output",
+    description: "Submit the output hash/URI for a claimed agent task.",
+    inputSchema: {
+      taskId: z.number().int().min(0),
+      outputHash: z.string().min(1)
+    }
+  },
+  async ({ taskId, outputHash }) => {
+    try {
+      return ok(await client.submitAgentTaskOutput(taskId, outputHash));
+    } catch (error) {
+      return fail(error);
+    }
+  }
+);
+
+server.registerTool(
+  "archon_claim_agent_task_reward",
+  {
+    title: "Claim agent-task reward + credential",
+    description: "After validation, claim the reward and mint the source credential.",
+    inputSchema: { taskId: z.number().int().min(0) }
+  },
+  async ({ taskId }) => {
+    try {
+      return ok(await client.claimAgentTaskReward(taskId));
+    } catch (error) {
+      return fail(error);
+    }
+  }
+);
+
 async function main() {
   if (!client.address) {
     console.error("[archon-mcp] WARNING: ARCHON_PRIVATE_KEY not set — write tools will fail. Read tools work.");

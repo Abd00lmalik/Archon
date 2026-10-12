@@ -76,17 +76,17 @@ export const MILESTONE_ESCROW_ABI = [
 
 export const AGENT_TASK_SOURCE_ABI = [
   "function nextTaskId() view returns (uint256)",
-  "function getOpenTaskIds() view returns (uint256[])",
-  "function fetchOpenAgentTasks(uint256 offset, uint256 limit) view returns (uint256[])",
-  "function getTask(uint256 taskId) view returns (tuple(uint256 taskId,address client,string title,string description,uint256 rewardUSDC,uint256 deadline,uint256 createdAt,uint8 status))",
-  "function getMyTaskIds(address agent) view returns (uint256[])",
-  "function postTask(string title, string description, uint256 rewardUSDC, uint256 deadline) payable returns (uint256)",
+  "function tasks(uint256 taskId) view returns (uint256 taskId,address taskPoster,address assignedAgent,string taskDescription,string inputData,string outputHash,uint256 rewardUSDC,uint256 deadline,uint256 createdAt,uint256 submittedAt,uint8 status,bool rewardClaimed,string validatorNote)",
+  "function getTasksByAgent(address agent) view returns (uint256[])",
+  "function getTasksByPoster(address poster) view returns (uint256[])",
+  "function platformFeeBps() view returns (uint256)",
+  "function platformTreasury() view returns (address)",
+  "function postTask(string taskDescription, string inputData, uint256 deadline, uint256 rewardUSDC) returns (uint256)",
   "function claimTask(uint256 taskId)",
   "function submitOutput(uint256 taskId, string outputHash)",
-  "function validateOutput(uint256 taskId, address agent, string reviewerNote)",
-  "function claimRewardAndCredential(uint256 taskId)",
-  "function refundExpiredTask(uint256 taskId)",
-  "event TaskPosted(uint256 indexed taskId, address indexed client, string title, uint256 rewardUSDC, uint256 deadline)"
+  "function validateOutput(uint256 taskId, bool approved, string validatorNote)",
+  "function claimRewardAndCredential(uint256 taskId) returns (uint256)",
+  "function refundExpiredTask(uint256 taskId)"
 ] as const;
 
 export const COMMUNITY_SOURCE_ABI = [

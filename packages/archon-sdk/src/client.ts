@@ -9,7 +9,10 @@ import {
 } from "./eip3009.js";
 import { decodeRevertHint, errorMessage, withRetry } from "./errors.js";
 import type {
+  AgentTaskRecord,
   CreateTaskParams,
+  MilestoneDisputeRecord,
+  MilestoneRecord,
   MultiSourceTask,
   RespondResult,
   ResponseType,
@@ -67,6 +70,65 @@ function parseSubmission(raw: unknown): SubmissionRecord {
     allocatedReward: BigInt((pick("allocatedReward", 7) as string | number | bigint) ?? 0),
     buildOnBonus: BigInt((pick("buildOnBonus", 8) as string | number | bigint) ?? 0),
     isBuildOnWinner: Boolean(pick("isBuildOnWinner", 9))
+  };
+}
+
+function parseMilestone(raw: unknown): MilestoneRecord {
+  const tuple = Array.isArray(raw) ? raw : [];
+  const asObj = raw as Record<string, unknown> | undefined;
+  const pick = (key: string, index: number) => asObj?.[key] ?? tuple[index];
+  return {
+    milestoneId: toNumber(pick("milestoneId", 0)),
+    projectId: toNumber(pick("projectId", 1)),
+    client: String(pick("client", 2) ?? ""),
+    freelancer: String(pick("freelancer", 3) ?? ""),
+    title: String(pick("title", 4) ?? ""),
+    description: String(pick("description", 5) ?? ""),
+    deliverableHash: String(pick("deliverableHash", 6) ?? ""),
+    amount: BigInt((pick("amount", 7) as string | number | bigint) ?? 0),
+    deadline: toNumber(pick("deadline", 8)),
+    createdAt: toNumber(pick("createdAt", 9)),
+    submittedAt: toNumber(pick("submittedAt", 10)),
+    status: toNumber(pick("status", 11)),
+    fundsReleased: Boolean(pick("fundsReleased", 12))
+  };
+}
+
+function parseMilestoneDispute(raw: unknown): MilestoneDisputeRecord {
+  const tuple = Array.isArray(raw) ? raw : [];
+  const asObj = raw as Record<string, unknown> | undefined;
+  const pick = (key: string, index: number) => asObj?.[key] ?? tuple[index];
+  return {
+    milestoneId: toNumber(pick("milestoneId", 0)),
+    raisedBy: String(pick("raisedBy", 1) ?? ""),
+    reason: String(pick("reason", 2) ?? ""),
+    arbitrators: Array.from((pick("arbitrators", 3) ?? []) as string[]),
+    votes: Array.from((pick("votes", 4) ?? []) as ArrayLike<number | bigint>).map((vote) => Number(vote)),
+    votesReceived: toNumber(pick("votesReceived", 5)),
+    outcome: toNumber(pick("outcome", 6)),
+    raisedAt: toNumber(pick("raisedAt", 7)),
+    resolved: Boolean(pick("resolved", 8))
+  };
+}
+
+function parseAgentTask(raw: unknown): AgentTaskRecord {
+  const tuple = Array.isArray(raw) ? raw : [];
+  const asObj = raw as Record<string, unknown> | undefined;
+  const pick = (key: string, index: number) => asObj?.[key] ?? tuple[index];
+  return {
+    taskId: toNumber(pick("taskId", 0)),
+    taskPoster: String(pick("taskPoster", 1) ?? ""),
+    assignedAgent: String(pick("assignedAgent", 2) ?? ""),
+    taskDescription: String(pick("taskDescription", 3) ?? ""),
+    inputData: String(pick("inputData", 4) ?? ""),
+    outputHash: String(pick("outputHash", 5) ?? ""),
+    rewardUSDC: BigInt((pick("rewardUSDC", 6) as string | number | bigint) ?? 0),
+    deadline: toNumber(pick("deadline", 7)),
+    createdAt: toNumber(pick("createdAt", 8)),
+    submittedAt: toNumber(pick("submittedAt", 9)),
+    status: toNumber(pick("status", 10)),
+    rewardClaimed: Boolean(pick("rewardClaimed", 11)),
+    validatorNote: String(pick("validatorNote", 12) ?? "")
   };
 }
 
@@ -568,5 +630,301 @@ export class ArchonClient {
     } catch {
       return [];
     }
+  }
+
+  // ---- milestones (MilestoneEscrow) ----
+
+  async getMilestoneCount(): Promise<number> {
+    try {
+      return toNumber(await this.milestoneContract().nextMilestoneId());
+    } catch {
+      return 0;
+    }
+  }
+
+  async getMilestone(milestoneId: number | bigint): Promise<MilestoneRecord | null> {
+    try {
+      return parseMilestone(await this.milestoneContract().getMilestone(BigInt(milestoneId)));
+    } catch {
+      return null;
+    }
+  }
+
+  async getMilestoneDispute(milestoneId: number | bigint): Promise<MilestoneDisputeRecord | null> {
+    try {
+      const raw = await this.milestoneContract().getDispute(BigInt(milestoneId));
+      const parsed = parseMilestoneDispute(raw);
+      if (!parsed.raisedBy || parsed.raisedBy === ethers.ZeroAddress) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  async listMilestonesByClient(client: string): Promise<MilestoneRecord[]> {
+    return this.listMilestonesByParty("getMilestonesByClient", client);
+  }
+
+  async listMilestonesByFreelancer(freelancer: string): Promise<MilestoneRecord[]> {
+    return this.listMilestonesByParty("getMilestonesByFreelancer", freelancer);
+  }
+
+  async listMilestonesByProject(projectId: number | bigint): Promise<MilestoneRecord[]> {
+    const contract = this.milestoneContract();
+    const ids = (await contract.getMilestonesByProject(BigInt(projectId))) as bigint[];
+    const rows: MilestoneRecord[] = [];
+    for (const id of ids) {
+      const row = await this.getMilestone(id);
+      if (row) rows.push(row);
+    }
+    return rows;
+  }
+
+  private async listMilestonesByParty(method: "getMilestonesByClient" | "getMilestonesByFreelancer", party: string) {
+    const contract = this.milestoneContract();
+    const ids = (await contract[method](party)) as bigint[];
+    const rows: MilestoneRecord[] = [];
+    for (const id of ids) {
+      const row = await this.getMilestone(id);
+      if (row) rows.push(row);
+    }
+    return rows;
+  }
+
+  async getArbitrators(): Promise<string[]> {
+    try {
+      return Array.from((await this.milestoneContract().getArbitrators()) as string[]);
+    } catch {
+      return [];
+    }
+  }
+
+  async getDisputeWindowSeconds(): Promise<number> {
+    try {
+      return toNumber(await this.milestoneContract().DISPUTE_WINDOW());
+    } catch {
+      return 0;
+    }
+  }
+
+  async isMilestoneFunded(milestoneId: number | bigint): Promise<boolean> {
+    try {
+      return Boolean(await this.milestoneContract().fundedMilestones(BigInt(milestoneId)));
+    } catch {
+      return false;
+    }
+  }
+
+  async proposeMilestoneProject(params: {
+    freelancer: string;
+    titles: string[];
+    descriptions: string[];
+    amounts: bigint[];
+    deadlines: number[];
+  }): Promise<TxResult & { projectId?: number }> {
+    const wallet = this.requireWallet();
+    const escrow = this.milestoneContract(wallet);
+    const total = params.amounts.reduce((sum, amount) => sum + amount, 0n);
+    await this.ensureAllowance(this.network.addresses.milestoneEscrow, total);
+    const result: TxResult & { projectId?: number } = await this.sendTx(
+      "proposeProject",
+      async () =>
+        (await escrow.proposeProject(
+          params.freelancer,
+          params.titles,
+          params.descriptions,
+          params.amounts,
+          params.deadlines.map((deadline) => BigInt(deadline))
+        )) as ethers.TransactionResponse,
+      escrow.interface
+    );
+    return result;
+  }
+
+  async fundMilestone(milestoneId: number | bigint, amount: bigint): Promise<TxResult> {
+    const wallet = this.requireWallet();
+    const escrow = this.milestoneContract(wallet);
+    await this.ensureAllowance(this.network.addresses.milestoneEscrow, amount);
+    return this.sendTx(
+      "fundMilestone",
+      async () => (await escrow.fundMilestone(BigInt(milestoneId))) as ethers.TransactionResponse,
+      escrow.interface
+    );
+  }
+
+  async submitMilestoneDeliverable(milestoneId: number | bigint, deliverableHash: string): Promise<TxResult> {
+    const wallet = this.requireWallet();
+    const escrow = this.milestoneContract(wallet);
+    return this.sendTx(
+      "submitMilestoneDeliverable",
+      async () =>
+        (await escrow.submitDeliverable(BigInt(milestoneId), deliverableHash)) as ethers.TransactionResponse,
+      escrow.interface
+    );
+  }
+
+  async approveMilestone(milestoneId: number | bigint): Promise<TxResult> {
+    const wallet = this.requireWallet();
+    const escrow = this.milestoneContract(wallet);
+    return this.sendTx(
+      "approveMilestone",
+      async () => (await escrow.approveMilestone(BigInt(milestoneId))) as ethers.TransactionResponse,
+      escrow.interface
+    );
+  }
+
+  async raiseMilestoneDispute(milestoneId: number | bigint, reason: string): Promise<TxResult> {
+    const wallet = this.requireWallet();
+    const escrow = this.milestoneContract(wallet);
+    return this.sendTx(
+      "raiseDispute",
+      async () => (await escrow.raiseDispute(BigInt(milestoneId), reason)) as ethers.TransactionResponse,
+      escrow.interface
+    );
+  }
+
+  async autoReleaseMilestone(milestoneId: number | bigint): Promise<TxResult> {
+    const wallet = this.requireWallet();
+    const escrow = this.milestoneContract(wallet);
+    return this.sendTx(
+      "autoRelease",
+      async () => (await escrow.autoRelease(BigInt(milestoneId))) as ethers.TransactionResponse,
+      escrow.interface
+    );
+  }
+
+  /** Vote 1 = Favor Freelancer, 2 = Favor Client. */
+  async voteOnMilestoneDispute(milestoneId: number | bigint, vote: 1 | 2): Promise<TxResult> {
+    const wallet = this.requireWallet();
+    const escrow = this.milestoneContract(wallet);
+    return this.sendTx(
+      "voteOnDispute",
+      async () => (await escrow.voteOnDispute(BigInt(milestoneId), vote)) as ethers.TransactionResponse,
+      escrow.interface
+    );
+  }
+
+  // ---- agent tasks (AgentTaskSource) ----
+
+  async getAgentTaskCount(): Promise<number> {
+    try {
+      return toNumber(await this.agentTaskContract().nextTaskId());
+    } catch {
+      return 0;
+    }
+  }
+
+  async getAgentTask(taskId: number | bigint): Promise<AgentTaskRecord | null> {
+    try {
+      const parsed = parseAgentTask(await this.agentTaskContract().tasks(BigInt(taskId)));
+      if (!parsed.taskPoster || parsed.taskPoster === ethers.ZeroAddress) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  async listAgentTasks(limit = 25): Promise<AgentTaskRecord[]> {
+    const count = await this.getAgentTaskCount();
+    const tasks: AgentTaskRecord[] = [];
+    for (let i = count - 1; i >= 0 && tasks.length < limit; i -= 1) {
+      const task = await this.getAgentTask(i);
+      if (task) tasks.push(task);
+    }
+    return tasks;
+  }
+
+  async listOpenAgentTasks(limit = 25): Promise<AgentTaskRecord[]> {
+    const all = await this.listAgentTasks(limit * 2);
+    return all.filter((task) => task.status === 0).slice(0, limit);
+  }
+
+  async listAgentTasksByAgent(agent: string): Promise<AgentTaskRecord[]> {
+    const contract = this.agentTaskContract();
+    const ids = (await contract.getTasksByAgent(agent)) as bigint[];
+    const tasks: AgentTaskRecord[] = [];
+    for (const id of ids) {
+      const task = await this.getAgentTask(id);
+      if (task) tasks.push(task);
+    }
+    return tasks;
+  }
+
+  /** Post an agent task. Poster must approve USDC to the AgentTaskSource first. */
+  async postAgentTask(params: {
+    taskDescription: string;
+    inputData: string;
+    deadline: number;
+    rewardUSDC: bigint;
+  }): Promise<TxResult> {
+    const wallet = this.requireWallet();
+    const source = this.agentTaskContract(wallet);
+    await this.ensureAllowance(this.network.addresses.agentTaskSource, params.rewardUSDC);
+    return this.sendTx(
+      "postAgentTask",
+      async () =>
+        (await source.postTask(
+          params.taskDescription,
+          params.inputData,
+          BigInt(params.deadline),
+          params.rewardUSDC
+        )) as ethers.TransactionResponse,
+      source.interface
+    );
+  }
+
+  async claimAgentTask(taskId: number | bigint): Promise<TxResult> {
+    const wallet = this.requireWallet();
+    const source = this.agentTaskContract(wallet);
+    return this.sendTx(
+      "claimAgentTask",
+      async () => (await source.claimTask(BigInt(taskId))) as ethers.TransactionResponse,
+      source.interface
+    );
+  }
+
+  async submitAgentTaskOutput(taskId: number | bigint, outputHash: string): Promise<TxResult> {
+    const wallet = this.requireWallet();
+    const source = this.agentTaskContract(wallet);
+    return this.sendTx(
+      "submitAgentTaskOutput",
+      async () => (await source.submitOutput(BigInt(taskId), outputHash)) as ethers.TransactionResponse,
+      source.interface
+    );
+  }
+
+  async validateAgentTaskOutput(
+    taskId: number | bigint,
+    approved: boolean,
+    validatorNote: string
+  ): Promise<TxResult> {
+    const wallet = this.requireWallet();
+    const source = this.agentTaskContract(wallet);
+    return this.sendTx(
+      "validateAgentTaskOutput",
+      async () =>
+        (await source.validateOutput(BigInt(taskId), approved, validatorNote)) as ethers.TransactionResponse,
+      source.interface
+    );
+  }
+
+  async claimAgentTaskReward(taskId: number | bigint): Promise<TxResult> {
+    const wallet = this.requireWallet();
+    const source = this.agentTaskContract(wallet);
+    return this.sendTx(
+      "claimAgentTaskReward",
+      async () => (await source.claimRewardAndCredential(BigInt(taskId))) as ethers.TransactionResponse,
+      source.interface
+    );
+  }
+
+  async refundExpiredAgentTask(taskId: number | bigint): Promise<TxResult> {
+    const wallet = this.requireWallet();
+    const source = this.agentTaskContract(wallet);
+    return this.sendTx(
+      "refundExpiredAgentTask",
+      async () => (await source.refundExpiredTask(BigInt(taskId))) as ethers.TransactionResponse,
+      source.interface
+    );
   }
 }

@@ -59,13 +59,18 @@ export type MilestoneDisputeRecord = {
 
 export type AgentTaskRecord = {
   taskId: number;
-  client: string;
-  title: string;
-  description: string;
+  taskPoster: string;
+  assignedAgent: string;
+  taskDescription: string;
+  inputData: string;
+  outputHash: string;
   rewardUSDC: bigint;
   deadline: number;
   createdAt: number;
+  submittedAt: number;
   status: number;
+  rewardClaimed: boolean;
+  validatorNote: string;
 };
 
 export type TxResult = {
